@@ -11,6 +11,8 @@ PREFECT_USER="${PREFECT_USER:-root}"
 PREFECT_HOME="${PREFECT_HOME:-/root/prefect}"
 VENV_DIR="${VENV_DIR:-venv}"
 PREFECT_PORT="${PREFECT_PORT:-4200}"
+# 浏览器/本地上传工作流时访问的地址，必填！填服务器 IP 或域名，例如 10.18.8.191（不能填 0.0.0.0）
+PREFECT_SERVER_PUBLIC_HOST="${PREFECT_SERVER_PUBLIC_HOST:-}"
 
 # 若存在同目录下的配置文件，则覆盖上述默认值
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,11 +27,26 @@ SVC_FILE="/etc/systemd/system/prefect.service"
 # unit 名必须与文件名一致：prefect.service -> prefect
 UNIT_NAME="$(basename "$SVC_FILE" .service)"
 
+# 未配置时尝试用本机 IP，供浏览器/本地上传使用（不能是 0.0.0.0）
+if [[ -z "$PREFECT_SERVER_PUBLIC_HOST" ]]; then
+  PREFECT_SERVER_PUBLIC_HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
+fi
+if [[ -z "$PREFECT_SERVER_PUBLIC_HOST" || "$PREFECT_SERVER_PUBLIC_HOST" == "0.0.0.0" ]]; then
+  echo "警告: 未设置 PREFECT_SERVER_PUBLIC_HOST（浏览器访问用的服务器 IP）"
+  echo "      页面会提示 Can't connect to Server API。请在 prefect-service.conf 中设置："
+  echo "      PREFECT_SERVER_PUBLIC_HOST=10.18.8.191   # 改成你的服务器 IP"
+  echo "      然后重新执行本脚本并: sudo systemctl restart prefect"
+  PREFECT_SERVER_PUBLIC_HOST="0.0.0.0"
+fi
+# 供 UI/客户端使用的 API 地址（必须是浏览器能访问的 IP/域名）
+PREFECT_API_URL="http://${PREFECT_SERVER_PUBLIC_HOST}:${PREFECT_PORT}/api"
+
 echo "=== Prefect 服务配置 ==="
 echo "用户: $PREFECT_USER"
 echo "项目目录: $PREFECT_HOME"
 echo "虚拟环境: $PREFECT_HOME/$VENV_DIR"
 echo "端口: $PREFECT_PORT"
+echo "API 地址(供浏览器/本地上传): $PREFECT_API_URL"
 echo ""
 
 if ! id "$PREFECT_USER" &>/dev/null; then
@@ -60,7 +77,7 @@ WorkingDirectory=$PREFECT_HOME
 ExecStart=$PREFECT_BIN server start --host 0.0.0.0
 Restart=always
 RestartSec=10
-Environment=PREFECT_API_URL=http://0.0.0.0:$PREFECT_PORT/api
+Environment=PREFECT_API_URL=$PREFECT_API_URL
 
 [Install]
 WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+# Prefect 服务配置示例
+# 复制为 prefect-service.conf 后修改，与 setup-prefect-service.sh 放在同一目录
+
+PREFECT_USER="root"
+PREFECT_HOME="/root/prefect"
+VENV_DIR="venv"
+PREFECT_PORT="4200"
+
+# 重要：浏览器/本地上传工作流时访问的服务器 IP 或域名（不能填 0.0.0.0）
+# 不填会导致浏览器报错：Can't connect to Server API at http://0.0.0.0:4200/api
+PREFECT_SERVER_PUBLIC_HOST="10.18.8.191"
