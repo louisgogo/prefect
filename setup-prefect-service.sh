@@ -20,7 +20,10 @@ if [[ -f "$SCRIPT_DIR/prefect-service.conf" ]]; then
   source "$SCRIPT_DIR/prefect-service.conf"
 fi
 
+# 服务文件名（改这里则 enable/start 会一起变）
 SVC_FILE="/etc/systemd/system/prefect.service"
+# unit 名必须与文件名一致：prefect.service -> prefect
+UNIT_NAME="$(basename "$SVC_FILE" .service)"
 
 echo "=== Prefect 服务配置 ==="
 echo "用户: $PREFECT_USER"
@@ -65,7 +68,7 @@ EOF
 
 echo "已写入: $SVC_FILE"
 systemctl daemon-reload
-systemctl enable prefect-server
+systemctl enable "$UNIT_NAME"
 echo "已设置开机自启"
 
 if command -v firewall-cmd &>/dev/null; then
@@ -79,6 +82,6 @@ fi
 echo ""
 echo "=== 后续 ==="
 echo "1. 属主: sudo chown -R $PREFECT_USER:$PREFECT_USER $PREFECT_HOME"
-echo "2. 启动: sudo systemctl start prefect-server"
-echo "3. 状态: sudo systemctl status prefect-server"
+echo "2. 启动: sudo systemctl start $UNIT_NAME"
+echo "3. 状态: sudo systemctl status $UNIT_NAME"
 echo "4. 本地上传工作流: 设置 PREFECT_API_URL=http://<服务器IP>:$PREFECT_PORT/api"
