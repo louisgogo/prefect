@@ -74,10 +74,14 @@ def deploy_to_remote_server():
     print(f"部署目标 UI 地址: {PREFECT_SERVER_URL}")
     if "127.0.0.1" in api_url or "localhost" in api_url:
         print("\n⚠️  当前为本地地址；若需推送到远程服务器，请修改本文件顶部 PREFECT_SERVER_URL")
-        response = input("是否继续部署？(y/n): ")
-        if response.lower() != 'y':
-            print("部署已取消")
-            return
+        # systemd 等非交互环境没有 stdin，直接继续；仅在有终端时询问
+        if sys.stdin.isatty():
+            response = input("是否继续部署？(y/n): ")
+            if response.lower() != 'y':
+                print("部署已取消")
+                return
+        else:
+            print("非交互环境，自动继续部署")
 
     # 计算上个月的年份和月份
     now = datetime.now()

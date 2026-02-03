@@ -1,5 +1,24 @@
 # 服务器上配置 mypackage 依赖（解决 ModuleNotFoundError: No module named 'mypackage'）
 
+## 重要：必须装在 systemd 用的那个环境里
+
+Prefect 的 systemd 服务（如 `prefect.service` 或 `prefect-workers.service`）里写的是 **`/root/prefect/venv/bin/python`**。  
+**mypackage 必须安装进这个 venv**，不能装在别的环境（例如你 SSH 登录后没 `source venv/bin/activate` 就 `pip install`，会装到系统 Python，服务仍然找不到）。
+
+正确做法：用该 venv 的 pip 安装（任选一种）：
+
+```bash
+# 用 wheel 安装（推荐，速度快）
+/root/prefect/venv/bin/pip install /path/to/mypackage-0.1.0-py3-none-any.whl
+
+# 或用源码目录可编辑安装
+/root/prefect/venv/bin/pip install -e /path/to/mypackage
+```
+
+安装完成后执行：`sudo systemctl restart prefect`（或你实际使用的服务名）。
+
+---
+
 ## 报错原因
 
 日志中的：

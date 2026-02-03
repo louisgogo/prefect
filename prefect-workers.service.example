@@ -22,7 +22,8 @@ ExecStartPre=/usr/bin/git -C /root/prefect pull
 # 启动前：安装/更新依赖（pip 会跳过已满足的包，不会重复安装；- 表示失败不阻止启动）
 # ExecStartPre=-/root/prefect/venv/bin/pip install -r /root/prefect/requirements.txt -q
 
-ExecStart=/root/prefect/venv/bin/python deploy_to_server.py
+# 先激活虚拟环境再运行（与直接写 venv/bin/python 等效，按你习惯保留）
+ExecStart=/bin/bash -c 'source venv/bin/activate && python deploy_to_server.py'
 Restart=always
 RestartSec=10
 
