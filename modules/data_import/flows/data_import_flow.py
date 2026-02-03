@@ -1,4 +1,6 @@
 """数据导入流程"""
+import platform
+
 from ..tasks.data_import_tasks import (
     read_excel_data_task,
     update_production_data_task,
@@ -22,6 +24,12 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
+# Windows 与 Rocky Linux 下 Excel 根目录默认路径（Rocky 路径请按实际挂载或数据目录修改）
+if platform.system() == "Windows":
+    DEFAULT_ROOT_DIRECTORY = r"Z:\11-业务报表\1.补充数据"
+else:
+    DEFAULT_ROOT_DIRECTORY = "/mnt/xgd_share/11-业务报表/1.补充数据"  # Rocky Linux，可按实际挂载点修改
+
 
 def get_last_month() -> tuple:
     """获取上个月的年份和月份"""
@@ -41,7 +49,7 @@ def data_import_flow(
     month: Optional[int] = None,
     months: Optional[List[int]] = None,
     replace_existing: bool = False,
-    root_directory: str = r"Z:\11-业务报表\1.补充数据"
+    root_directory: Optional[str] = None,
 ) -> None:
     """
     数据导入流程
@@ -53,7 +61,7 @@ def data_import_flow(
         month: 单个月份（1-12），如果提供则只处理该月
         months: 月份列表（1-12），如果提供则按月循环处理多个月份，例如 [10, 11, 12]
         replace_existing: 是否替换已存在的数据，默认 False（不替换）。如果为 True，则替换已存在的数据
-        root_directory: Excel 文件根目录路径，默认使用手工刷新目录
+        root_directory: Excel 文件根目录路径；不传则按系统自动选择（Windows: Z:\\11-业务报表\\1.补充数据，Rocky: /mnt/业务报表/1.补充数据）
 
     Examples:
         # 处理上个月的数据（默认）
@@ -68,6 +76,9 @@ def data_import_flow(
         # 替换已存在的数据
         data_import_flow(year=2025, month=12, replace_existing=True)
     """
+    if root_directory is None:
+        root_directory = DEFAULT_ROOT_DIRECTORY
+
     print("=" * 60)
     print("开始数据导入流程")
     print("=" * 60)
