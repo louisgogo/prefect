@@ -12,6 +12,8 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=/root/prefect
+# 浏览器访问 UI 时使用的 API 地址（改成你服务器的 IP 或域名）
+Environment=PREFECT_UI_API_URL=http://10.18.8.191:4200/api
 # 启动前拉取最新代码（- 表示失败不阻止启动）
 ExecStartPre=-/usr/bin/git -C /root/prefect pull
 ExecStart=/root/prefect/venv/bin/prefect server start --host 0.0.0.0

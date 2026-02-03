@@ -1,33 +1,32 @@
-# 浏览器提示 "Can't connect to Server API at http://0.0.0.0:4200/api" 的修复
+# 浏览器提示 "Can't connect to Server API at http://127.0.0.1:4200/api" 的修复
 
 ## 原因
 
-服务里把 `PREFECT_API_URL` 设成了 `http://0.0.0.0:4200/api`。  
-`0.0.0.0` 只是服务器“监听所有网卡”的地址，**浏览器在你这台电脑上会去连“本机”的 4200**，连不到服务器 10.18.8.191，所以报错。
-
-需要把 API 地址改成**你从浏览器访问时用的地址**（服务器 IP 或域名）。
+- 你在浏览器里访问 **http://10.18.8.191:4200**，但页面里的 API 被配置成 **http://127.0.0.1:4200/api**。
+- **127.0.0.1** 在浏览器所在电脑上指“本机”，不是服务器，所以浏览器连不到 API，报错。
+- 需要在**启动 Prefect Server 时**设置 **PREFECT_UI_API_URL**，让 UI 使用**服务器 IP** 作为 API 地址。
 
 ---
 
 ## 立即修复（在服务器上执行）
 
-### 1. 改服务里的 API 地址
+### 1. 改 Prefect Server 服务里的 UI API 地址
+
+编辑你用来跑 **Prefect Server**（`prefect server start`）的那个服务，例如：
 
 ```bash
 sudo vim /etc/systemd/system/prefect.service
+# 或
+sudo vim /etc/systemd/system/prefect-server.service
 ```
 
-找到这一行：
+在 `[Service]` 里**增加**（若已有可改）这一行（把 `10.18.8.191` 换成你的服务器 IP）：
 
 ```ini
-Environment=PREFECT_API_URL=http://0.0.0.0:4200/api
+Environment=PREFECT_UI_API_URL=http://10.18.8.191:4200/api
 ```
 
-改成（把 `10.18.8.191` 换成你的服务器 IP）：
-
-```ini
-Environment=PREFECT_API_URL=http://10.18.8.191:4200/api
-```
+若是旧版或之前按 0.0.0.0 配置的，把错误地址改成上面这行即可。
 
 保存退出。
 
