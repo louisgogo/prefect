@@ -1,0 +1,27 @@
+# Prefect Server（API & UI）- 提供 Prefect 的 API 和 Web UI，监听 4200 端口
+# 复制到服务器：sudo cp prefect-server.service.example /etc/systemd/system/prefect-server.service
+# 然后：sudo systemctl daemon-reload && sudo systemctl enable prefect-server && sudo systemctl start prefect-server
+#
+# 与 prefect-workers 配合使用：
+#   1. 先启动本服务（Server）：systemctl start prefect-server
+#   2. 再启动 Workers：systemctl start prefect-workers
+# Workers 会连接本机的 http://127.0.0.1:4200/api 注册并执行流程
+
+[Unit]
+Description=Prefect Server (API & UI, port 4200)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/prefect
+# 启动前拉取最新代码（可选，- 表示失败不阻止启动）
+ExecStartPre=-/usr/bin/git -C /root/prefect pull
+
+ExecStart=/root/prefect/venv/bin/prefect server start --host 0.0.0.0
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
