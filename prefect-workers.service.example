@@ -1,0 +1,30 @@
+# Prefect Workers - 启动前自动 git pull 并安装依赖，再推送流程到本机 Prefect
+# 复制到服务器：sudo cp prefect-workers.service.example /etc/systemd/system/prefect-workers.service
+# 然后：sudo systemctl daemon-reload && sudo systemctl enable prefect-workers && sudo systemctl start prefect-workers
+# 每次 workers 启动/重启都会：git pull -> pip install -> 运行 deploy_to_server.py（推送流程）
+
+[Unit]
+Description=Prefect Workers (flow.serve on server)
+After=network.target prefect.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/prefect
+Environment=PREFECT_API_URL=http://127.0.0.1:4200/api
+# 若项目依赖 mypackage，需把 mypackage 所在父目录加入 PYTHONPATH，例如：
+# Environment=PYTHONPATH=/root
+# 详见 docs/服务器上配置mypackage依赖.md
+
+# 启动前：拉取最新代码（失败则不启动，避免用旧代码推送）
+ExecStartPre=/usr/bin/git -C /root/prefect pull
+# 启动前：安装/更新依赖（pip 会跳过已满足的包，不会重复安装；- 表示失败不阻止启动）
+# ExecStartPre=-/root/prefect/venv/bin/pip install -r /root/prefect/requirements.txt -q
+
+ExecStart=/root/prefect/venv/bin/python deploy_to_server.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

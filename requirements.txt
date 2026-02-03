@@ -4,3 +4,8 @@ psycopg2-binary>=2.9.0
 sqlalchemy>=1.4.0
 openpyxl>=3.0.0
 numpy>=1.23.0
+
+# 多项目共用 mypackage 时，任选一种方式安装（详见 docs/多项目共用mypackage_打包与使用.md）：
+# -e /path/to/mypackage
+# git+https://your-git/org/mypackage.git@main
+# mypackage==0.1.0

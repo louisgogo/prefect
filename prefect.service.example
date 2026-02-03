@@ -1,0 +1,23 @@
+# Prefect Server（API & UI）- 启动前自动 git pull
+# 复制到服务器：sudo cp prefect.service.example /etc/systemd/system/prefect.service
+# 然后：sudo systemctl daemon-reload && sudo systemctl enable prefect && sudo systemctl start prefect
+# 说明：推送流程由 prefect-workers 完成；本服务只负责 API & UI，可选在启动前 git pull 保持代码最新
+
+[Unit]
+Description=Prefect Server (workflow API & UI)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/prefect
+# 启动前拉取最新代码（- 表示失败不阻止启动）
+ExecStartPre=-/usr/bin/git -C /root/prefect pull
+ExecStart=/root/prefect/venv/bin/prefect server start --host 0.0.0.0
+Restart=always
+RestartSec=10
+Environment=PREFECT_API_URL=http://10.18.8.191:4200/api
+
+[Install]
+WantedBy=multi-user.target

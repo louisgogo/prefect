@@ -1,0 +1,20 @@
+# 复制到「mypackage 项目根目录」，与 mypackage 包目录同级
+# 包目录结构示例： 项目根/mypackage/__init__.py, utilities.py, mapping.py
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mypackage"
+version = "0.1.0"
+description = "内部公共工具与映射"
+readme = "README.md"
+requires-python = ">=3.8"
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mypackage*"]

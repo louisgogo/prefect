@@ -38,6 +38,20 @@
       1) 启动 Prefect Server: prefect server start
       2) 运行: python deploy_production.py
 
+   D. 从本机部署到远程服务器（如 http://10.18.8.191:4200）：
+      1) 在 deploy_to_server.py 顶部确认 PREFECT_SERVER_URL = "http://10.18.8.191:4200"
+      2) 确保本机网络能访问该服务器，且服务器上 Prefect 服务已启动
+      3) 在本地运行: python deploy_to_server.py
+      4) 流程会注册到远程 Server，在浏览器打开 http://10.18.8.191:4200 查看
+
+   E. 让 flow 在服务器上执行（推荐）：
+      1) 把整份项目（modules、utils、deploy_to_server.py、requirements.txt 等）拷贝到服务器，如 /root/prefect
+      2) 在服务器上：cd /root/prefect，创建 venv，pip install -r requirements.txt
+      3) 在服务器上运行：export PREFECT_API_URL=http://127.0.0.1:4200/api && python deploy_to_server.py
+         （或直接运行 ./run_workers_on_server.sh）
+      4) 可选：用 prefect-workers.service.example 配置 systemd 开机自启
+      详见：docs/服务器上执行flow说明.md
+
 📋 注意事项
 -----------
 - 确保 mypackage 模块在 Python 路径中
