@@ -1,5 +1,10 @@
 """本地测试部署脚本"""
-from modules import business_line_profit_flow, calculate_shared_rate_flow, data_import_flow
+from modules import (
+    business_line_profit_flow,
+    calculate_shared_rate_flow,
+    data_import_flow,
+    budget_update_flow,
+)
 import sys
 import os
 from multiprocessing import Process
@@ -83,32 +88,63 @@ def deploy_data_import_flow():
     )
 
 
+def deploy_budget_update_flow():
+    """部署预算更新流程（带按当前日期计算的默认参数）"""
+    from modules.budget_update.flows.budget_update_flow import _get_budget_defaults_by_date
+
+    print("=" * 60)
+    print("预算更新流程 - 本地测试部署")
+    print("=" * 60)
+
+    defaults = _get_budget_defaults_by_date()
+    print("说明：以下参数已按当前月份设默认值，可在 UI 中修改")
+    print("默认值规则：上年11月～2月→年初预算（11/12月用下年度-01-01，1/2月用当年度-01-01）；4月～7月→年中预算（当年度-07-01）")
+    print("当前默认参数：")
+    for k, v in defaults.items():
+        print(f"  - {k}: {v}")
+    print("  - output_dir: 不填则使用当前工作目录")
+    print("\n易混点：report_date=要替换的那批日期；version=本批新数据的填报日期标签。")
+    print("\n注意：任一映射检查点存在未映射将中断执行并导出 CSV")
+
+    budget_update_flow.serve(
+        name="预算更新流程-本地测试",
+        tags=["本地测试", "预算更新"],
+        description="从 FONE 拉取预算、严格映射检查、写库；未映射则中断并导出 CSV。参数可留空，按运行时的当前月份自动填默认值。",
+        parameters=defaults,
+    )
+
+
 if __name__ == "__main__":
     print("开始部署流程...")
     print("确保已启动 Prefect Server：prefect server start")
     print("请在 Prefect UI 中查看：http://127.0.0.1:4200")
     print("\n" + "=" * 60)
 
-    # 使用多进程同时部署三个流程
+    # 使用多进程同时部署四个流程
     process1 = Process(target=deploy_business_line_profit_flow)
     process2 = Process(target=deploy_shared_rate_flow)
     process3 = Process(target=deploy_data_import_flow)
+    process4 = Process(target=deploy_budget_update_flow)
 
     process1.start()
     process2.start()
     process3.start()
+    process4.start()
 
-    # 等待三个进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
+    # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
         process1.join()
         process2.join()
         process3.join()
+        process4.join()
     except KeyboardInterrupt:
         print("\n正在停止部署...")
         process1.terminate()
         process2.terminate()
         process3.terminate()
+        process4.terminate()
         process1.join()
         process2.join()
         process3.join()
+        process4.join()
         print("部署已停止")

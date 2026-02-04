@@ -1,5 +1,10 @@
 """从本地推送到远程 Prefect Server 的部署脚本"""
-from modules import business_line_profit_flow, calculate_shared_rate_flow, data_import_flow
+from modules import (
+    business_line_profit_flow,
+    calculate_shared_rate_flow,
+    data_import_flow,
+    budget_update_flow,
+)
 import sys
 import os
 from datetime import datetime
@@ -51,6 +56,18 @@ def _serve_data_import(last_month_year: int, last_month: int):
     )
 
 
+def _serve_budget_update():
+    """模块级函数，供 Process 调用（预算更新为手动触发，参数按当前月份设默认值）"""
+    from modules.budget_update.flows.budget_update_flow import _get_budget_defaults_by_date
+    budget_defaults = _get_budget_defaults_by_date()
+    budget_update_flow.serve(
+        name="预算更新流程",
+        tags=["预算更新", "手动触发"],
+        description="从 FONE 拉取预算、严格映射检查、写库；未映射则中断并导出 CSV。参数可留空，按运行时的当前月份自动填默认值。",
+        parameters=budget_defaults,
+    )
+
+
 def deploy_to_remote_server():
     """
     从本地推送流程到远程 Prefect Server
@@ -95,7 +112,7 @@ def deploy_to_remote_server():
     print("\n开始部署流程...")
     print("=" * 60)
 
-    # 使用多进程同时部署三个流程（serve() 会持续运行）
+    # 使用多进程同时部署四个流程（serve() 会持续运行）
     # 目标必须是模块级函数，否则 Windows 下 multiprocessing 无法 pickle 嵌套函数
     process1 = Process(target=_serve_business_line,
                        args=(last_month_year, last_month))
@@ -103,10 +120,12 @@ def deploy_to_remote_server():
                        args=(last_month_year, last_month))
     process3 = Process(target=_serve_data_import,
                        args=(last_month_year, last_month))
+    process4 = Process(target=_serve_budget_update)
 
     process1.start()
     process2.start()
     process3.start()
+    process4.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -117,14 +136,17 @@ def deploy_to_remote_server():
         process1.join()
         process2.join()
         process3.join()
+        process4.join()
     except KeyboardInterrupt:
         print("\n\n正在停止部署...")
         process1.terminate()
         process2.terminate()
         process3.terminate()
+        process4.terminate()
         process1.join()
         process2.join()
         process3.join()
+        process4.join()
         print("部署已停止")
 
 
