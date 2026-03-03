@@ -4,6 +4,8 @@ from modules import (
     calculate_shared_rate_flow,
     data_import_flow,
     budget_update_flow,
+    fetch_budget_shared_rate_flow,
+    profit_refresh_flow,
 )
 import sys
 import os
@@ -68,6 +70,24 @@ def _serve_budget_update():
     )
 
 
+def _serve_profit_refresh():
+    """模块级函数，供 Process 调用"""
+    profit_refresh_flow.serve(
+        name="利润表刷新流程",
+        tags=["业务线核算", "手动触发", "自动执行"],
+        description="利润表刷新流程：处理所有已计算的月份数据，生成 fact_profit 和 fact_bus_profit 表",
+    )
+
+
+def _serve_fetch_budget_shared_rate():
+    """模块级函数，供 Process 调用"""
+    fetch_budget_shared_rate_flow.serve(
+        name="拉取预算综合比例流程",
+        tags=["预算更新", "手动触发", "自动执行", "综合比例"],
+        description="获取预算表中最新1号的综合比例，并写入业务线实际比例表中覆盖年初至上月底。",
+    )
+
+
 def deploy_to_remote_server():
     """
     从本地推送流程到远程 Prefect Server
@@ -112,7 +132,7 @@ def deploy_to_remote_server():
     print("\n开始部署流程...")
     print("=" * 60)
 
-    # 使用多进程同时部署四个流程（serve() 会持续运行）
+    # 使用多进程同时部署多个流程（serve() 会持续运行）
     # 目标必须是模块级函数，否则 Windows 下 multiprocessing 无法 pickle 嵌套函数
     process1 = Process(target=_serve_business_line,
                        args=(last_month_year, last_month))
@@ -121,11 +141,15 @@ def deploy_to_remote_server():
     process3 = Process(target=_serve_data_import,
                        args=(last_month_year, last_month))
     process4 = Process(target=_serve_budget_update)
+    process5 = Process(target=_serve_fetch_budget_shared_rate)
+    process6 = Process(target=_serve_profit_refresh)
 
     process1.start()
     process2.start()
     process3.start()
     process4.start()
+    process5.start()
+    process6.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -137,16 +161,22 @@ def deploy_to_remote_server():
         process2.join()
         process3.join()
         process4.join()
+        process5.join()
+        process6.join()
     except KeyboardInterrupt:
         print("\n\n正在停止部署...")
         process1.terminate()
         process2.terminate()
         process3.terminate()
         process4.terminate()
+        process5.terminate()
+        process6.terminate()
         process1.join()
         process2.join()
         process3.join()
         process4.join()
+        process5.join()
+        process6.join()
         print("部署已停止")
 
 
