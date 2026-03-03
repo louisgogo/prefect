@@ -5,7 +5,7 @@ import os
 
 # 添加根目录到路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from .tasks.fetch_budget_shared_rate_tasks import (
+from ..tasks.fetch_budget_shared_rate_tasks import (
     fetch_latest_budget_rate_task,
     update_fact_bus_shared_rate_task
 )
