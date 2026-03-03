@@ -2,8 +2,10 @@
 from modules import (
     business_line_profit_flow,
     calculate_shared_rate_flow,
+    fetch_budget_shared_rate_flow,
     data_import_flow,
     budget_update_flow,
+    profit_refresh_flow,
 )
 import sys
 import os
@@ -60,6 +62,16 @@ if __name__ == "__main__":
     )
 
     print("\n" + "=" * 60)
+    print("拉取预算综合比例流程 - 生产环境部署")
+    print("=" * 60)
+    print("计划执行：随时手工或定时执行，处理年初至上月范围的预算比例")
+    fetch_budget_shared_rate_flow.serve(
+        name="拉取预算综合比例流程",
+        tags=["预算更新", "手动触发", "自动执行", "综合比例"],
+        description="获取预算表中最新1号的综合比例，并写入业务线实际比例表中覆盖年初至上月底。",
+    )
+
+    print("\n" + "=" * 60)
     print("数据导入流程 - 生产环境部署")
     print("=" * 60)
 
@@ -90,6 +102,17 @@ if __name__ == "__main__":
         tags=["预算更新", "手动触发"],
         description="从 FONE 拉取预算、严格映射检查、写库；未映射则中断并导出 CSV。参数可留空，按运行时的当前月份自动填默认值。",
         parameters=budget_defaults,
+    )
+
+    print("\n" + "=" * 60)
+    print("利润表刷新流程 - 生产环境部署")
+    print("=" * 60)
+    print(f"说明：利润表刷新通常在业务线损益计算流程最后一步自动调用。部署此任务是为了方便单独手动触发。")
+    print("易混点：date_range参数目前只为了占位，通常使用手动触发时需要设置参数")
+    profit_refresh_flow.serve(
+        name="利润表刷新流程",
+        tags=["业务线核算", "手动触发", "自动执行"],
+        description="利润表刷新流程：处理所有已计算的月份数据，生成 fact_profit 和 fact_bus_profit 表",
     )
 
     print("\n部署完成！")
