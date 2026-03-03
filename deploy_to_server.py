@@ -27,7 +27,7 @@ PREFECT_API_URL = os.environ.get(
 def _serve_business_line(last_month_year: int, last_month: int):
     """模块级函数，供 Process 调用（Windows 要求可 pickle，不能是嵌套函数）"""
     business_line_profit_flow.serve(
-        name="业务线损益计算流程",
+        name="主流程-业务线损益计算",
         parameters={"year": last_month_year, "month": last_month},
         tags=["业务线核算", "月度任务", "自动执行"],
         description="业务线损益计算流程：生成收入、费用、利润、应收、存货、在途存货明细表，并刷新利润表",
@@ -37,7 +37,7 @@ def _serve_business_line(last_month_year: int, last_month: int):
 def _serve_shared_rate(last_month_year: int, last_month: int):
     """模块级函数，供 Process 调用"""
     calculate_shared_rate_flow.serve(
-        name="综合比例计算流程",
+        name="主流程-综合比例年底重算",
         parameters={"year": last_month_year, "month": last_month},
         tags=["业务线核算", "月度任务", "自动执行", "综合比例"],
         description="综合比例计算流程：计算业务线综合比例（收入、毛利润、净利润、人数的加权平均）",
@@ -47,7 +47,7 @@ def _serve_shared_rate(last_month_year: int, last_month: int):
 def _serve_data_import(last_month_year: int, last_month: int):
     """模块级函数，供 Process 调用"""
     data_import_flow.serve(
-        name="数据导入流程",
+        name="主流程-数据导入",
         parameters={
             "year": last_month_year,
             "month": last_month,
@@ -63,7 +63,7 @@ def _serve_budget_update():
     from modules.budget_update.flows.budget_update_flow import _get_budget_defaults_by_date
     budget_defaults = _get_budget_defaults_by_date()
     budget_update_flow.serve(
-        name="预算更新流程",
+        name="主流程-预算更新",
         tags=["预算更新", "手动触发"],
         description="从 FONE 拉取预算、严格映射检查、写库；未映射则中断并导出 CSV。参数可留空，按运行时的当前月份自动填默认值。",
         parameters=budget_defaults,
@@ -73,7 +73,7 @@ def _serve_budget_update():
 def _serve_profit_refresh():
     """模块级函数，供 Process 调用"""
     profit_refresh_flow.serve(
-        name="利润表刷新流程",
+        name="子流程-利润表刷新",
         tags=["业务线核算", "手动触发", "自动执行"],
         description="利润表刷新流程：处理所有已计算的月份数据，生成 fact_profit 和 fact_bus_profit 表",
     )
@@ -82,7 +82,7 @@ def _serve_profit_refresh():
 def _serve_fetch_budget_shared_rate():
     """模块级函数，供 Process 调用"""
     fetch_budget_shared_rate_flow.serve(
-        name="拉取预算综合比例流程",
+        name="子流程-拉取预算综合比例",
         tags=["预算更新", "手动触发", "自动执行", "综合比例"],
         description="获取预算表中最新1号的综合比例，并写入业务线实际比例表中覆盖年初至上月底。",
     )

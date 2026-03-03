@@ -37,6 +37,9 @@ def fetch_latest_budget_rate_task(start_date: datetime, end_date: datetime) -> p
             print(f"警告：未在 {start_str} 至 {end_str} 期间找到任何综合比例记录！")
             return pd.DataFrame()
             
+        # 将 rate 列的 null 自动填充为 0
+        df['rate'] = df['rate'].fillna(0)
+            
         print(f"成功获取 {start_str} 至 {end_str} 的综合比例，共 {len(df)} 条记录。")
         return df
     finally:

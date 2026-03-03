@@ -34,7 +34,7 @@ if __name__ == "__main__":
 
     # 部署 flow 到 Prefect server（带计划执行）
     business_line_profit_flow.serve(
-        name="业务线损益计算流程",
+        name="主流程-业务线损益计算",
         parameters={
             "year": last_month_year,
             "month": last_month,
@@ -52,7 +52,7 @@ if __name__ == "__main__":
 
     # 部署综合比例计算流程到 Prefect server（带计划执行）
     calculate_shared_rate_flow.serve(
-        name="综合比例计算流程",
+        name="主流程-综合比例年底重算",
         parameters={
             "year": last_month_year,
             "month": last_month,
@@ -66,7 +66,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("计划执行：随时手工或定时执行，处理年初至上月范围的预算比例")
     fetch_budget_shared_rate_flow.serve(
-        name="拉取预算综合比例流程",
+        name="子流程-拉取预算综合比例",
         tags=["预算更新", "手动触发", "自动执行", "综合比例"],
         description="获取预算表中最新1号的综合比例，并写入业务线实际比例表中覆盖年初至上月底。",
     )
@@ -80,7 +80,7 @@ if __name__ == "__main__":
 
     # 部署数据导入流程到 Prefect server（带计划执行）
     data_import_flow.serve(
-        name="数据导入流程",
+        name="主流程-数据导入",
         parameters={
             "year": last_month_year,
             "month": last_month,
@@ -98,7 +98,7 @@ if __name__ == "__main__":
     print("说明：预算更新为手动触发；参数已按当前月份设默认值（11月～2月→年初预算，4月～7月→年中预算）")
     print("易混点：report_date=要替换的那批日期；version=本批新数据的填报日期标签。")
     budget_update_flow.serve(
-        name="预算更新流程",
+        name="主流程-预算更新",
         tags=["预算更新", "手动触发"],
         description="从 FONE 拉取预算、严格映射检查、写库；未映射则中断并导出 CSV。参数可留空，按运行时的当前月份自动填默认值。",
         parameters=budget_defaults,
@@ -110,7 +110,7 @@ if __name__ == "__main__":
     print(f"说明：利润表刷新通常在业务线损益计算流程最后一步自动调用。部署此任务是为了方便单独手动触发。")
     print("易混点：date_range参数目前只为了占位，通常使用手动触发时需要设置参数")
     profit_refresh_flow.serve(
-        name="利润表刷新流程",
+        name="子流程-利润表刷新",
         tags=["业务线核算", "手动触发", "自动执行"],
         description="利润表刷新流程：处理所有已计算的月份数据，生成 fact_profit 和 fact_bus_profit 表",
     )

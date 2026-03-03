@@ -12,6 +12,7 @@ from .revenue_expense_profit_flow import revenue_expense_profit_flow
 from .asset_detail_flow import asset_detail_flow
 # 从 profit_refresh 模块导入
 from modules.profit_refresh.flows.profit_refresh_flow import profit_refresh_flow
+from modules.shared_rate.flows.fetch_budget_shared_rate_flow import fetch_budget_shared_rate_flow
 
 
 @flow(name="business_line_profit_flow", log_prints=True)
@@ -54,6 +55,18 @@ def business_line_profit_flow(
         month_list = [(year, month)]
     else:
         raise ValueError("必须提供 month 或 months 参数")
+
+    # ========== 拉取最新的预算综合比例 ==========
+    print(f"\n{'='*60}")
+    print("准备就绪：首先执行 [子流程-拉取预算综合比例]，确保业务线按最新比率计算")
+    print(f"{'='*60}")
+    try:
+        fetch_budget_shared_rate_flow()
+        print("✓ 预算综合比例同步完成")
+    except Exception as e:
+        print(f"✗ 预算综合比例同步失败: {str(e)}")
+        # 因为这是计算的前置条件，如果失败建议不要终止，让业务使用既有老比例跑，但需告警
+        print("警告：预算比例拉取失败，本期计算将继续沿用数据库中已存有的比例...")
 
     # 按月循环执行
     for idx, (process_year, process_month) in enumerate(month_list, 1):
