@@ -8,7 +8,7 @@ from dateutil.relativedelta import relativedelta
 
 # 添加根目录到路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from mypackage.utilities import connect_to_db, execute_db
+from mypackage.utilities import connect_to_db
 
 @task(name="fetch_latest_budget_rate", log_prints=True)
 def fetch_latest_budget_rate_task() -> pd.DataFrame:
