@@ -1,5 +1,6 @@
 """利润表刷新流程"""
 from prefect import flow
+from typing import Optional
 import pandas as pd
 import sys
 import os
@@ -19,14 +20,23 @@ from ..tasks.profit_refresh_tasks import (
 
 
 @flow(name="profit_refresh_flow", log_prints=True)
-def profit_refresh_flow(date_range: pd.DatetimeIndex) -> None:
+def profit_refresh_flow(date_range: Optional[pd.DatetimeIndex] = None) -> None:
     """
     利润表刷新流程
     处理所有已计算的月份数据，生成 fact_profit 和 fact_bus_profit 表
     
     Args:
-        date_range: 日期范围（所有已计算的月份）
+        date_range: 日期范围（所有已计算的月份）。如果留空，默认计算年初至上个自然月末。
     """
+    if date_range is None:
+        from datetime import datetime
+        from dateutil.relativedelta import relativedelta
+        today = datetime.now()
+        start = datetime(today.year, 1, 1)
+        end = datetime(today.year, today.month, 1) - relativedelta(days=1)
+        date_range = pd.date_range(start=start, end=end)
+        print(f"未传入 date_range 参数，自动按默认规则计算范围：{start.strftime('%Y-%m-%d')} 到 {end.strftime('%Y-%m-%d')}")
+        
     print(f"开始利润表刷新流程，日期范围: {date_range.min()} 到 {date_range.max()}")
     
     # ========== 普通利润表刷新 ==========

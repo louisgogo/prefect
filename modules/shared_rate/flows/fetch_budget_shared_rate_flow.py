@@ -20,10 +20,21 @@ def fetch_budget_shared_rate_flow() -> None:
     """
     print("开始获取预算综合比例流程")
     
+    from datetime import datetime
+    from dateutil.relativedelta import relativedelta
+    today = datetime.now()
+    start_date = datetime(today.year, 1, 1)
+    first_day_this_month = datetime(today.year, today.month, 1)
+    end_date = first_day_this_month - relativedelta(days=1)
+    
+    if start_date > end_date:
+        print(f"计算出的日期范围无效，可能在1月发生。暂不更新。")
+        return
+
     # 1. 获取最新综合比例
-    df_rates = fetch_latest_budget_rate_task()
+    df_rates = fetch_latest_budget_rate_task(start_date, end_date)
     
     # 2. 更新写入数据库
-    update_fact_bus_shared_rate_task(df_rates)
+    update_fact_bus_shared_rate_task(df_rates, start_date, end_date)
     
     print("预算综合比例获取并覆盖写入完成")
