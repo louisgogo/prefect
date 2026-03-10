@@ -4,6 +4,8 @@ from modules import (
     calculate_shared_rate_flow,
     data_import_flow,
     budget_update_flow,
+    recon_flow,
+    profit_refresh_flow,
 )
 import sys
 import os
@@ -114,6 +116,32 @@ def deploy_budget_update_flow():
     )
 
 
+def deploy_recon_flow():
+    """部署内部往来对账流程"""
+    print("=" * 60)
+    print("内部往来对账流程 - 本地测试部署")
+    print("=" * 60)
+    
+    # 部署内部往来对账流程到本地 Prefect Server
+    recon_flow.serve(
+        name="内部往来对账流程-本地测试",
+        tags=["本地测试", "往来对账", "月度任务"],
+        description="本地测试用：自动从 MySQL + Excel 采集上月数据写入 PostgreSQL，生成往来/销售/现金流对账结果并导出 Excel。",
+    )
+
+def deploy_profit_refresh_flow():
+    """部署利润表刷新流程"""
+    print("=" * 60)
+    print("利润表刷新流程 - 本地测试部署")
+    print("=" * 60)
+    
+    # 部署利润表刷新流程到本地 Prefect Server
+    profit_refresh_flow.serve(
+        name="利润表刷新流程-本地测试",
+        tags=["本地测试", "利润表"],
+        description="本地测试用：处理所有已计算的月份数据，生成 fact_profit 和 fact_bus_profit 表。",
+    )
+
 if __name__ == "__main__":
     print("开始部署流程...")
     print("确保已启动 Prefect Server：prefect server start")
@@ -125,11 +153,15 @@ if __name__ == "__main__":
     process2 = Process(target=deploy_shared_rate_flow)
     process3 = Process(target=deploy_data_import_flow)
     process4 = Process(target=deploy_budget_update_flow)
+    process5 = Process(target=deploy_recon_flow)
+    process6 = Process(target=deploy_profit_refresh_flow)
 
     process1.start()
     process2.start()
     process3.start()
     process4.start()
+    process5.start()
+    process6.start()
 
     # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
@@ -137,14 +169,20 @@ if __name__ == "__main__":
         process2.join()
         process3.join()
         process4.join()
+        process5.join()
+        process6.join()
     except KeyboardInterrupt:
         print("\n正在停止部署...")
         process1.terminate()
         process2.terminate()
         process3.terminate()
         process4.terminate()
+        process5.terminate()
+        process6.terminate()
         process1.join()
         process2.join()
         process3.join()
         process4.join()
+        process5.join()
+        process6.join()
         print("部署已停止")

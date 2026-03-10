@@ -90,35 +90,78 @@ def load_expense_other_for_profit_task(date_range: pd.DatetimeIndex) -> pd.DataF
         raise
 
 
-@task(name="load_offset_from_db", log_prints=True)
-def load_offset_from_db_task(date_range: pd.DatetimeIndex) -> pd.DataFrame:
+@task(name="refresh_offset_by_month", log_prints=True)
+def refresh_offset_by_month_task(date_range: pd.DatetimeIndex) -> pd.DataFrame:
     """
-    从 fact_offset_by_month 读取抵销数（不再重新计算）
-    
+    从 fact_offset 重新计算月度抵销数，更新 fact_offset_by_month，并返回当期数据。
+
+    Notebook 原始逻辑：
+      1. 全量读取 fact_offset（累计数）
+      2. 按 prim_subj / acct_period / unique_lvl 分组求和
+      3. 用 diff() 将累计数转为当月数，1 月份直接取累计值
+      4. 写入 fact_offset_by_month（全量覆盖）
+      5. 筛选 date_range 范围内的记录返回，供后续合并
+
     Args:
         date_range: 日期范围
-    
+
     Returns:
-        抵销数数据 DataFrame
+        当期月度抵销数 DataFrame（列：source_no, fin_con, fin_ind, unique_lvl,
+                                        acct_period, prim_subj, amt, class）
     """
     try:
+        from mypackage.utilities import delete_data_add_data
+
         conn, cur = connect_to_db()
+        # 全量读取累计抵销数，排除汇总科目（与 Notebook 保持一致）
         cur.execute("""
-            SELECT * FROM fact_offset_by_month 
-            WHERE acct_period >= %s AND acct_period <= %s
-        """, (date_range.min(), date_range.max()))
+            SELECT * FROM fact_offset
+            WHERE subj_name NOT IN ('营业利润', '净利润', '利润总额')
+        """)
         df = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
-        
-        # 筛选日期范围
-        df['acct_period'] = pd.to_datetime(df['acct_period'])
-        df = df[df['acct_period'].isin(date_range)]
-        
-        print(f"从数据库加载抵销数数据完成，共 {len(df)} 条记录")
         cur.close()
         conn.close()
-        return df
+
+        if df.empty:
+            print("fact_offset 无数据，跳过抵销数计算")
+            return pd.DataFrame(columns=[
+                'source_no', 'fin_con', 'fin_ind', 'unique_lvl',
+                'acct_period', 'prim_subj', 'amt', 'class'
+            ])
+
+        # 列重命名，统一字段名
+        df['date'] = pd.to_datetime(df['date'])
+        df = (
+            df[['source_no', 'unique_lvl', 'date', 'subj_name', 'offset_num']]
+            .rename(columns={'offset_num': 'amt', 'date': 'acct_period', 'subj_name': 'prim_subj'})
+        )
+
+        # 按科目 + 期间 + 层级分组求和（累计数）
+        df = df.groupby(['prim_subj', 'acct_period', 'unique_lvl'])['amt'].sum().reset_index()
+        df = df.sort_values(['prim_subj', 'unique_lvl', 'acct_period']).reset_index(drop=True)
+
+        # 累计数 → 月度数：同 prim_subj + unique_lvl 分组内做 diff()
+        df['mo_amt'] = df.groupby(['prim_subj', 'unique_lvl'])['amt'].diff()
+        # 每年 1 月没有上期，直接取累计值
+        df.loc[df['acct_period'].dt.month == 1, 'mo_amt'] = df.loc[df['acct_period'].dt.month == 1, 'amt']
+
+        df = df.drop(columns=['amt']).rename(columns={'mo_amt': 'amt'})
+        df['class'] = '抵销'
+        df['fin_con'] = '抵销数'
+        df['fin_ind'] = '抵销数'
+        df['source_no'] = 'O' + df.index.astype(str)
+
+        # 全量覆盖 fact_offset_by_month（与 Notebook 一致）
+        delete_data_add_data('fact_offset_by_month', df)
+        print(f"fact_offset_by_month 刷新完成，共写入 {len(df)} 条记录")
+
+        # 返回 date_range 范围内的月度数据
+        df_filtered = df[df['acct_period'].isin(date_range)].copy()
+        print(f"筛选当期抵销数完成，共 {len(df_filtered)} 条记录")
+        return df_filtered
+
     except Exception as e:
-        print(f"从数据库加载抵销数数据时发生错误: {str(e)}")
+        print(f"刷新抵销数时发生错误: {str(e)}")
         raise
 
 

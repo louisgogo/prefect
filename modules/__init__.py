@@ -15,6 +15,9 @@ from .budget_update.flows.budget_update_flow import budget_update_flow
 # 利润表刷新流程
 from .profit_refresh.flows.profit_refresh_flow import profit_refresh_flow
 
+# 往来对账流程
+from .recon.flows.recon_flow import recon_flow
+
 
 __all__ = [
     "business_line_profit_flow",
@@ -23,4 +26,5 @@ __all__ = [
     "data_import_flow",
     "budget_update_flow",
     "profit_refresh_flow",
+    "recon_flow",
 ]

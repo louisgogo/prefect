@@ -6,6 +6,7 @@ from modules import (
     budget_update_flow,
     fetch_budget_shared_rate_flow,
     profit_refresh_flow,
+    recon_flow,
 )
 import sys
 import os
@@ -88,6 +89,15 @@ def _serve_fetch_budget_shared_rate():
     )
 
 
+def _serve_recon():
+    """模块级函数，供 Process 调用"""
+    recon_flow.serve(
+        name="主流程-往来对账",
+        tags=["往来对账", "月度任务", "自动执行"],
+        description="内部往来对账流程：自动从 MySQL + Excel 采集上月数据，写入 PostgreSQL，再生成往来/销售/现金流三类对账结果并导出 Excel。",
+    )
+
+
 def deploy_to_remote_server():
     """
     从本地推送流程到远程 Prefect Server
@@ -143,6 +153,7 @@ def deploy_to_remote_server():
     process4 = Process(target=_serve_budget_update)
     process5 = Process(target=_serve_fetch_budget_shared_rate)
     process6 = Process(target=_serve_profit_refresh)
+    process7 = Process(target=_serve_recon)
 
     process1.start()
     process2.start()
@@ -150,6 +161,7 @@ def deploy_to_remote_server():
     process4.start()
     process5.start()
     process6.start()
+    process7.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -163,6 +175,7 @@ def deploy_to_remote_server():
         process4.join()
         process5.join()
         process6.join()
+        process7.join()
     except KeyboardInterrupt:
         print("\n\n正在停止部署...")
         process1.terminate()
@@ -171,12 +184,14 @@ def deploy_to_remote_server():
         process4.terminate()
         process5.terminate()
         process6.terminate()
+        process7.terminate()
         process1.join()
         process2.join()
         process3.join()
         process4.join()
         process5.join()
         process6.join()
+        process7.join()
         print("部署已停止")
 
 

@@ -9,7 +9,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 from ..tasks.profit_refresh_tasks import (
     load_revenue_for_profit_task,
     load_expense_other_for_profit_task,
-    load_offset_from_db_task,
+    refresh_offset_by_month_task,
     merge_profit_data_task,
     calculate_profit_indicators_task,
     save_profit_table_task,
@@ -45,7 +45,8 @@ def profit_refresh_flow(date_range: Optional[pd.DatetimeIndex] = None) -> None:
     # 加载数据
     df_revenue = load_revenue_for_profit_task(date_range)
     df_expense_other = load_expense_other_for_profit_task(date_range)
-    df_offset = load_offset_from_db_task(date_range)
+    # 先从 fact_offset 重新计算月度数并刷新 fact_offset_by_month，再返回当期数据
+    df_offset = refresh_offset_by_month_task(date_range)
     
     # 合并数据
     df_profit = merge_profit_data_task(df_revenue, df_expense_other, df_offset)
