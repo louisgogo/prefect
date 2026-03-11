@@ -305,6 +305,12 @@ def insert_recon_data_task(
             if col in df.columns:
                 df[col] = df[col].astype(str).replace("nan", "").replace("None", "")
 
+        # 剔除 major_cat（大类）为空的脏数据行，这类行是 Excel 末尾空行被读进来的
+        before_count = len(df)
+        df = df[df["major_cat"].str.strip().astype(bool)].copy()
+        if len(df) < before_count:
+            print(f"[INFO] 已过滤 {before_count - len(df)} 条 major_cat 为空的无效行，剩余 {len(df)} 条")
+
         # 写入数据库
         engine = engine_to_db()
         df.to_sql("excel_account_recon", con=engine, if_exists="append", index=False)
