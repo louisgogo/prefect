@@ -201,6 +201,10 @@ def load_recon_raw_task(target_date: Optional[str] = None) -> pd.DataFrame:
     df_raw["金额"] = pd.to_numeric(df_raw["金额"], errors="coerce")
     df_raw["日期"] = pd.to_datetime(df_raw["日期"], errors="coerce").dt.normalize()
 
+    # 剔除 "大类" 为空的无效脏数据（如 Excel 末尾备注/空行被多读进来的情况）
+    df_raw = df_raw.dropna(subset=["大类"]).copy()
+    df_raw = df_raw[df_raw["大类"].astype(str).str.strip().astype(bool)].copy()
+
     # 过滤目标月份
     prev_month_start = pd.Timestamp(lastmonth)
     cur_month_start = pd.Timestamp(current_month_start)
@@ -272,9 +276,14 @@ def reconcile_wanglai_task(
         df_final = df_result
         df_final["差异原因"] = None
 
-    # 按差异金额的绝对值降序排序
     if not df_final.empty:
-        df_final = df_final.iloc[df_final["差异"].abs().argsort()[::-1]]
+        # 清除完全空的行或者没有唯一名称及差异的空行
+        df_final = df_final[
+            df_final["唯一名称"].astype(str).str.strip().astype(bool) | 
+            df_final["往来核对-应付.唯一名称"].astype(str).str.strip().astype(bool)
+        ]
+        # 使用 sort_values 按差异金额绝对值降序排序，同时重置索引
+        df_final = df_final.sort_values(by="差异", key=abs, ascending=False).reset_index(drop=True)
 
     print(f"--> 往来核对完成，差异 {len(df_final)} 条")
     return df_final
@@ -339,9 +348,14 @@ def process_sales_purchases_task(
         df_final = df_result
         df_final["差异原因"] = None
 
-    # 按差异金额的绝对值降序排序
     if not df_final.empty:
-        df_final = df_final.iloc[df_final["计算差异"].abs().argsort()[::-1]]
+        # 清除公司简称和对方简称全空的无效合并行
+        df_final = df_final[
+            df_final["公司简称"].astype(str).str.strip().astype(bool) | 
+            df_final["对方简称"].astype(str).str.strip().astype(bool)
+        ]
+        # 使用 sort_values 按绝对差异降序排序
+        df_final = df_final.sort_values(by="计算差异", key=abs, ascending=False).reset_index(drop=True)
 
     print(f"--> 销售/采购核对完成，差异 {len(df_final)} 条")
     return df_final
@@ -421,9 +435,14 @@ def process_cashflow_task(
         df_final = df_result
         df_final["差异原因"] = None
 
-    # 按差异金额的绝对值降序排序
     if not df_final.empty:
-        df_final = df_final.iloc[df_final["差额"].abs().argsort()[::-1]]
+        # 清除名字完全为空的行
+        df_final = df_final[
+            df_final["唯一名称"].astype(str).str.strip().astype(bool) | 
+            df_final["现金流量-支付.唯一名称"].astype(str).str.strip().astype(bool)
+        ]
+        # 按绝对值降序排序
+        df_final = df_final.sort_values(by="差额", key=abs, ascending=False).reset_index(drop=True)
 
     print(f"--> 现金流核对完成，差异 {len(df_final)} 条")
     return df_final
