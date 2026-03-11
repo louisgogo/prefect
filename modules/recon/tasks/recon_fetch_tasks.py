@@ -292,6 +292,13 @@ def insert_recon_data_task(
         if df_combined.empty:
             raise ValueError("合并后数据为空，无法写入")
 
+        # 第一步：在做任何字符串转换之前，先用 major_cat 的原始 NaN 状态过滤
+        # （此时 NaN 还是真正的 NaN，dropna 最可靠）
+        before_count = len(df_combined)
+        df_combined = df_combined.dropna(subset=["major_cat"]).copy()
+        if len(df_combined) < before_count:
+            print(f"[INFO] 已过滤 {before_count - len(df_combined)} 条 major_cat 为空的无效行，剩余 {len(df_combined)} 条")
+
         # 数据预处理
         df = df_combined.copy()
         if "amt" in df.columns:
