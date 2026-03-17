@@ -7,6 +7,7 @@ from modules import (
     budget_update_flow,
     profit_refresh_flow,
 )
+from modules.bus_line_staging import bus_line_staging_flow
 import sys
 import os
 from datetime import datetime
@@ -113,6 +114,16 @@ if __name__ == "__main__":
         name="子流程-利润表刷新",
         tags=["业务线核算", "手动触发", "自动执行"],
         description="利润表刷新流程：处理所有已计算的月份数据，生成 fact_profit 和 fact_bus_profit 表",
+    )
+
+    print("\n" + "=" * 60)
+    print("业务线Staging抽取流程 - 生产环境部署")
+    print("=" * 60)
+    print("说明：用于从各类数据源中提取业务线拆分的基础数据（含费用、收入、存货等），打竖后存入PostgreSQL以便前端填报")
+    bus_line_staging_flow.serve(
+        name="主流程-业务线Staging抽取",
+        tags=["Staging", "业务线核算", "自动执行", "月度任务"],
+        description="将业务线拆分1-4步骤数据以EAV格式存入PostgreSQL系统待填报"
     )
 
     print("\n部署完成！")

@@ -8,10 +8,12 @@ from modules import (
     profit_refresh_flow,
     recon_flow,
 )
+from modules.bus_line_staging import bus_line_staging_flow
 import sys
 import os
 from datetime import datetime
 from multiprocessing import Process
+import time
 
 # 添加当前目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -82,8 +84,11 @@ def _serve_profit_refresh():
 
 def _serve_fetch_budget_shared_rate():
     """模块级函数，供 Process 调用"""
+    from modules.shared_rate.flows.fetch_budget_shared_rate_flow import _get_default_dates
+    defaults = _get_default_dates()
     fetch_budget_shared_rate_flow.serve(
         name="子流程-拉取预算综合比例",
+        parameters=defaults,
         tags=["预算更新", "手动触发", "自动执行", "综合比例"],
         description="获取预算表中最新1号的综合比例，并写入业务线实际比例表中覆盖年初至上月底。",
     )
@@ -95,6 +100,15 @@ def _serve_recon():
         name="主流程-往来对账",
         tags=["往来对账", "月度任务", "自动执行"],
         description="内部往来对账流程：自动从 MySQL + Excel 采集上月数据，写入 PostgreSQL，再生成往来/销售/现金流三类对账结果并导出 Excel。",
+    )
+
+
+def _serve_bus_line_staging():
+    """模块级函数，供 Process 调用"""
+    bus_line_staging_flow.serve(
+        name="主流程-业务线Staging抽取",
+        tags=["Staging", "业务线核算", "自动执行", "月度任务"],
+        description="将业务线拆分1-4步骤数据以EAV格式存入PostgreSQL系统待填报",
     )
 
 
@@ -154,14 +168,23 @@ def deploy_to_remote_server():
     process5 = Process(target=_serve_fetch_budget_shared_rate)
     process6 = Process(target=_serve_profit_refresh)
     process7 = Process(target=_serve_recon)
+    process8 = Process(target=_serve_bus_line_staging)
 
     process1.start()
+    time.sleep(1)
     process2.start()
+    time.sleep(1)
     process3.start()
+    time.sleep(1)
     process4.start()
+    time.sleep(1)
     process5.start()
+    time.sleep(1)
     process6.start()
+    time.sleep(1)
     process7.start()
+    time.sleep(1)
+    process8.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -178,20 +201,9 @@ def deploy_to_remote_server():
         process7.join()
     except KeyboardInterrupt:
         print("\n\n正在停止部署...")
-        process1.terminate()
-        process2.terminate()
-        process3.terminate()
-        process4.terminate()
-        process5.terminate()
-        process6.terminate()
-        process7.terminate()
-        process1.join()
-        process2.join()
-        process3.join()
-        process4.join()
-        process5.join()
-        process6.join()
-        process7.join()
+        for p in [process1, process2, process3, process4, process5, process6, process7, process8]:
+            p.terminate()
+            p.join()
         print("部署已停止")
 
 

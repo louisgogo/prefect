@@ -13,35 +13,65 @@ from mypackage.utilities import connect_to_db
 @task(name="fetch_latest_budget_rate", log_prints=True)
 def fetch_latest_budget_rate_task(start_date: datetime, end_date: datetime) -> pd.DataFrame:
     """
-    从 bud_bus_shared_rate 获取指定日期范围内的综合比例
-    条件：日是1号，指标为'综合比例'
+    从 bud_bus_shared_rate 获取最新月份（日为1号）的综合比例，并填充到整个日期范围
     """
     conn, cur = connect_to_db()
     
-    start_str = start_date.strftime('%Y-%m-%d')
-    end_str = end_date.strftime('%Y-%m-%d')
-    
-    query = f"""
-        SELECT bus_line, amt as rate, report_date as date
-        FROM bud_bus_shared_rate
-        WHERE EXTRACT(DAY FROM report_date) = 1
-          AND indicator = '综合比例'
-          AND report_date >= '{start_str}' 
-          AND report_date <= '{end_str}'
-    """
     try:
-        cur.execute(query)
-        df = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
+        # 1. 查找最新的一号日期
+        query_latest_date = """
+            SELECT MAX(report_date) 
+            FROM bud_bus_shared_rate 
+            WHERE EXTRACT(DAY FROM report_date) = 1 
+              AND indicator = '综合比例'
+        """
+        cur.execute(query_latest_date)
+        latest_date = cur.fetchone()[0]
         
-        if df.empty:
-            print(f"警告：未在 {start_str} 至 {end_str} 期间找到任何综合比例记录！")
+        if not latest_date:
+            print(f"警告：未在 bud_bus_shared_rate 中找到任何'综合比例'记录！")
             return pd.DataFrame()
             
-        # 将 rate 列的 null 自动填充为 0
-        df['rate'] = df['rate'].fillna(0)
+        print(f"获取到最新的比例日期为: {latest_date}")
+        
+        # 2. 获取该日期的所有比例
+        query_rates = f"""
+            SELECT bus_line, amt as rate
+            FROM bud_bus_shared_rate
+            WHERE report_date = '{latest_date}'
+              AND indicator = '综合比例'
+        """
+        cur.execute(query_rates)
+        df_latest = pd.DataFrame(cur.fetchall(), columns=['bus_line', 'rate'])
+        
+        if df_latest.empty:
+            print(f"警告：日期 {latest_date} 下没有找到比例数据。")
+            return pd.DataFrame()
+
+        # 3. 构造 1 号日期序列
+        # 生成各月1号的列表
+        date_list = []
+        curr = start_date.replace(day=1)
+        while curr <= end_date:
+            date_list.append(curr)
+            curr += relativedelta(months=1)
             
-        print(f"成功获取 {start_str} 至 {end_str} 的综合比例，共 {len(df)} 条记录。")
-        return df
+        # 4. 填充数据
+        # 为每个日期生成一份最新的比例副本
+        all_dfs = []
+        for d in date_list:
+            df_temp = df_latest.copy()
+            df_temp['date'] = d
+            all_dfs.append(df_temp)
+            
+        df_final = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
+        
+        # 将 rate 列的 null 自动填充为 0
+        if not df_final.empty:
+            df_final['rate'] = df_final['rate'].fillna(0)
+            
+        print(f"成功填充综合比例，从 {start_date.strftime('%Y-%m-%d')} 至 {end_date.strftime('%Y-%m-%d')}，共 {len(df_final)} 条记录。")
+        return df_final
     finally:
         cur.close()
         conn.close()
