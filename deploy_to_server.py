@@ -1,19 +1,20 @@
 """从本地推送到远程 Prefect Server 的部署脚本"""
+import os
+import sys
+import time
+from datetime import datetime
+from multiprocessing import Process
+
 from modules import (
+    budget_update_flow,
     business_line_profit_flow,
     calculate_shared_rate_flow,
     data_import_flow,
-    budget_update_flow,
     fetch_budget_shared_rate_flow,
     profit_refresh_flow,
     recon_flow,
 )
 from modules.bus_line_staging import bus_line_staging_flow
-import sys
-import os
-from datetime import datetime
-from multiprocessing import Process
-import time
 
 # 添加当前目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -23,8 +24,7 @@ sys.path.append(current_dir)
 # 若已设置环境变量 PREFECT_API_URL，则优先使用环境变量；否则使用下面地址
 PREFECT_SERVER_URL = "http://10.18.8.191:4200"
 # API 地址（Prefect 要求带 /api 后缀）
-PREFECT_API_URL = os.environ.get(
-    "PREFECT_API_URL") or f"{PREFECT_SERVER_URL.rstrip('/')}/api"
+PREFECT_API_URL = os.environ.get("PREFECT_API_URL") or f"{PREFECT_SERVER_URL.rstrip('/')}/api"
 
 
 def _serve_business_line(last_month_year: int, last_month: int):
@@ -64,6 +64,7 @@ def _serve_data_import(last_month_year: int, last_month: int):
 def _serve_budget_update():
     """模块级函数，供 Process 调用（预算更新为手动触发，参数按当前月份设默认值）"""
     from modules.budget_update.flows.budget_update_flow import _get_budget_defaults_by_date
+
     budget_defaults = _get_budget_defaults_by_date()
     budget_update_flow.serve(
         name="主流程-预算更新",
@@ -85,6 +86,7 @@ def _serve_profit_refresh():
 def _serve_fetch_budget_shared_rate():
     """模块级函数，供 Process 调用"""
     from modules.shared_rate.flows.fetch_budget_shared_rate_flow import _get_default_dates
+
     defaults = _get_default_dates()
     fetch_budget_shared_rate_flow.serve(
         name="子流程-拉取预算综合比例",
@@ -138,7 +140,7 @@ def deploy_to_remote_server():
         # systemd 等非交互环境没有 stdin，直接继续；仅在有终端时询问
         if sys.stdin.isatty():
             response = input("是否继续部署？(y/n): ")
-            if response.lower() != 'y':
+            if response.lower() != "y":
                 print("部署已取消")
                 return
         else:
@@ -158,12 +160,9 @@ def deploy_to_remote_server():
 
     # 使用多进程同时部署多个流程（serve() 会持续运行）
     # 目标必须是模块级函数，否则 Windows 下 multiprocessing 无法 pickle 嵌套函数
-    process1 = Process(target=_serve_business_line,
-                       args=(last_month_year, last_month))
-    process2 = Process(target=_serve_shared_rate,
-                       args=(last_month_year, last_month))
-    process3 = Process(target=_serve_data_import,
-                       args=(last_month_year, last_month))
+    process1 = Process(target=_serve_business_line, args=(last_month_year, last_month))
+    process2 = Process(target=_serve_shared_rate, args=(last_month_year, last_month))
+    process3 = Process(target=_serve_data_import, args=(last_month_year, last_month))
     process4 = Process(target=_serve_budget_update)
     process5 = Process(target=_serve_fetch_budget_shared_rate)
     process6 = Process(target=_serve_profit_refresh)
@@ -215,4 +214,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n部署失败: {str(e)}")
         import traceback
+
         traceback.print_exc()

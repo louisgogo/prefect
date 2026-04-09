@@ -3,13 +3,14 @@
 阶段1：从 MySQL + 共享盘 Excel 采集原始数据，先删除目标月旧数据，再写入 PostgreSQL。
 移植自 FastAPI 项目 recon_tool.py，改为同步版本，依赖 mypackage。
 """
+import os
 import platform
 import sys
-import os
 from datetime import date, timedelta
-from typing import Optional, Dict, Any, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
+
 from prefect import task
 
 # 添加 prefect 根目录到路径
@@ -19,6 +20,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 # ──────────────────────────────────────────────
 # 辅助：计算目标月份参数
 # ──────────────────────────────────────────────
+
 
 def _calc_target_month(target_date: Optional[str] = None) -> Tuple[date, str, str]:
     """
@@ -55,6 +57,7 @@ def _calc_target_month(target_date: Optional[str] = None) -> Tuple[date, str, st
 # ──────────────────────────────────────────────
 # Task 1：从 MySQL 读取当月对账数据
 # ──────────────────────────────────────────────
+
 
 @task(name="fetch_recon_from_mysql", log_prints=True)
 def fetch_recon_from_mysql_task(target_date: Optional[str] = None) -> pd.DataFrame:
@@ -116,6 +119,7 @@ def fetch_recon_from_mysql_task(target_date: Optional[str] = None) -> pd.DataFra
 # ──────────────────────────────────────────────
 # Task 2：从共享盘 Excel 收集数据
 # ──────────────────────────────────────────────
+
 
 @task(name="collect_recon_from_excel", log_prints=True)
 def collect_recon_from_excel_task(target_date: Optional[str] = None) -> pd.DataFrame:
@@ -208,6 +212,7 @@ def collect_recon_from_excel_task(target_date: Optional[str] = None) -> pd.DataF
 # Task 3：删除目标月旧数据
 # ──────────────────────────────────────────────
 
+
 @task(name="delete_old_recon_data", log_prints=True)
 def delete_old_recon_data_task(target_date: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -231,14 +236,13 @@ def delete_old_recon_data_task(target_date: Optional[str] = None) -> Dict[str, A
             try:
                 count_result = conn.execute(
                     text("SELECT count(*) FROM excel_account_recon WHERE date = :d"),
-                    {"d": lastmonth}
+                    {"d": lastmonth},
                 )
                 count = count_result.scalar()
                 print(f"--> 准备删除 {lastmonth_str} 旧数据，现有 {count} 条")
 
                 conn.execute(
-                    text("DELETE FROM excel_account_recon WHERE date = :d"),
-                    {"d": lastmonth}
+                    text("DELETE FROM excel_account_recon WHERE date = :d"), {"d": lastmonth}
                 )
                 trans.commit()
                 print(f"--> 删除 {lastmonth_str} 旧数据完成，共 {count} 条")
@@ -254,6 +258,7 @@ def delete_old_recon_data_task(target_date: Optional[str] = None) -> Dict[str, A
 # ──────────────────────────────────────────────
 # Task 4：合并 MySQL + Excel 并写入 PostgreSQL
 # ──────────────────────────────────────────────
+
 
 @task(name="insert_recon_data", log_prints=True)
 def insert_recon_data_task(
@@ -297,17 +302,29 @@ def insert_recon_data_task(
         before_count = len(df_combined)
         df_combined = df_combined.dropna(subset=["major_cat"]).copy()
         if len(df_combined) < before_count:
-            print(f"[INFO] 已过滤 {before_count - len(df_combined)} 条 major_cat 为空的无效行，剩余 {len(df_combined)} 条")
+            print(
+                f"[INFO] 已过滤 {before_count - len(df_combined)} 条 major_cat 为空的无效行，剩余 {len(df_combined)} 条"
+            )
 
         # 数据预处理
         df = df_combined.copy()
         if "amt" in df.columns:
             df["amt"] = pd.to_numeric(df["amt"], errors="coerce").fillna(0)
         if "date" in df.columns:
-            df["date"] = pd.to_datetime(df["date"], errors="coerce").fillna(pd.Timestamp("1900-01-01"))
+            df["date"] = pd.to_datetime(df["date"], errors="coerce").fillna(
+                pd.Timestamp("1900-01-01")
+            )
 
-        string_cols = ["major_cat", "co_abbr", "prim_subj", "class",
-                       "cp_abbr", "content", "remarks", "resp_person"]
+        string_cols = [
+            "major_cat",
+            "co_abbr",
+            "prim_subj",
+            "class",
+            "cp_abbr",
+            "content",
+            "remarks",
+            "resp_person",
+        ]
         for col in string_cols:
             if col in df.columns:
                 df[col] = df[col].astype(str).replace("nan", "").replace("None", "")

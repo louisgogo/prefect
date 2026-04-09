@@ -1,16 +1,17 @@
 """生产环境部署脚本（带计划执行）"""
+import os
+import sys
+from datetime import datetime
+
 from modules import (
+    budget_update_flow,
     business_line_profit_flow,
     calculate_shared_rate_flow,
-    fetch_budget_shared_rate_flow,
     data_import_flow,
-    budget_update_flow,
+    fetch_budget_shared_rate_flow,
     profit_refresh_flow,
 )
 from modules.bus_line_staging import bus_line_staging_flow
-import sys
-import os
-from datetime import datetime
 
 # 添加当前目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -95,6 +96,7 @@ if __name__ == "__main__":
     print("预算更新流程 - 生产环境部署")
     print("=" * 60)
     from modules.budget_update.flows.budget_update_flow import _get_budget_defaults_by_date
+
     budget_defaults = _get_budget_defaults_by_date()
     print("说明：预算更新为手动触发；参数已按当前月份设默认值（11月～2月→年初预算，4月～7月→年中预算）")
     print("易混点：report_date=要替换的那批日期；version=本批新数据的填报日期标签。")
@@ -123,7 +125,7 @@ if __name__ == "__main__":
     bus_line_staging_flow.serve(
         name="主流程-业务线Staging抽取",
         tags=["Staging", "业务线核算", "自动执行", "月度任务"],
-        description="将业务线拆分1-4步骤数据以EAV格式存入PostgreSQL系统待填报"
+        description="将业务线拆分1-4步骤数据以EAV格式存入PostgreSQL系统待填报",
     )
 
     print("\n部署完成！")

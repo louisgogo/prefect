@@ -1,28 +1,35 @@
 """数据导入流程"""
+import os
 import platform
+import sys
+from datetime import datetime
+from typing import List, Optional
+
+import pandas as pd
+
+from prefect import flow
+from utils.date_utils import (
+    get_date_range_by_lastmonth,
+    get_date_range_by_month,
+    get_date_range_by_months,
+)
 
 from ..tasks.data_import_tasks import (
     read_excel_data_task,
-    update_production_data_task,
-    update_rd_data_task,
-    update_purchase_data_task,
-    update_inventory_data_task,
-    update_cost_control_data_task,
     update_business_data_task,
-    update_personnel_data_task,
+    update_cost_control_data_task,
+    update_inventory_data_task,
     update_manual_refresh_data_task,
+    update_personnel_data_task,
+    update_production_data_task,
+    update_purchase_data_task,
+    update_rd_data_task,
 )
-from utils.date_utils import get_date_range_by_month, get_date_range_by_months, get_date_range_by_lastmonth
-from prefect import flow
-from typing import List, Optional
-from datetime import datetime
-import pandas as pd
-import sys
-import os
 
 # 添加根目录到路径
-sys.path.append(os.path.dirname(os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.append(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+)
 
 # Windows 与 Rocky Linux 下 Excel 根目录默认路径（Rocky 路径请按实际挂载或数据目录修改）
 if platform.system() == "Windows":
@@ -106,8 +113,7 @@ def data_import_flow(
         elif months is not None:
             month_list = [(process_year, m) for m in months]
             print(f"批量处理模式，月份数: {len(months)}，将按月循环执行")
-            print(
-                f"处理月份: {', '.join([f'{process_year}年{m}月' for m in months])}")
+            print(f"处理月份: {', '.join([f'{process_year}年{m}月' for m in months])}")
     else:
         # 如果指定了年份
         if months is not None:
@@ -126,8 +132,7 @@ def data_import_flow(
                 month_list = [(year, process_month)]
                 print(f"只指定了年份 {year}，使用上个月: {process_month}月")
             else:
-                raise ValueError(
-                    f"只指定了年份 {year}，但上个月是 {process_year}年{process_month}月，请同时指定月份")
+                raise ValueError(f"只指定了年份 {year}，但上个月是 {process_year}年{process_month}月，请同时指定月份")
 
     print(f"replace_existing 参数: {replace_existing}")
     if not replace_existing:
@@ -142,56 +147,39 @@ def data_import_flow(
     # 按月循环执行数据导入
     for idx, (process_year, process_month) in enumerate(month_list, 1):
         print(f"\n{'='*60}")
-        print(
-            f"开始处理第 {idx}/{len(month_list)} 个月：{process_year}年{process_month}月")
+        print(f"开始处理第 {idx}/{len(month_list)} 个月：{process_year}年{process_month}月")
         print(f"{'='*60}")
 
         # 获取该月的日期范围
         date_range = get_date_range_by_month(process_year, process_month)
-        start_date = date_range.min().strftime('%Y-%m-%d')
-        end_date = date_range.max().strftime('%Y-%m-%d')
+        start_date = date_range.min().strftime("%Y-%m-%d")
+        end_date = date_range.max().strftime("%Y-%m-%d")
         print(f"日期范围: {start_date} 到 {end_date}")
 
         try:
             # 1. 更新生产数据
-            update_production_data_task(
-                dfs, start_date, end_date, replace_existing
-            )
+            update_production_data_task(dfs, start_date, end_date, replace_existing)
 
             # 2. 更新研发数据
-            update_rd_data_task(
-                dfs, start_date, end_date, replace_existing
-            )
+            update_rd_data_task(dfs, start_date, end_date, replace_existing)
 
             # 3. 更新采购数据
-            update_purchase_data_task(
-                dfs, start_date, end_date, replace_existing
-            )
+            update_purchase_data_task(dfs, start_date, end_date, replace_existing)
 
             # 4. 更新存货数据
-            update_inventory_data_task(
-                dfs, start_date, end_date, replace_existing
-            )
+            update_inventory_data_task(dfs, start_date, end_date, replace_existing)
 
             # 5. 更新费控数据
-            update_cost_control_data_task(
-                dfs, start_date, end_date, replace_existing
-            )
+            update_cost_control_data_task(dfs, start_date, end_date, replace_existing)
 
             # 6. 更新业务数据
-            update_business_data_task(
-                dfs, start_date, end_date, replace_existing, root_directory
-            )
+            update_business_data_task(dfs, start_date, end_date, replace_existing, root_directory)
 
             # 7. 更新人力费用数据
-            update_personnel_data_task(
-                dfs, start_date, end_date, replace_existing
-            )
+            update_personnel_data_task(dfs, start_date, end_date, replace_existing)
 
             # 8. 更新手工刷新数据
-            update_manual_refresh_data_task(
-                dfs, start_date, end_date, replace_existing
-            )
+            update_manual_refresh_data_task(dfs, start_date, end_date, replace_existing)
 
             print(f"\n✓ {process_year}年{process_month}月 数据导入完成")
         except Exception as e:
@@ -199,6 +187,7 @@ def data_import_flow(
             print(f"\n❌ {error_msg}")
             # 打印完整的错误堆栈信息
             import traceback
+
             print(f"错误详情:\n{traceback.format_exc()}")
             # 重新抛出异常，让 Prefect UI 能够捕获并显示为失败状态
             raise Exception(error_msg) from e

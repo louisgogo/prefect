@@ -1,23 +1,23 @@
 """预算更新流程：从 FONE 拉取预算、严格映射检查、写库"""
-from prefect import flow
-from typing import Optional
-import pandas as pd
-import sys
 import os
+import sys
 from datetime import datetime
+from typing import Optional
+
+import pandas as pd
+
+from prefect import flow
 
 sys.path.append(
-    os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    )
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 )
 
 from ..tasks.budget_update_tasks import (
     fetch_fone_budget_data_task,
+    process_cash_budget_task,
     process_expense_budget_task,
     process_income_budget_task,
     process_personnel_budget_task,
-    process_cash_budget_task,
     process_profit_budget_task,
     process_shared_rate_budget_task,
     write_budget_to_db_task,
@@ -124,9 +124,7 @@ def budget_update_flow(
 
     # 参数校验
     if not budget_year or not fone_version or not version or not budget_type or not report_date:
-        raise ValueError(
-            "必填参数不能为空: budget_year, fone_version, version, budget_type, report_date"
-        )
+        raise ValueError("必填参数不能为空: budget_year, fone_version, version, budget_type, report_date")
     if budget_type not in ("年初预算", "年中预算"):
         raise ValueError("budget_type 必须为「年初预算」或「年中预算」")
 
@@ -167,15 +165,11 @@ def budget_update_flow(
         df_emp = process_personnel_budget_task(
             data["fone_emp"], version=version, output_dir=output_dir
         )
-        df_cash = process_cash_budget_task(
-            data["fone_amo"], version=version, output_dir=output_dir
-        )
+        df_cash = process_cash_budget_task(data["fone_amo"], version=version, output_dir=output_dir)
         df_pro = process_profit_budget_task(
             data["fone_pro"], version=version, output_dir=output_dir
         )
-        df_shared_rate = process_shared_rate_budget_task(
-            data["fone_shared_rate"], version=version
-        )
+        df_shared_rate = process_shared_rate_budget_task(data["fone_shared_rate"], version=version)
 
         # 3. 写库（年初 / 年中分支在 task 内）
         write_budget_to_db_task(
@@ -199,5 +193,6 @@ def budget_update_flow(
         error_msg = f"预算更新流程失败: {str(e)}"
         print(f"\n{error_msg}")
         import traceback
+
         print(traceback.format_exc())
         raise Exception(error_msg) from e

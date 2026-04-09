@@ -1,19 +1,20 @@
 """本地测试部署脚本"""
+import os
+import sys
+import time
+from datetime import datetime
+from multiprocessing import Process
+
 from modules import (
+    budget_update_flow,
     business_line_profit_flow,
     calculate_shared_rate_flow,
     data_import_flow,
-    budget_update_flow,
-    recon_flow,
-    profit_refresh_flow,
     fetch_budget_shared_rate_flow,
+    profit_refresh_flow,
+    recon_flow,
 )
 from modules.bus_line_staging import bus_line_staging_flow
-import sys
-import os
-from multiprocessing import Process
-from datetime import datetime
-import time
 
 # 添加当前目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -124,7 +125,7 @@ def deploy_recon_flow():
     print("=" * 60)
     print("内部往来对账流程 - 本地测试部署")
     print("=" * 60)
-    
+
     # 部署内部往来对账流程到本地 Prefect Server
     recon_flow.serve(
         name="内部往来对账流程-本地测试",
@@ -132,12 +133,13 @@ def deploy_recon_flow():
         description="本地测试用：自动从 MySQL + Excel 采集上月数据写入 PostgreSQL，生成往来/销售/现金流对账结果并导出 Excel。",
     )
 
+
 def deploy_profit_refresh_flow():
     """部署利润表刷新流程"""
     print("=" * 60)
     print("利润表刷新流程 - 本地测试部署")
     print("=" * 60)
-    
+
     # 部署利润表刷新流程到本地 Prefect Server
     profit_refresh_flow.serve(
         name="利润表刷新流程-本地测试",
@@ -145,25 +147,28 @@ def deploy_profit_refresh_flow():
         description="本地测试用：处理所有已计算的月份数据，生成 fact_profit 和 fact_bus_profit 表。",
     )
 
+
 def deploy_bus_line_staging_flow():
     """部署业务线数据中间库抽取流程"""
     print("=" * 60)
     print("业务线Staging抽取流程 - 本地测试部署")
     print("=" * 60)
-    
+
     bus_line_staging_flow.serve(
         name="业务线Staging抽取流程-本地测试",
         tags=["本地测试", "Staging", "业务线核算"],
-        description="将业务线拆分1-4步骤数据以EAV格式存入PostgreSQL系统待填报"
+        description="将业务线拆分1-4步骤数据以EAV格式存入PostgreSQL系统待填报",
     )
+
 
 def deploy_fetch_budget_shared_rate_flow():
     """部署拉取预算综合比例流程"""
     from modules.shared_rate.flows.fetch_budget_shared_rate_flow import _get_default_dates
+
     print("=" * 60)
     print("拉取预算综合比例流程 - 本地测试部署")
     print("=" * 60)
-    
+
     defaults = _get_default_dates()
     fetch_budget_shared_rate_flow.serve(
         name="拉取预算综合比例-本地测试",
@@ -171,6 +176,7 @@ def deploy_fetch_budget_shared_rate_flow():
         description="本地测试用：获取预算表中最新1号的综合比例，并写入业务线实际比例表中覆盖年初至上月底。",
         parameters=defaults,
     )
+
 
 if __name__ == "__main__":
     print("开始部署流程...")

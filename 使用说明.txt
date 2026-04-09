@@ -5,7 +5,7 @@
 📦 部署包内容
 -------------
 ✓ flows/          - Flow 定义
-✓ tasks/          - Task 定义  
+✓ tasks/          - Task 定义
 ✓ utils/          - 工具函数
 ✓ deploy_local.py - 本地测试部署脚本
 ✓ deploy_production.py - 生产环境部署脚本
@@ -17,23 +17,23 @@
 -----------
 
 1. 首先运行复制脚本，将 flows、tasks、utils 文件夹复制到部署包：
-   
+
    python 复制文件.py
 
 2. 安装依赖：
-   
+
    pip install -r requirements.txt
 
 3. 选择部署方式：
 
    A. 直接测试（不使用 Prefect Server）：
       python test_flow.py
-   
+
    B. 本地测试（可在 UI 查看）：
       1) 启动 Prefect Server: prefect server start
       2) 运行: python deploy_local.py
       3) 访问: http://127.0.0.1:4200
-   
+
    C. 生产环境部署（带计划执行）：
       1) 启动 Prefect Server: prefect server start
       2) 运行: python deploy_production.py

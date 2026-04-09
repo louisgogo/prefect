@@ -1,42 +1,47 @@
 """业务线损益计算流程 - 业务线数据计算和利润表刷新"""
-from prefect import flow
-from typing import List, Optional
-import pandas as pd
-import sys
 import os
+import sys
+from typing import List, Optional
+
+import pandas as pd
+
+from prefect import flow
+
 # 添加根目录到路径（prefect目录）
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-from utils.date_utils import get_date_range_by_month, get_date_range_by_months
-# 从同模块导入
-from .revenue_expense_profit_flow import revenue_expense_profit_flow
-from .asset_detail_flow import asset_detail_flow
+sys.path.append(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+)
 # 从 profit_refresh 模块导入
 from modules.profit_refresh.flows.profit_refresh_flow import profit_refresh_flow
 from modules.shared_rate.flows.fetch_budget_shared_rate_flow import fetch_budget_shared_rate_flow
+from utils.date_utils import get_date_range_by_month, get_date_range_by_months
+
+from .asset_detail_flow import asset_detail_flow
+
+# 从同模块导入
+from .revenue_expense_profit_flow import revenue_expense_profit_flow
 
 
 @flow(name="business_line_profit_flow", log_prints=True)
 def business_line_profit_flow(
-    year: int,
-    month: Optional[int] = None,
-    months: Optional[List[int]] = None
+    year: int, month: Optional[int] = None, months: Optional[List[int]] = None
 ) -> None:
     """
     业务线损益计算流程
-    
+
     负责：
     1. 业务线数据计算（收入、费用、利润、资产明细）
     2. 利润表刷新
-    
+
     Args:
         year: 年份
         month: 单个月份（1-12），如果提供则只处理该月
         months: 月份列表（1-12），如果提供则按月循环处理多个月份，例如 [10, 11, 12]
-    
+
     Examples:
         # 处理单个月份（只处理 12 月）
         business_line_profit_flow(year=2025, month=12)
-        
+
         # 批量处理多个月份（按月循环执行，避免内存溢出）
         business_line_profit_flow(year=2025, months=[10, 11, 12])
     """
@@ -71,8 +76,7 @@ def business_line_profit_flow(
     # 按月循环执行
     for idx, (process_year, process_month) in enumerate(month_list, 1):
         print(f"\n{'='*60}")
-        print(
-            f"开始处理第 {idx}/{len(month_list)} 个月：{process_year}年{process_month}月")
+        print(f"开始处理第 {idx}/{len(month_list)} 个月：{process_year}年{process_month}月")
         print(f"{'='*60}")
 
         # 获取单个月份的日期范围

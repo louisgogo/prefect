@@ -1,15 +1,17 @@
 """预算更新相关 Tasks：FONE 取数、严格映射检查、清洗、写库"""
-from prefect import task
-from typing import Optional, Dict, Any
-import pandas as pd
-import sys
 import os
+import sys
+from typing import Any, Dict, Optional
+
+import pandas as pd
+
+from prefect import task
 
 # 添加根目录到路径（prefect 目录）
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from mypackage.mapping import combined_column_mapping, reverse_combined_column_mapping
 from mypackage.utilities import connect_to_db, connect_to_fone, update_report_data
-from mypackage.mapping import reverse_combined_column_mapping, combined_column_mapping
 
 # 流水映射表（产品名称 -> 编码）
 MAP_AMO = {
@@ -40,8 +42,7 @@ def _read_data(table_name: str, db_type: str = "FONE") -> pd.DataFrame:
                 df = pd.DataFrame(
                     result,
                     columns=[
-                        reverse_combined_column_mapping.get(desc[0])
-                        for desc in cur.description
+                        reverse_combined_column_mapping.get(desc[0]) for desc in cur.description
                     ],
                 )
             else:
@@ -79,9 +80,7 @@ def _check_mapping_strict(
         if not unmapped.empty:
             path = os.path.join(output_dir, "未映射的客户编码.csv")
             unmapped.to_csv(path, encoding="utf-8-sig")
-            raise ValueError(
-                f"存在未映射的客户编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。"
-            )
+            raise ValueError(f"存在未映射的客户编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。")
         df = df.drop(["标识"], axis=1)
 
     if dev_col:
@@ -97,9 +96,7 @@ def _check_mapping_strict(
         if not unmapped.empty:
             path = os.path.join(output_dir, "未映射的研发项目编码.csv")
             unmapped.to_csv(path, encoding="utf-8-sig")
-            raise ValueError(
-                f"存在未映射的研发项目编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。"
-            )
+            raise ValueError(f"存在未映射的研发项目编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。")
         df = df.drop(["编码"], axis=1)
 
     if exp_col:
@@ -122,9 +119,7 @@ def _check_mapping_strict(
         if not unmapped.empty:
             path = os.path.join(output_dir, "未映射的预算费用项目编码.csv")
             unmapped.to_csv(path, encoding="utf-8-sig")
-            raise ValueError(
-                f"存在未映射的预算费用项目编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。"
-            )
+            raise ValueError(f"存在未映射的预算费用项目编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。")
         df = df.drop(["唯一费用标识"], axis=1)
 
     if ind_col:
@@ -139,9 +134,7 @@ def _check_mapping_strict(
         if not unmapped.empty:
             path = os.path.join(output_dir, "未映射的指标编码.csv")
             unmapped.to_csv(path, encoding="utf-8-sig")
-            raise ValueError(
-                f"存在未映射的指标编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。"
-            )
+            raise ValueError(f"存在未映射的指标编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。")
         df = df.drop(["标识(ID)"], axis=1)
 
     if org_col:
@@ -156,9 +149,7 @@ def _check_mapping_strict(
         if not unmapped.empty:
             path = os.path.join(output_dir, "未映射的组织编码.csv")
             unmapped.to_csv(path, encoding="utf-8-sig")
-            raise ValueError(
-                f"存在未映射的组织编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。"
-            )
+            raise ValueError(f"存在未映射的组织编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。")
         df = df.drop(["标识(ID)"], axis=1)
 
     if prod_col:
@@ -173,9 +164,7 @@ def _check_mapping_strict(
         if not unmapped.empty:
             path = os.path.join(output_dir, "未映射的产品编码.csv")
             unmapped.to_csv(path, encoding="utf-8-sig")
-            raise ValueError(
-                f"存在未映射的产品编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。"
-            )
+            raise ValueError(f"存在未映射的产品编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。")
         df = df.drop(["标识"], axis=1)
 
     return df
@@ -193,18 +182,9 @@ def fetch_fone_budget_data_task(
     try:
         fone_exp = _read_data("Fone2BI_Budget_FY", "FONE")
         fone_exp["资产类型"] = fone_exp["资产类型"].fillna("默认成员").replace("", "默认成员")
-        fone_exp["费用标识"] = (
-            fone_exp["部门属性"]
-            + "-"
-            + fone_exp["资产类型"]
-            + "-"
-            + fone_exp["预算科目编码"]
-        )
+        fone_exp["费用标识"] = fone_exp["部门属性"] + "-" + fone_exp["资产类型"] + "-" + fone_exp["预算科目编码"]
         fone_exp["日期"] = (
-            fone_exp["年度"].astype(str)
-            + "-"
-            + fone_exp["期间"].str.replace("月份", "")
-            + "-1"
+            fone_exp["年度"].astype(str) + "-" + fone_exp["期间"].str.replace("月份", "") + "-1"
         )
         fone_exp["业务线名称"] = fone_exp["业务线名称"].replace("待分摊业务线", "抵销数")
         fone_exp = fone_exp[fone_exp["年度"] == budget_year]
@@ -212,20 +192,14 @@ def fetch_fone_budget_data_task(
 
         fone_emp = _read_data("Fone2BI_Budget_EMP", "FONE")
         fone_emp["日期"] = (
-            fone_emp["年度"].astype(str)
-            + "-"
-            + fone_emp["期间"].str.replace("月份", "")
-            + "-1"
+            fone_emp["年度"].astype(str) + "-" + fone_emp["期间"].str.replace("月份", "") + "-1"
         )
         fone_emp = fone_emp[fone_emp["年度"] == budget_year]
         fone_emp = fone_emp[fone_emp["版本编码"] == fone_version]
 
         fone_biz = _read_data("Fone2BI_Budget_BIZ", "FONE")
         fone_biz["日期"] = (
-            fone_biz["年度"].astype(str)
-            + "-"
-            + fone_biz["期间"].str.replace("月份", "")
-            + "-1"
+            fone_biz["年度"].astype(str) + "-" + fone_biz["期间"].str.replace("月份", "") + "-1"
         )
         fone_biz["业务线名称"] = fone_biz["业务线名称"].replace("待分摊业务线", "抵销数")
         fone_biz = fone_biz[fone_biz["年度"] == budget_year]
@@ -233,10 +207,7 @@ def fetch_fone_budget_data_task(
 
         fone_amo = _read_data("Fone2BI_Budget_Amount", "FONE")
         fone_amo["日期"] = (
-            fone_amo["年度"].astype(str)
-            + "-"
-            + fone_amo["期间"].str.replace("月份", "")
-            + "-1"
+            fone_amo["年度"].astype(str) + "-" + fone_amo["期间"].str.replace("月份", "") + "-1"
         )
         fone_amo["产品类型"] = fone_amo["产品名称"].map(MAP_AMO)
         fone_amo = fone_amo[fone_amo["预算科目编码"] == "BA0116"]
@@ -245,10 +216,7 @@ def fetch_fone_budget_data_task(
 
         fone_pro = _read_data("Fone2BI_Budget_Profit", "FONE")
         fone_pro["日期"] = (
-            fone_pro["年度"].astype(str)
-            + "-"
-            + fone_pro["期间"].str.replace("月份", "")
-            + "-1"
+            fone_pro["年度"].astype(str) + "-" + fone_pro["期间"].str.replace("月份", "") + "-1"
         )
         fone_pro["业务线名称"] = fone_pro["业务线名称"].replace("待分摊业务线", "抵销数")
         fone_pro = fone_pro[fone_pro["年度"] == budget_year]
@@ -258,12 +226,8 @@ def fetch_fone_budget_data_task(
         fone_shared_rate = _read_data("Fone2BI_Budget_Percent", "FONE")
         fone_shared_rate = fone_shared_rate[fone_shared_rate["YYYY"] == budget_year]
         fone_shared_rate = fone_shared_rate[fone_shared_rate["版本"] == fone_version]
-        fone_shared_rate = fone_shared_rate.drop(
-            ["序号", "id", "YYYY", "版本"], axis=1
-        )
-        fone_shared_rate = fone_shared_rate.melt(
-            id_vars=["指标"], var_name="业务线", value_name="金额"
-        )
+        fone_shared_rate = fone_shared_rate.drop(["序号", "id", "YYYY", "版本"], axis=1)
+        fone_shared_rate = fone_shared_rate.melt(id_vars=["指标"], var_name="业务线", value_name="金额")
 
         map_ind = _read_data("map_ind", "PSQL")
 
@@ -293,9 +257,7 @@ def process_expense_budget_task(
 ) -> pd.DataFrame:
     """费用预算：清洗 + 严格映射(组织、费用标识)，未映射则中断。"""
     try:
-        df = _check_mapping_strict(
-            fone_exp, output_dir, org_col="组织编码", exp_col="费用标识"
-        )
+        df = _check_mapping_strict(fone_exp, output_dir, org_col="组织编码", exp_col="费用标识")
         df = df[
             [
                 "组织编码",
@@ -394,9 +356,7 @@ def process_income_budget_task(
             }
         )
         df["填报日期"] = version
-        df["一级科目"] = df["指标"].apply(
-            lambda x: "营业收入" if "收入" in str(x) else "营业成本"
-        )
+        df["一级科目"] = df["指标"].apply(lambda x: "营业收入" if "收入" in str(x) else "营业成本")
         target_indicators = ["BA01050302", "BA01051404"]
         cond = df["指标标识"].isin(target_indicators)
         df.loc[cond, "本月金额"] = -df.loc[cond, "本月金额"]
@@ -467,12 +427,8 @@ def process_cash_budget_task(
         if not unmapped.empty:
             path = os.path.join(output_dir, "未映射的流水产品名称.csv")
             unmapped.to_csv(path, encoding="utf-8-sig")
-            raise ValueError(
-                f"流水预算存在未映射的产品名称，已导出至: {os.path.abspath(path)}，请维护 map_amo 后重试。"
-            )
-        df = fone_amo[
-            ["组织名称", "产品名称", "预算编制说明", "预算数", "日期", "产品类型"]
-        ].copy()
+            raise ValueError(f"流水预算存在未映射的产品名称，已导出至: {os.path.abspath(path)}，请维护 map_amo 后重试。")
+        df = fone_amo[["组织名称", "产品名称", "预算编制说明", "预算数", "日期", "产品类型"]].copy()
         df = df.rename(
             columns={
                 "组织名称": "业务部门名称",
@@ -498,9 +454,7 @@ def process_profit_budget_task(
 ) -> pd.DataFrame:
     """利润预算：清洗 + 严格映射(组织、指标)，未映射则中断。"""
     try:
-        df = _check_mapping_strict(
-            fone_pro, output_dir, org_col="组织编码", ind_col="预算科目编码"
-        )
+        df = _check_mapping_strict(fone_pro, output_dir, org_col="组织编码", ind_col="预算科目编码")
         df = df[
             [
                 "组织编码",
@@ -611,9 +565,7 @@ def write_budget_to_db_task(
             psql_pro["填报日期"] = report_date
             psql_pro["会计期间"] = pd.to_datetime(psql_pro["会计期间"])
             psql_pro = psql_pro[psql_pro["会计期间"].isin(date_range_psql)]
-            psql_pro = psql_pro.rename(
-                columns={"会计期间": "日期", "金额": "预算系统金额"}
-            )
+            psql_pro = psql_pro.rename(columns={"会计期间": "日期", "金额": "预算系统金额"})
 
             psql_exp = _read_data("fact_bus_expense", "PSQL")
             psql_exp["填报日期"] = report_date
@@ -647,9 +599,9 @@ def write_budget_to_db_task(
 
             psql_cash = _read_data("T_JL_AREA_TRADE", "PSQL")
             psql_cash["填报日期"] = report_date
-            psql_cash["日期"] = pd.to_datetime(
-                psql_cash["统计月份"], format="%Y%m"
-            ).dt.strftime("%Y-%m-01")
+            psql_cash["日期"] = pd.to_datetime(psql_cash["统计月份"], format="%Y%m").dt.strftime(
+                "%Y-%m-01"
+            )
             psql_cash["日期"] = pd.to_datetime(psql_cash["日期"])
             psql_cash = psql_cash[psql_cash["日期"].isin(date_range_psql)]
             psql_cash["金额"] = psql_cash["金额"] / 100
@@ -689,18 +641,10 @@ def write_budget_to_db_task(
             offset = offset[offset["会计期间"].isin(date_range_psql)].drop(
                 ["类别"], axis=1, errors="ignore"
             )
-            offset = offset.rename(
-                columns={"会计期间": "日期", "金额": "预算系统金额"}
-            )
-            offset_inc = offset[
-                offset["一级科目"].isin(["营业收入", "营业成本"])
-            ].copy()
+            offset = offset.rename(columns={"会计期间": "日期", "金额": "预算系统金额"})
+            offset_inc = offset[offset["一级科目"].isin(["营业收入", "营业成本"])].copy()
             offset_inc = offset_inc.rename(columns={"预算系统金额": "本月金额"})
-            offset_exp = offset[
-                offset["一级科目"].isin(
-                    ["销售费用", "管理费用", "研发费用", "财务费用"]
-                )
-            ]
+            offset_exp = offset[offset["一级科目"].isin(["销售费用", "管理费用", "研发费用", "财务费用"])]
 
             # 费用：FONE 下半年 + 实际 + 抵销
             df = df_exp.copy()
@@ -708,9 +652,7 @@ def write_budget_to_db_task(
             df = df[df["日期"].isin(date_range_fone)]
             df_con = pd.concat([df, psql_exp, offset_exp], ignore_index=True)
             df_con = df_con[df.columns]
-            df_con.columns = [
-                combined_column_mapping.get(c, c) for c in df_con.columns
-            ]
+            df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
             update_report_data("bud_expense", df_con, "report_date", report_date)
 
             # 收入
@@ -720,9 +662,7 @@ def write_budget_to_db_task(
             df = df[df["日期"].isin(date_range_fone)]
             df_con = pd.concat([df, psql_inc, offset_inc], ignore_index=True)
             df_con = df_con[df.columns]
-            df_con.columns = [
-                combined_column_mapping.get(c, c) for c in df_con.columns
-            ]
+            df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
             update_report_data("bud_income", df_con, "report_date", report_date)
 
             # 人员
@@ -731,9 +671,7 @@ def write_budget_to_db_task(
             df = df[df["日期"].isin(date_range_fone)]
             df_con = pd.concat([df, psql_emp], ignore_index=True)
             df_con = df_con[df.columns]
-            df_con.columns = [
-                combined_column_mapping.get(c, c) for c in df_con.columns
-            ]
+            df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
             update_report_data("bud_personnel", df_con, "report_date", report_date)
 
             # 利润
@@ -742,9 +680,7 @@ def write_budget_to_db_task(
             df = df[df["日期"].isin(date_range_fone)]
             df_con = pd.concat([df, psql_pro], ignore_index=True)
             df_con = df_con[df.columns]
-            df_con.columns = [
-                combined_column_mapping.get(c, c) for c in df_con.columns
-            ]
+            df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
             update_report_data("bud_profit", df_con, "report_date", report_date)
 
             # 流水
@@ -753,9 +689,7 @@ def write_budget_to_db_task(
             df = df[df["日期"].isin(date_range_fone)]
             df_con = pd.concat([df, psql_cash], ignore_index=True)
             df_con = df_con[df.columns]
-            df_con.columns = [
-                combined_column_mapping.get(c, c) for c in df_con.columns
-            ]
+            df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
             update_report_data("bud_cash_flow", df_con, "bud_version", report_date)
 
             # 综合比例

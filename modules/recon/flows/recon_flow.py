@@ -6,26 +6,27 @@
 
 默认处理"上个自然月"数据，也可通过 target_date 参数指定月份。
 """
-from prefect import flow
-from typing import Optional
-import sys
 import os
+import sys
+from typing import Optional
+
+from prefect import flow
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from ..tasks.recon_fetch_tasks import (
-    fetch_recon_from_mysql_task,
-    collect_recon_from_excel_task,
-    delete_old_recon_data_task,
-    insert_recon_data_task,
-)
 from ..tasks.recon_calc_tasks import (
     load_mapping_config_task,
     load_recon_raw_task,
-    reconcile_wanglai_task,
-    process_sales_purchases_task,
     process_cashflow_task,
+    process_sales_purchases_task,
+    reconcile_wanglai_task,
     save_recon_results_task,
+)
+from ..tasks.recon_fetch_tasks import (
+    collect_recon_from_excel_task,
+    delete_old_recon_data_task,
+    fetch_recon_from_mysql_task,
+    insert_recon_data_task,
 )
 
 
@@ -82,8 +83,12 @@ def recon_flow(target_date: Optional[str] = None) -> None:
 
     # Step 5: 加载映射配置表
     (
-        df_params, df_unit_map, df_yebao_unit_map,
-        df_diff_wanglai, df_diff_xiaoshou, df_diff_xianjinliu
+        df_params,
+        df_unit_map,
+        df_yebao_unit_map,
+        df_diff_wanglai,
+        df_diff_xiaoshou,
+        df_diff_xianjinliu,
     ) = load_mapping_config_task()
 
     # Step 6: 读取原始数据

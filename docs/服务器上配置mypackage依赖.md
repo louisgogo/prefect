@@ -2,7 +2,7 @@
 
 ## 重要：必须装在 systemd 用的那个环境里
 
-Prefect 的 systemd 服务（如 `prefect.service` 或 `prefect-workers.service`）里写的是 **`/root/prefect/venv/bin/python`**。  
+Prefect 的 systemd 服务（如 `prefect.service` 或 `prefect-workers.service`）里写的是 **`/root/prefect/venv/bin/python`**。
 **mypackage 必须安装进这个 venv**，不能装在别的环境（例如你 SSH 登录后没 `source venv/bin/activate` 就 `pip install`，会装到系统 Python，服务仍然找不到）。
 
 正确做法：用该 venv 的 pip 安装（任选一种）：

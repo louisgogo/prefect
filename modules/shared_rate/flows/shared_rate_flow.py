@@ -1,27 +1,29 @@
 """综合比例计算流程"""
-from prefect import flow
-import pandas as pd
-import sys
 import os
-from typing import Optional, List
+import sys
+from typing import List, Optional
+
+import pandas as pd
+
+from prefect import flow
+
 # 添加根目录到路径（prefect目录）
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from utils.date_utils import get_date_range_by_month, get_date_range_by_months
+
 from ..tasks.shared_rate_tasks import (
-    load_bus_profit_for_shared_rate_task,
-    load_personnel_for_shared_rate_task,
-    load_human_cost_for_shared_rate_task,
-    calculate_personnel_allocation_task,
     calculate_comprehensive_rate_task,
+    calculate_personnel_allocation_task,
+    load_bus_profit_for_shared_rate_task,
+    load_human_cost_for_shared_rate_task,
+    load_personnel_for_shared_rate_task,
     save_shared_rate_task,
 )
 
 
 @flow(name="calculate_shared_rate_flow", log_prints=True)
 def calculate_shared_rate_flow(
-    year: int,
-    month: Optional[int] = None,
-    months: Optional[List[int]] = None
+    year: int, month: Optional[int] = None, months: Optional[List[int]] = None
 ) -> None:
     """
     综合比例计算流程
@@ -58,8 +60,7 @@ def calculate_shared_rate_flow(
     # 按月循环执行
     for idx, (process_year, process_month) in enumerate(month_list, 1):
         print(f"\n{'='*60}")
-        print(
-            f"开始处理第 {idx}/{len(month_list)} 个月：{process_year}年{process_month}月")
+        print(f"开始处理第 {idx}/{len(month_list)} 个月：{process_year}年{process_month}月")
         print(f"{'='*60}")
 
         # 获取单个月份的日期范围
@@ -87,9 +88,7 @@ def calculate_shared_rate_flow(
 
             # 5. 计算综合比例
             print("--- 开始计算综合比例 ---")
-            df_shared_rate = calculate_comprehensive_rate_task(
-                df_profit, df_personnel_allocation
-            )
+            df_shared_rate = calculate_comprehensive_rate_task(df_profit, df_personnel_allocation)
 
             # 6. 保存结果
             print("--- 开始保存综合比例 ---")
