@@ -26,3 +26,7 @@ ENV/
 # 日志
 *.log
 .env
+
+# 临时调试脚本
+check_*.py
+analyze_*.py
