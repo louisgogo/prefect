@@ -27,19 +27,24 @@ from ..tasks.recon_fetch_tasks import (
     delete_old_recon_data_task,
     fetch_recon_from_mysql_task,
     insert_recon_data_task,
+    sync_data_source_task,
 )
 
 
 @flow(name="recon_flow", log_prints=True)
 def recon_flow(target_date: Optional[str] = None) -> None:
     """
-    内部往来对账完整流程（阶段1采集 + 阶段2核对）
+    内部往来对账完整流程（阶段0同步 + 阶段1采集 + 阶段2核对）
 
     Args:
         target_date: 目标月份，格式 YYYY-MM-DD（如 "2026-02-01"）。
                      不传则自动使用上个自然月（相对于运行日期）。
 
     流程说明：
+        阶段0 - 数据源同步：
+          0. 从 2-往来对账填报表 同步 4月修改的文件到 9-数据源
+             （清理旧文件，只保留2026年4月更新的文件）
+
         阶段1 - 数据采集与存库：
           1. 从 MySQL Fone2BI_IntCommCheck 读取当月数据
           2. 从共享盘 Excel（/9-数据源）扫描采集数据
@@ -57,6 +62,14 @@ def recon_flow(target_date: Optional[str] = None) -> None:
     print("=" * 60)
     print(f"往来对账流程启动，目标月份: {target_date or '上个自然月（自动计算）'}")
     print("=" * 60)
+
+    # ──── 阶段0：同步数据源 ───────────────────────────────────
+    print("\n【阶段0】同步数据源（从填报表复制4月文件）...")
+    sync_result = sync_data_source_task()
+    if not sync_result.get("success"):
+        print(f"[WARN] 数据源同步异常: {sync_result.get('message')}，继续执行")
+    else:
+        print(f"【阶段0】完成，{sync_result.get('message')}")
 
     # ──── 阶段1：数据采集 ────────────────────────────────────
     print("\n【阶段1】开始数据采集...")

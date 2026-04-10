@@ -1,12 +1,14 @@
 """往来对账 - 数据采集 & 写库 Tasks
 
+阶段0：从 2-往来对账填报表 同步 4月文件到 9-数据源
 阶段1：从 MySQL + 共享盘 Excel 采集原始数据，先删除目标月旧数据，再写入 PostgreSQL。
 移植自 FastAPI 项目 recon_tool.py，改为同步版本，依赖 mypackage。
 """
 import os
 import platform
+import shutil
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
@@ -15,6 +17,116 @@ from prefect import task
 
 # 添加 prefect 根目录到路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+
+# ──────────────────────────────────────────────
+# 辅助：计算目标月份参数
+# ──────────────────────────────────────────────
+
+
+def _get_data_source_paths() -> Tuple[str, str]:
+    """获取数据源和填报表路径"""
+    if platform.system() == "Windows":
+        source_dir = r"Z:\10-内部往来对账\2-往来对账填报表"
+        target_dir = r"Z:\10-内部往来对账\9-数据源"
+    else:
+        source_dir = r"/mnt/xgd_share/10-内部往来对账/2-往来对账填报表"
+        target_dir = r"/mnt/xgd_share/10-内部往来对账/9-数据源"
+    return source_dir, target_dir
+
+
+# ──────────────────────────────────────────────
+# Task 0：同步数据源（只保留本月文件）
+# ──────────────────────────────────────────────
+
+
+@task(name="sync_data_source", log_prints=True)
+def sync_data_source_task() -> Dict[str, Any]:
+    """
+    从 2-往来对账填报表 同步 4月修改的文件到 9-数据源。
+    删除数据源旧文件，只保留修改日期为 2026年4月 的文件。
+
+    Returns:
+        {'success': bool, 'copied': int, 'skipped': int, 'message': str}
+    """
+    source_dir, target_dir = _get_data_source_paths()
+
+    # 4月时间范围 (2026-04)
+    april_start = datetime(2026, 4, 1).timestamp()
+    april_end = datetime(2026, 5, 1).timestamp()
+
+    print(f"--> 开始同步数据源")
+    print(f"    源目录: {source_dir}")
+    print(f"    目标目录: {target_dir}")
+    print(f"    筛选条件: 2026年4月修改的文件")
+
+    # 检查源目录
+    if not os.path.exists(source_dir):
+        return {"success": False, "copied": 0, "skipped": 0, "message": f"源目录不存在: {source_dir}"}
+
+    # 1. 清空目标目录中的所有文件
+    deleted_count = 0
+    if os.path.exists(target_dir):
+        for root, dirs, files in os.walk(target_dir):
+            for file in files:
+                filepath = os.path.join(root, file)
+                try:
+                    os.remove(filepath)
+                    deleted_count += 1
+                except Exception as e:
+                    print(f"    [WARN] 删除失败 {filepath}: {e}")
+        print(f"--> 已清理目标目录，删除 {deleted_count} 个旧文件")
+
+    # 2. 找出源目录中4月修改的文件并复制
+    copied_count = 0
+    skipped_count = 0
+
+    for root, dirs, files in os.walk(source_dir):
+        for file in files:
+            # 跳过临时文件
+            if "~" in file or "$" in file:
+                skipped_count += 1
+                continue
+
+            source_path = os.path.join(root, file)
+
+            # 检查修改时间是否在4月
+            try:
+                mtime = os.path.getmtime(source_path)
+                if not (april_start <= mtime < april_end):
+                    skipped_count += 1
+                    continue
+            except Exception as e:
+                print(f"    [WARN] 无法获取文件时间 {source_path}: {e}")
+                skipped_count += 1
+                continue
+
+            # 计算目标路径，保持目录结构
+            rel_path = os.path.relpath(source_path, source_dir)
+            target_path = os.path.join(target_dir, rel_path)
+
+            # 创建目标目录
+            try:
+                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            except Exception as e:
+                print(f"    [WARN] 创建目录失败 {os.path.dirname(target_path)}: {e}")
+                continue
+
+            # 复制文件（保留元数据）
+            try:
+                shutil.copy2(source_path, target_path)
+                copied_count += 1
+                print(f"    复制: {rel_path}")
+            except Exception as e:
+                print(f"    [WARN] 复制失败 {rel_path}: {e}")
+
+    print(f"--> 同步完成: 复制 {copied_count} 个文件，跳过 {skipped_count} 个文件")
+    return {
+        "success": True,
+        "copied": copied_count,
+        "skipped": skipped_count,
+        "message": f"同步完成，复制 {copied_count} 个4月文件",
+    }
 
 
 # ──────────────────────────────────────────────

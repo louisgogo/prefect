@@ -399,10 +399,12 @@ def process_sales_purchases_task(
 
     if not df_final.empty:
         # 清除公司简称和对方简称全空的无效合并行
-        df_final = df_final[
-            df_final["公司简称"].astype(str).str.strip().astype(bool)
-            | df_final["对方简称"].astype(str).str.strip().astype(bool)
-        ]
+        # 注意：要同时检查销售侧和采购侧的简称，避免单边记录被误过滤
+        has_sales_co = df_final["公司简称"].astype(str).str.strip().astype(bool)
+        has_sales_cp = df_final["对方简称"].astype(str).str.strip().astype(bool)
+        has_purch_co = df_final["采购核对.公司简称"].astype(str).str.strip().astype(bool)
+        has_purch_cp = df_final["采购核对.对方简称"].astype(str).str.strip().astype(bool)
+        df_final = df_final[has_sales_co | has_sales_cp | has_purch_co | has_purch_cp]
         # 使用 sort_values 按绝对差异降序排序
         df_final = df_final.sort_values(by="计算差异", key=abs, ascending=False).reset_index(drop=True)
 

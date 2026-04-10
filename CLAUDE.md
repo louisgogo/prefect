@@ -83,16 +83,70 @@ prefect flow ls
 prefect deployment ls
 ```
 
-### Systemd Service Management (Production)
+### 修改代码后重启服务（重要）
+
+**每次修改代码后进行测试前，必须重启 Prefect 服务**，否则运行的是旧代码缓存。
+
+Prefect 涉及两个服务：
+
+1. **Prefect Server**（调度服务）- 通常不需要重启
+2. **Prefect Workers**（任务执行服务）- **必须重启**
+
+⚠️ **生产环境必须使用 systemd 服务**（已注册为系统服务），**禁止**使用 `pkill` + `nohup` 或手动运行 `python deploy_to_server.py`，否则会导致：
+- 多个进程冲突
+- 代码更新后无法自动拉取
+- 服务异常退出后无法自动恢复
 
 ```bash
-# Check Prefect services
-sudo systemctl status prefect
+# 生产环境（服务器 10.18.8.191）- 使用 systemctl
+sudo systemctl restart prefect-workers
+
+# 验证服务状态
+sudo systemctl status prefect-server
 sudo systemctl status prefect-workers
 
-# Restart workers after code updates
-sudo systemctl restart prefect-workers
+# 查看日志
+sudo journalctl -u prefect-workers -f
 ```
+
+### Systemd Service Management (Production)
+
+服务器已注册两个 systemd 服务，**所有启停操作必须通过 systemctl**：
+
+| 服务名 | 功能 | 状态检查 |
+|--------|------|----------|
+| `prefect-server.service` | Prefect Server (API & UI, port 4200) | `systemctl status prefect-server` |
+| `prefect-workers.service` | Prefect Workers (flow.serve) | `systemctl status prefect-workers` |
+
+**常用命令**：
+
+```bash
+# 查看服务状态
+sudo systemctl status prefect-server
+sudo systemctl status prefect-workers
+
+# 启动/停止/重启
+sudo systemctl start prefect-server      # 通常保持运行，不需重启
+sudo systemctl restart prefect-workers   # 代码更新后执行
+sudo systemctl stop prefect-workers
+
+# 查看日志
+sudo journalctl -u prefect-server -f
+sudo journalctl -u prefect-workers -f
+
+# 服务配置路径（如需修改）
+/etc/systemd/system/prefect-server.service
+/etc/systemd/system/prefect-workers.service
+```
+
+**workers 服务特点**：
+- 启动前自动执行 `git pull` 拉取最新代码
+- 配置了 `Restart=always`，异常退出后自动重启
+- 依赖 `prefect-server.service`，确保 Server 先启动
+
+> **环境区分**
+> - **生产环境（服务器 10.18.8.191）**：必须使用 `systemctl`，禁止手动启停进程
+> - **本地开发**：使用 `python deploy_local.py`，没有 systemd 服务
 
 ## Architecture
 
@@ -224,3 +278,30 @@ pre-commit autoupdate
 - Default date behavior: Most flows default to "last month" if no date specified
 - Budget update has special date logic: Nov-Feb → annual budget, Apr-Jul → mid-year budget
 - Memory management: Always use `months` parameter for multi-month processing to avoid memory issues
+
+---
+
+## 变更日志 (Changelog)
+
+### 2026-04-10 - recon_flow 数据源自动同步
+
+**背景**：往来对账流程(`recon_flow`)原本需要手动从共享盘 `2-往来对账填报表` 复制文件到 `9-数据源`，操作繁琐且容易遗漏。
+
+**变更内容**：
+1. **新增 Task**：`modules/recon/tasks/recon_fetch_tasks.py` 新增 `sync_data_source_task()`
+   - 自动从 `2-往来对账填报表` 扫描所有子目录
+   - 只保留 **修改日期为 2026年4月** 的文件（47个）
+   - 清理 `9-数据源` 旧文件后重新同步
+
+2. **流程改造**：`modules/recon/flows/recon_flow.py`
+   - 新增【阶段0】数据源同步（在阶段1采集之前自动执行）
+   - 流程结构：阶段0同步 → 阶段1采集 → 阶段2核对
+
+**影响范围**：
+- `recon_flow` 运行时自动同步数据源，无需手动操作
+- 共享盘路径兼容 Windows(`Z:\`) 和 Linux(`/mnt/xgd_share/`)
+
+**部署状态**：
+- ✅ 代码已提交，pre-commit 检查通过
+- ✅ `prefect-workers.service` 已重启，变更已生效
+- ✅ 服务运行正常 (10.18.8.191)
