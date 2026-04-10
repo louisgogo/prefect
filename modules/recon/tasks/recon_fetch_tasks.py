@@ -83,8 +83,8 @@ def sync_data_source_task() -> Dict[str, Any]:
 
     for root, dirs, files in os.walk(source_dir):
         for file in files:
-            # 跳过临时文件
-            if "~" in file or "$" in file:
+            # 跳过临时文件和房租相关文件
+            if "~" in file or "$" in file or "房租" in file:
                 skipped_count += 1
                 continue
 
