@@ -92,6 +92,12 @@ Prefect 涉及两个服务：
 1. **Prefect Server**（调度服务）- 通常不需要重启
 2. **Prefect Workers**（任务执行服务）- **必须重启**
 
+⚠️ **新增/删除 flow 时，必须同步修改部署脚本**
+
+> `deploy_local.py` 和 `deploy_to_server.py` 里通过 `flow.serve()` 将每个 flow 注册到 Prefect Server。**只写 flow 代码、不修改部署脚本，UI 里看不到新 flow**；同理，删除 flow 后也要从部署脚本里移除，否则会持续推送已废弃的流程。
+>
+> 修改完部署脚本后，再重启 workers 服务才能生效。**光重启服务、不改部署脚本 = 没有变化。**
+
 ⚠️ **生产环境必须使用 systemd 服务**（已注册为系统服务），**禁止**使用 `pkill` + `nohup` 或手动运行 `python deploy_to_server.py`，否则会导致：
 - 多个进程冲突
 - 代码更新后无法自动拉取
