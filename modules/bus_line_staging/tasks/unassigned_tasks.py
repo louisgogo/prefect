@@ -57,6 +57,7 @@ def run_unassigned_split_task(date_range):
             df_revenue = df_revenue[
                 [
                     "来源编号",
+                    "唯一层级",
                     "一级组织",
                     "二级组织",
                     "三级组织",
@@ -108,7 +109,19 @@ def run_unassigned_split_task(date_range):
                 "-", n=2, expand=True
             )
             df_expense = df_expense[
-                ["来源编号", "一级组织", "二级组织", "三级组织", "会计期间", "财报合并", "费用大类", "摘要", "费用金额", "分摊业务线"]
+                [
+                    "来源编号",
+                    "唯一层级",
+                    "一级组织",
+                    "二级组织",
+                    "三级组织",
+                    "会计期间",
+                    "财报合并",
+                    "费用大类",
+                    "摘要",
+                    "费用金额",
+                    "分摊业务线",
+                ]
             ]
             df_expense[bus_lines] = np.nan
             # 去掉零值
@@ -157,7 +170,9 @@ def run_unassigned_split_task(date_range):
         if not df_profit.empty:
             df_profit = df_profit.drop(["一级组织", "二级组织", "三级组织"], axis=1, errors="ignore")
             df_profit[["一级组织", "二级组织", "三级组织"]] = df_profit["唯一层级"].str.split("-", n=2, expand=True)
-            df_profit = df_profit[["来源编号", "一级组织", "二级组织", "三级组织", "日期", "财报合并", "一级科目", "本月金额"]]
+            df_profit = df_profit[
+                ["来源编号", "唯一层级", "一级组织", "二级组织", "三级组织", "日期", "财报合并", "一级科目", "本月金额"]
+            ]
             df_profit[bus_lines] = np.nan
             # 去掉零值
             df_profit = df_profit.dropna(subset=["本月金额"])
@@ -186,6 +201,7 @@ def run_unassigned_split_task(date_range):
             df_revenue_unassigned = df_revenue_unassigned[
                 [
                     "来源编号",
+                    "唯一层级",
                     "一级组织",
                     "二级组织",
                     "三级组织",
@@ -195,10 +211,8 @@ def run_unassigned_split_task(date_range):
                     "物料名称",
                     "不含税金额本位币",
                     "成本金额",
-                    "运费成本",
                     "关税成本",
                     "软件成本",
-                    "唯一层级",
                     "年份",
                 ]
             ]
@@ -226,10 +240,10 @@ def run_unassigned_split_task(date_range):
             df_expense_unassigned = df_expense_unassigned[
                 [
                     "来源编号",
+                    "唯一层级",
                     "一级组织",
                     "二级组织",
                     "三级组织",
-                    "唯一层级",
                     "单据编号",
                     "报销人",
                     "摘要",
@@ -252,46 +266,18 @@ def run_unassigned_split_task(date_range):
         cur.execute("SELECT distinct unique_lvl, short_name FROM dim_org_struc")
         df_org_mapping = pd.DataFrame(cur.fetchall(), columns=["unique_lvl", "short_name"])
 
-        # 插入数据到staging表
+        # 合并收入数据（非业务线收入 + 无归属收入）→ staging_bus_revenue
+        revenue_list = []
         if not df_revenue.empty:
-            insert_to_staging_table(
-                df=df_revenue,
-                df_org=df_org_mapping,
-                groups=[],
-                date_range=date_range,
-                date_column="会计期间",
-                table_name="staging_revenue_unassigned",
-                bus_lines=bus_lines,
-                is_split_others=True,
-                is_by_df=True,
-            )
-        if not df_expense.empty:
-            insert_to_staging_table(
-                df=df_expense,
-                df_org=df_org_mapping,
-                groups=[],
-                date_range=date_range,
-                date_column="会计期间",
-                table_name="staging_expense_unassigned",
-                bus_lines=bus_lines,
-                is_split_others=True,
-                is_by_df=True,
-            )
-        if not df_profit.empty:
-            insert_to_staging_table(
-                df=df_profit,
-                df_org=df_org_mapping,
-                groups=[],
-                date_range=date_range,
-                date_column="日期",
-                table_name="staging_profit_unassigned",
-                bus_lines=bus_lines,
-                is_split_others=True,
-                is_by_df=True,
-            )
+            df_revenue["数据来源"] = "非业务线收入"
+            revenue_list.append(df_revenue)
         if not df_revenue_unassigned.empty:
+            df_revenue_unassigned["数据来源"] = "无归属收入"
+            revenue_list.append(df_revenue_unassigned)
+        if revenue_list:
+            df_revenue_all = pd.concat(revenue_list, ignore_index=True)
             insert_to_staging_table(
-                df=df_revenue_unassigned,
+                df=df_revenue_all,
                 df_org=df_org_mapping,
                 groups=[],
                 date_range=date_range,
@@ -301,14 +287,43 @@ def run_unassigned_split_task(date_range):
                 is_split_others=True,
                 is_by_df=True,
             )
+
+        # 合并费用数据（非业务线费用 + 无归属费用）→ staging_bus_expense
+        expense_list = []
+        if not df_expense.empty:
+            df_expense["数据来源"] = "非业务线费用"
+            expense_list.append(df_expense)
         if not df_expense_unassigned.empty:
+            df_expense_unassigned["数据来源"] = "无归属费用"
+            expense_list.append(df_expense_unassigned)
+        if expense_list:
+            df_expense_all = pd.concat(expense_list, ignore_index=True)
             insert_to_staging_table(
-                df=df_expense_unassigned,
+                df=df_expense_all,
                 df_org=df_org_mapping,
                 groups=[],
                 date_range=date_range,
                 date_column="会计期间",
                 table_name="staging_bus_expense",
+                bus_lines=bus_lines,
+                is_split_others=True,
+                is_by_df=True,
+            )
+
+        # 合并其他利润表数据（非业务线其他 + 无归属其他）→ staging_bus_profit_bd
+        profit_list = []
+        if not df_profit.empty:
+            df_profit["数据来源"] = "非业务线其他"
+            profit_list.append(df_profit)
+        if profit_list:
+            df_profit_all = pd.concat(profit_list, ignore_index=True)
+            insert_to_staging_table(
+                df=df_profit_all,
+                df_org=df_org_mapping,
+                groups=[],
+                date_range=date_range,
+                date_column="日期",
+                table_name="staging_bus_profit_bd",
                 bus_lines=bus_lines,
                 is_split_others=True,
                 is_by_df=True,

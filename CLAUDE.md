@@ -271,6 +271,52 @@ git commit --no-verify -m "紧急修复"
 pre-commit autoupdate
 ```
 
+## Skills (专项技能)
+
+### Power Query 解析技能 (pq-extractor)
+
+当需要从 Excel 文件中提取 Power Query (M代码) 逻辑并转换为 Python/pandas 代码时，使用此技能。
+
+**加载方式**：
+```
+/skill pq-extractor
+# 或直接提及 Power Query, M代码 等相关关键词
+```
+
+**使用场景**：
+- 解析 Excel 中 Power Query 的数据处理逻辑
+- 将 M 代码转换为 pandas 等价实现
+- 理解 Table.SelectRows, Table.Join, Table.Group, Table.Unpivot 等操作
+
+**核心文件位置**：
+- Skill 路径：`/root/.claude/plugins/cache/pq-extractor/1.0.0/skills/pq-extractor/SKILL.md`
+- 项目内备份：`/root/prefect/claude-skills/pq-extractor/SKILL.md`
+- ExcelToPython 框架：`/root/prefect/ExcelToPython/`
+
+**快速使用**：
+```python
+# 1. 提取 M 代码
+from ExcelToPython.extractor import extract_m_code_from_excel
+m_codes = extract_m_code_from_excel("your_file.xlsx", output_dir="extracted_m_codes")
+
+# 2. 查看提取的 M 代码
+for name, code in m_codes.items():
+    print(f"=== {name} ===")
+    print(code)
+```
+
+**常见 M 代码 → pandas 对照**：
+| M 代码 | pandas 等价代码 |
+|--------|----------------|
+| `Table.SelectRows(源, each [列] = 值)` | `df[df['列'] == 值]` |
+| `Table.Group(源, {"分组列"}, {{"合计", each List.Sum([金额])}})` | `df.groupby('分组列')['金额'].sum().reset_index()` |
+| `Table.NestedJoin(左, {"键"}, 右, {"键"}, "新列", JoinKind.LeftOuter)` | `df.merge(right_df, on='键', how='left')` |
+| `Table.UnpivotOtherColumns(源, {"保留列"}, "属性", "值")` | `df.melt(id_vars=['保留列'], var_name='属性', value_name='值')` |
+
+完整对照表参见 skill 文档。
+
+---
+
 ## Important Notes
 
 - **必须使用虚拟环境**：所有开发和工具都在 `venv` 中运行
@@ -278,6 +324,883 @@ pre-commit autoupdate
 - Default date behavior: Most flows default to "last month" if no date specified
 - Budget update has special date logic: Nov-Feb → annual budget, Apr-Jul → mid-year budget
 - Memory management: Always use `months` parameter for multi-month processing to avoid memory issues
+
+---
+
+## Database Schema Reference
+
+数据库: `mydb` (PostgreSQL)。以下为业务相关核心表结构，用于后续数据核对和脚本开发参考。
+
+### 数据分层流程
+
+本系统的数据流程分为三层：
+
+1. **Fact 表（中间层，不带 bus）**
+   - `fact_revenue`、`fact_expense`、`fact_inventory`、`fact_inventory_on_way`、`fact_receivable`、`fact_profit`、`fact_profit_bd`
+   - 存储从各公司 Excel 上报数据中提取的**原始/汇总数据**，不含业务线拆分结果。
+   - `report_collection_flow` 生成的 CSV 数据应与这一层对齐。
+
+2. **Staging 表（拆分规则层）**
+   - `staging_bus_revenue`、`staging_bus_expense` 等
+   - 存储**无法直接归属业务线的残余数据**或拆分规则，用于后续的 EAV 拆分计算。
+   - 例如 `staging_bus_revenue` 只保留"无归属收入"和"非业务线收入"。
+
+3. **Fact_bus 表（最终层，带 bus）**
+   - `fact_bus_revenue`、`fact_bus_expense`、`fact_bus_inventory` 等
+   - 存储**经过 staging 拆分后，带有 `bus_line` 的最终业务线数据**。
+
+### Report Collection 子表与数据库表映射
+
+| Report Collection 子表 | 对应 Fact 表（不带 bus） | 对应 Staging 表 | 对应 Fact_bus 表（带 bus） |
+|------------------------|-------------------------|----------------|---------------------------|
+| 2-2收入成本明细 | `fact_revenue` | `staging_bus_revenue` | `fact_bus_revenue` |
+| 2-3收单明细 | (暂无对应表，需新建) | (暂无对应表，需新建) | (暂无对应表，需新建) |
+| 2-5应收明细 | `fact_receivable` | `staging_bus_receivable` | `fact_bus_receivable` |
+| 2-6存货明细 | `fact_inventory` | `staging_bus_inventory` | `fact_bus_inventory` |
+| 2-13在途存货 | `fact_inventory_on_way` | `staging_bus_in_transit_inventory` | `fact_bus_inventory_on_way` |
+| 2-4费用明细 | `fact_expense` | `staging_bus_expense` | `fact_bus_expense` |
+| 2-1利润拆分 | `fact_profit_bd` | `staging_bus_profit_bd` | `fact_bus_profit_bd` |
+
+### 核心 Fact 表结构（中间层，不带 bus）
+
+#### public.fact_revenue
+
+| 列名 | 说明 |
+|------|------|
+| `id` | |
+| `fin_con` | |
+| `fin_ind` | |
+| `prim_org` | |
+| `sec_org` | |
+| `third_org` | |
+| `doc_no` | |
+| `bus_date` | |
+| `cust_code` | |
+| `customer` | |
+| `cust_cat` | |
+| `cust_region` | |
+| `is_internal_sale` | |
+| `inc_major_cat` | |
+| `prod_major_cat` | |
+| `currency` | |
+| `exchange_rate` | |
+| `mat_code` | |
+| `mat_name` | |
+| `sales_qty` | |
+| `tax_incl_price` | |
+| `orig_curr_amt` | |
+| `tax_amt` | |
+| `tax_rate` | |
+| `tax_incl_det` | |
+| `amt_tax_exc_loc` | |
+| `cost_amt` | |
+| `freight_cost` | |
+| `prod_margin` | |
+| `acct_period` | |
+| `year` | |
+| `unique_lvl` | |
+| `remarks` | |
+| `soft_cost` | |
+| `tariff_cost` | |
+| `source_no` | |
+| `last_modified` | |
+| `custgp_code` | |
+| `custgp_name` | |
+
+#### public.fact_expense
+
+| 列名 | 说明 |
+|------|------|
+| `id` | |
+| `fin_con` | |
+| `fin_ind` | |
+| `prim_org` | |
+| `sec_org` | |
+| `third_org` | |
+| `proj_code` | |
+| `rd_proj` | |
+| `date` | |
+| `voucher_no` | |
+| `summary` | |
+| `doc_no` | |
+| `prim_subj` | |
+| `exp_item_code` | |
+| `acc_proj_cost` | |
+| `exp_amt` | |
+| `orig_prim_dept` | |
+| `orig_sec_dept` | |
+| `orig_third_dept` | |
+| `acct_period` | |
+| `year` | |
+| `exp_major_cat` | |
+| `exp_nature` | |
+| `sec_subj` | |
+| `unique_lvl` | |
+| `product_sub_category` | |
+| `source_no` | |
+| `last_modified` | |
+| `dist_bus_line` | |
+| `claimant` | |
+| `reporting_org_code` | |
+
+#### public.fact_inventory
+
+| 列名 | 说明 |
+|------|------|
+| `id` | |
+| `fin_con` | |
+| `fin_ind` | |
+| `prim_org` | |
+| `sec_org` | |
+| `third_org` | |
+| `mat_code` | |
+| `mat_name` | |
+| `inv_cat` | |
+| `cust_cat` | |
+| `cust_code` | |
+| `cust_name` | |
+| `warehouse` | |
+| `is_stock_mat` | |
+| `qty_inv` | |
+| `ref_price_base` | |
+| `ref_amt` | |
+| `qty_6m_less` | |
+| `amt_6m_less` | |
+| `qty_6_9m` | |
+| `amt_6_9m` | |
+| `qty_9m_1y` | |
+| `amt_9m_1y` | |
+| `qty_1_2y` | |
+| `amt_1_2y` | |
+| `qty_2_3y` | |
+| `amt_2_3y` | |
+| `qty_3y_plus` | |
+| `amt_3y_plus` | |
+| `acct_period` | |
+| `unique_lvl` | |
+| `source_no` | |
+
+#### public.fact_inventory_on_way
+
+| 列名 | 说明 |
+|------|------|
+| `id` | |
+| `prim_org` | |
+| `sec_org` | |
+| `third_org` | |
+| `order_number` | |
+| `order_date` | |
+| `supplier_code` | |
+| `supplier_name` | |
+| `inv_cat` | |
+| `mat_code` | |
+| `mat_name` | |
+| `order_amount` | |
+| `total_payment_amount` | |
+| `order_count` | |
+| `unit_price` | |
+| `currency` | |
+| `exchange_rate` | |
+| `delivery_date` | |
+| `acct_period` | |
+| `unique_lvl` | |
+| `total_inventory_received` | |
+| `fin_con` | |
+| `fin_ind` | |
+| `source_no` | |
+| `unreceived_inventory` | |
+
+#### public.fact_receivable
+
+| 列名 | 说明 |
+|------|------|
+| `id` | |
+| `fin_con` | |
+| `fin_ind` | |
+| `prim_org` | |
+| `sec_org` | |
+| `third_org` | |
+| `prim_subj` | |
+| `cust_code` | |
+| `txn_unit` | |
+| `txn_nature` | |
+| `cust_type` | |
+| `sales_dept` | |
+| `sales_region` | |
+| `unaudited_sales_amt` | |
+| `unaudited_prepay_amt` | |
+| `unaudited_inst_amt` | |
+| `ar_balance` | |
+| `ovd_amt` | |
+| `undue_amt` | |
+| `ovd_30d_less_amt` | |
+| `ovd_30_90d_amt` | |
+| `ovd_90_180d_amt` | |
+| `ovd_180_360d_amt` | |
+| `ovd_360d_plus_amt` | |
+| `acct_age_9_12m` | |
+| `acct_age_1_2y` | |
+| `acct_age_2_3y` | |
+| `acct_age_3y_plus` | |
+| `yr_debit_occ` | |
+| `yr_credit_occ` | |
+| `sales_module` | |
+| `last_mo_ovd_amt` | |
+| `ovd_change` | |
+| `yr_repay_amt` | |
+| `acct_period` | |
+| `unique_lvl` | |
+| `bus_major_cat` | |
+| `bus_sub_cat` | |
+| `source_no` | |
+| `ar_status` | |
+| `remarks` | |
+| `acct_age_3m_less` | |
+| `acct_age_3_6m` | |
+| `acct_age_6_9m` | |
+| `processed_amount` | |
+| `mr_debit_occ` | |
+| `mr_credit_occ` | |
+| `bad_debt_amount` | |
+
+#### public.fact_profit
+
+| 列名 | 说明 |
+|------|------|
+| `source_no` | |
+| `unique_lvl` | |
+| `acct_period` | |
+| `prim_subj` | |
+| `amt` | |
+| `fin_con` | |
+| `fin_ind` | |
+| `class` | |
+
+#### public.fact_profit_bd
+
+| 列名 | 说明 |
+|------|------|
+| `id` | |
+| `fin_con` | |
+| `fin_ind` | |
+| `prim_org` | |
+| `sec_org` | |
+| `third_org` | |
+| `prim_subj` | |
+| `mo_amt` | |
+| `date` | |
+| `unique_lvl` | |
+| `year` | |
+| `remarks` | |
+| `source_no` | |
+| `last_modified` | |
+
+### 核心 Fact_bus 表结构（最终层，带 bus）
+
+#### public.fact_bus_revenue
+
+| 列名 | 说明 |
+|------|------|
+| `source_no` | |
+| `fin_con` | |
+| `fin_ind` | |
+| `prim_org` | |
+| `sec_org` | |
+| `third_org` | |
+| `doc_no` | |
+| `bus_date` | |
+| `cust_code` | |
+| `customer` | |
+| `cust_cat` | |
+| `cust_region` | |
+| `is_internal_sale` | |
+| `inc_major_cat` | |
+| `prod_major_cat` | |
+| `currency` | |
+| `exchange_rate` | |
+| `mat_code` | |
+| `mat_name` | |
+| `sales_qty` | |
+| `tax_incl_price` | |
+| `orig_curr_amt` | |
+| `tax_amt` | |
+| `tax_rate` | |
+| `tax_incl_det` | |
+| `prod_margin` | |
+| `acct_period` | |
+| `year` | |
+| `unique_lvl` | |
+| `remarks` | |
+| `bus_line` | |
+| `sec_dist_lvl` | |
+| `category` | |
+| `rate` | |
+| `prim_subj` | |
+| `mo_amt` | |
+| `id` | |
+| `custgp_code` | |
+| `custgp_name` | |
+
+#### public.fact_bus_expense
+
+| 列名 | 说明 |
+|------|------|
+| `source_no` | |
+| `fin_con` | |
+| `fin_ind` | |
+| `prim_org` | |
+| `sec_org` | |
+| `third_org` | |
+| `proj_code` | |
+| `rd_proj` | |
+| `date` | |
+| `voucher_no` | |
+| `summary` | |
+| `doc_no` | |
+| `prim_subj` | |
+| `exp_item_code` | |
+| `acc_proj_cost` | |
+| `exp_amt` | |
+| `orig_prim_dept` | |
+| `orig_sec_dept` | |
+| `orig_third_dept` | |
+| `acct_period` | |
+| `year` | |
+| `exp_major_cat` | |
+| `exp_nature` | |
+| `sec_subj` | |
+| `unique_lvl` | |
+| `product_sub_category` | |
+| `bus_line` | |
+| `sec_dist_lvl` | |
+| `category` | |
+| `rate` | |
+| `id` | |
+| `dist_bus_line` | |
+| `claimant` | |
+| `reporting_org_code` | |
+
+#### public.fact_bus_inventory
+
+| 列名 | 说明 |
+|------|------|
+| `id` | |
+| `fin_con` | |
+| `fin_ind` | |
+| `prim_org` | |
+| `sec_org` | |
+| `third_org` | |
+| `mat_code` | |
+| `mat_name` | |
+| `inv_cat` | |
+| `cust_cat` | |
+| `cust_code` | |
+| `cust_name` | |
+| `warehouse` | |
+| `is_stock_mat` | |
+| `qty_inv` | |
+| `ref_price_base` | |
+| `ref_amt` | |
+| `qty_6m_less` | |
+| `amt_6m_less` | |
+| `qty_6_9m` | |
+| `amt_6_9m` | |
+| `qty_9m_1y` | |
+| `amt_9m_1y` | |
+| `qty_1_2y` | |
+| `amt_1_2y` | |
+| `qty_2_3y` | |
+| `amt_2_3y` | |
+| `qty_3y_plus` | |
+| `amt_3y_plus` | |
+| `acct_period` | |
+| `unique_lvl` | |
+| `source_no` | |
+
+#### public.fact_bus_inventory_on_way
+
+| 列名 | 说明 |
+|------|------|
+| `prim_org` | |
+| `sec_org` | |
+| `third_org` | |
+| `order_number` | |
+| `order_date` | |
+| `supplier_code` | |
+| `supplier_name` | |
+| `inv_cat` | |
+| `mat_code` | |
+| `mat_name` | |
+| `order_amount` | |
+| `total_payment_amount` | |
+| `order_count` | |
+| `unit_price` | |
+| `currency` | |
+| `exchange_rate` | |
+| `delivery_date` | |
+| `acct_period` | |
+| `unique_lvl` | |
+| `total_inventory_received` | |
+| `fin_con` | |
+| `fin_ind` | |
+| `source_no` | |
+| `id` | |
+| `sec_dist_lvl` | |
+| `rate` | |
+| `category` | |
+| `bus_line` | |
+| `unreceived_inventory` | |
+
+#### public.fact_bus_receivable
+
+| 列名 | 说明 |
+|------|------|
+| `source_no` | |
+| `fin_con` | |
+| `fin_ind` | |
+| `prim_org` | |
+| `sec_org` | |
+| `third_org` | |
+| `prim_subj` | |
+| `cust_code` | |
+| `txn_unit` | |
+| `txn_nature` | |
+| `cust_type` | |
+| `sales_dept` | |
+| `sales_region` | |
+| `unaudited_sales_amt` | |
+| `unaudited_prepay_amt` | |
+| `unaudited_inst_amt` | |
+| `ar_balance` | |
+| `ovd_amt` | |
+| `undue_amt` | |
+| `ovd_30d_less_amt` | |
+| `ovd_30_90d_amt` | |
+| `ovd_90_180d_amt` | |
+| `ovd_180_360d_amt` | |
+| `ovd_360d_plus_amt` | |
+| `acct_age_9_12m` | |
+| `acct_age_1_2y` | |
+| `acct_age_2_3y` | |
+| `acct_age_3y_plus` | |
+| `yr_debit_occ` | |
+| `yr_credit_occ` | |
+| `sales_module` | |
+| `last_mo_ovd_amt` | |
+| `ovd_change` | |
+| `yr_repay_amt` | |
+| `acct_period` | |
+| `unique_lvl` | |
+| `bus_major_cat` | |
+| `bus_sub_cat` | |
+| `id` | |
+| `sec_dist_lvl` | |
+| `rate` | |
+| `category` | |
+| `bus_line` | |
+| `ar_status` | |
+| `remarks` | |
+| `acct_age_3m_less` | |
+| `acct_age_3_6m` | |
+| `acct_age_6_9m` | |
+| `processed_amount` | |
+| `mr_debit_occ` | |
+| `mr_credit_occ` | |
+| `bad_debt_amount` | |
+
+#### public.fact_bus_profit_bd
+
+| 列名 | 说明 |
+|------|------|
+| `source_no` | |
+| `fin_con` | |
+| `fin_ind` | |
+| `prim_org` | |
+| `sec_org` | |
+| `third_org` | |
+| `prim_subj` | |
+| `mo_amt` | |
+| `date` | |
+| `unique_lvl` | |
+| `year` | |
+| `remarks` | |
+| `bus_line` | |
+| `sec_dist_lvl` | |
+| `category` | |
+| `rate` | |
+| `id` | |
+
+#### public.fact_bus_profit
+
+| 列名 | 说明 |
+|------|------|
+| `source_no` | |
+| `unique_lvl` | |
+| `acct_period` | |
+| `prim_subj` | |
+| `amt` | |
+| `bus_line` | |
+| `fin_con` | |
+| `fin_ind` | |
+| `id` | |
+
+#### public.fact_bus_line
+
+| 列名 | 说明 |
+|------|------|
+| `id` | |
+| `source_no` | |
+| `sec_dist_lvl` | |
+| `bus_line` | |
+| `rate` | |
+| `class` | |
+| `acct_period` | |
+| `unique_lvl` | |
+| `category` | |
+
+#### public.fact_bus_shared_rate
+
+| 列名 | 说明 |
+|------|------|
+| `id` | |
+| `date` | |
+| `bus_line` | |
+| `rate` | |
+
+### 核心 Staging 表结构
+
+#### public.staging_bus_revenue
+
+| 列名 | 说明 |
+|------|------|
+| `id` | |
+| `唯一层级` | |
+| `一级组织` | |
+| `二级组织` | |
+| `三级组织` | |
+| `来源编号` | |
+| `会计期间` | |
+| `收入大类` | |
+| `产品大类` | |
+| `物料名称` | |
+| `不含税金额本位币` | |
+| `成本金额` | |
+| `运费成本` | |
+| `关税成本` | |
+| `软件成本` | |
+| `年份` | |
+| `数据来源` | |
+| `AGI` | |
+| `国内硬件` | |
+| `国际业务` | |
+| `大POS` | |
+| `审核业务` | |
+| `小POS` | |
+| `政府消费券` | |
+| `数币` | |
+| `本地生活` | |
+| `消费电子` | |
+| `澳门业务` | |
+| `立充` | |
+| `美国业务` | |
+| `能源硬件` | |
+| `能源运营` | |
+| `资产运营` | |
+| `跨境总部` | |
+| `跨境新加坡` | |
+| `跨境欧洲` | |
+| `审核状态` | |
+| `创建时间` | |
+
+#### public.staging_bus_expense
+
+| 列名 | 说明 |
+|------|------|
+| `id` | |
+| `唯一层级` | |
+| `一级组织` | |
+| `二级组织` | |
+| `三级组织` | |
+| `来源编号` | |
+| `单据编号` | |
+| `报销人` | |
+| `摘要` | |
+| `会计期间` | |
+| `费用性质` | |
+| `费用大类` | |
+| `核算项目-费控` | |
+| `研发项目` | |
+| `项目编码` | |
+| `费用金额` | |
+| `年份` | |
+| `数据来源` | |
+| `分摊业务线` | |
+| `AGI` | |
+| `国内硬件` | |
+| `国际业务` | |
+| `大POS` | |
+| `审核业务` | |
+| `小POS` | |
+| `政府消费券` | |
+| `数币` | |
+| `本地生活` | |
+| `消费电子` | |
+| `澳门业务` | |
+| `立充` | |
+| `美国业务` | |
+| `能源硬件` | |
+| `能源运营` | |
+| `资产运营` | |
+| `跨境总部` | |
+| `跨境新加坡` | |
+| `跨境欧洲` | |
+| `审核状态` | |
+| `创建时间` | |
+
+#### public.staging_bus_inventory
+
+| 列名 | 说明 |
+|------|------|
+| `id` | |
+| `唯一层级` | |
+| `一级组织` | |
+| `二级组织` | |
+| `三级组织` | |
+| `来源编号` | |
+| `财报合并` | |
+| `财报单体` | |
+| `物料编码` | |
+| `物料名称` | |
+| `存货类别` | |
+| `客户类别` | |
+| `客户编码` | |
+| `客户名称` | |
+| `仓库` | |
+| `是否为备货物料` | |
+| `数量(库存)` | |
+| `参考价(基本)` | |
+| `参考金额` | |
+| `6个月以内数量` | |
+| `6个月以内金额` | |
+| `6-9个月数量` | |
+| `6-9个月金额` | |
+| `9个月-1年数量` | |
+| `9个月-1年金额` | |
+| `1-2年数量` | |
+| `1-2年金额` | |
+| `2-3年数量` | |
+| `2-3年金额` | |
+| `3年以上数量` | |
+| `3年以上金额` | |
+| `会计期间` | |
+| `年份` | |
+| `数据来源` | |
+| `AGI` | |
+| `国内硬件` | |
+| `国际业务` | |
+| `大POS` | |
+| `审核业务` | |
+| `小POS` | |
+| `政府消费券` | |
+| `数币` | |
+| `本地生活` | |
+| `消费电子` | |
+| `澳门业务` | |
+| `立充` | |
+| `美国业务` | |
+| `能源硬件` | |
+| `能源运营` | |
+| `资产运营` | |
+| `跨境总部` | |
+| `跨境新加坡` | |
+| `跨境欧洲` | |
+| `审核状态` | |
+| `创建时间` | |
+
+#### public.staging_bus_in_transit_inventory
+
+| 列名 | 说明 |
+|------|------|
+| `id` | |
+| `唯一层级` | |
+| `一级组织` | |
+| `二级组织` | |
+| `三级组织` | |
+| `来源编号` | |
+| `财报合并` | |
+| `财报单体` | |
+| `订单号` | |
+| `订单日期` | |
+| `供应商编码` | |
+| `供应商名称` | |
+| `存货类别` | |
+| `物料编码` | |
+| `物料名称` | |
+| `订单金额` | |
+| `在途订单金额` | |
+| `累计付款金额` | |
+| `订单数量` | |
+| `累计入库数量` | |
+| `未入库数量` | |
+| `交货日期` | |
+| `会计期间` | |
+| `年份` | |
+| `数据来源` | |
+| `AGI` | |
+| `国内硬件` | |
+| `国际业务` | |
+| `大POS` | |
+| `审核业务` | |
+| `小POS` | |
+| `政府消费券` | |
+| `数币` | |
+| `本地生活` | |
+| `消费电子` | |
+| `澳门业务` | |
+| `立充` | |
+| `美国业务` | |
+| `能源硬件` | |
+| `能源运营` | |
+| `资产运营` | |
+| `跨境总部` | |
+| `跨境新加坡` | |
+| `跨境欧洲` | |
+| `审核状态` | |
+| `创建时间` | |
+
+#### public.staging_bus_receivable
+
+| 列名 | 说明 |
+|------|------|
+| `id` | |
+| `唯一层级` | |
+| `一级组织` | |
+| `二级组织` | |
+| `三级组织` | |
+| `来源编号` | |
+| `财报合并` | |
+| `财报单体` | |
+| `一级科目` | |
+| `客户编码` | |
+| `往来单位` | |
+| `往来性质` | |
+| `客户类型` | |
+| `销售部门` | |
+| `销售区域` | |
+| `赊销未核金额` | |
+| `预收未核金额` | |
+| `分期未核金额` | |
+| `应收账款余额` | |
+| `逾期金额` | |
+| `未到期金额` | |
+| `逾期30天以内金额` | |
+| `逾期30天到90天金额` | |
+| `逾期90天到180天金额` | |
+| `逾期180天到360天金额` | |
+| `逾期360天以上金额` | |
+| `账龄3个月以内` | |
+| `账龄3-6个月` | |
+| `账龄6-9个月` | |
+| `账龄9-12个月` | |
+| `账龄1-2年` | |
+| `账龄2-3年` | |
+| `账龄3年以上` | |
+| `本年借方发生额` | |
+| `本年贷方发生额` | |
+| `销售模块` | |
+| `上个月逾期金额` | |
+| `逾期变动` | |
+| `本年回款金额` | |
+| `会计期间` | |
+| `业务大类` | |
+| `业务小类` | |
+| `应收状态` | |
+| `备注` | |
+| `年份` | |
+| `数据来源` | |
+| `AGI` | |
+| `国内硬件` | |
+| `国际业务` | |
+| `大POS` | |
+| `审核业务` | |
+| `小POS` | |
+| `政府消费券` | |
+| `数币` | |
+| `本地生活` | |
+| `消费电子` | |
+| `澳门业务` | |
+| `立充` | |
+| `美国业务` | |
+| `能源硬件` | |
+| `能源运营` | |
+| `资产运营` | |
+| `跨境总部` | |
+| `跨境新加坡` | |
+| `跨境欧洲` | |
+| `审核状态` | |
+| `创建时间` | |
+
+#### public.staging_bus_profit_bd
+
+| 列名 | 说明 |
+|------|------|
+| `id` | |
+| `唯一层级` | |
+| `一级组织` | |
+| `二级组织` | |
+| `三级组织` | |
+| `来源编号` | |
+| `财报合并` | |
+| `日期` | |
+| `一级科目` | |
+| `本月金额` | |
+| `年份` | |
+| `数据来源` | |
+| `AGI` | |
+| `国内硬件` | |
+| `国际业务` | |
+| `大POS` | |
+| `审核业务` | |
+| `小POS` | |
+| `政府消费券` | |
+| `数币` | |
+| `本地生活` | |
+| `消费电子` | |
+| `澳门业务` | |
+| `立充` | |
+| `美国业务` | |
+| `能源硬件` | |
+| `能源运营` | |
+| `资产运营` | |
+| `跨境总部` | |
+| `跨境新加坡` | |
+| `跨境欧洲` | |
+| `审核状态` | |
+| `创建时间` | |
+
+### 其他常用表
+
+| 表名 | 用途 |
+|------|------|
+| `map_translate` | |
+| `dim_bus_line` | |
+| `dim_org_struc` | |
+| `dim_material_master` | |
+| `dim_prim_acc` | |
+| `dim_customer_info` | |
+| `dim_exp_item` | |
+| `dim_prod_cat` | |
+| `dim_inv_cat` | |
+| `dim_region` | |
+| `dim_txn_nat` | |
+| `dim_date` | |
+| `bud_income` | |
+| `bud_expense` | |
+| `bud_profit` | |
+| `bud_cash_flow` | |
+| `recon_result_sales` | |
+| `recon_result_wanglai` | |
+| `recon_result_cashflow` | |
 
 ---
 

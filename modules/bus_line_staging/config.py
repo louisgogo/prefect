@@ -8,7 +8,9 @@ def get_bus_lines():
     """从数据库 fact_bus_line 动态获取业务线列表"""
     try:
         conn, cur = connect_to_db()
-        cur.execute("SELECT bus_line FROM fact_bus_line")
+        cur.execute(
+            "SELECT DISTINCT bus_line FROM fact_bus_line WHERE bus_line IS NOT NULL AND bus_line != ''"
+        )
         lines = [row[0] for row in cur.fetchall()]
         cur.close()
         conn.close()

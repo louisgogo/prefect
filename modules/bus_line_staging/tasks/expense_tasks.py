@@ -174,6 +174,8 @@ def run_expense_split_to_staging_task(date_range):
     # 保留 '费用金额' 列名，与 fact_expense.exp_amt 对齐（通过 combined_column_mapping 映射）
     # 将 '数据来源' 显式重命名为 sec_dist_lvl（该字段不在 combined_column_mapping 中）
     df_template.rename(columns={"数据来源": "sec_dist_lvl"}, inplace=True)
+    # 数据库表实际存在 "数据来源" 列，需要保留该列的值
+    df_template["数据来源"] = df_template["sec_dist_lvl"]
 
     for col in bus_lines:
         df_template[col] = np.where(df_template["分摊业务线"] == col, 1, np.nan)

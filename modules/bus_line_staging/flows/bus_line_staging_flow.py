@@ -1,3 +1,5 @@
+from mypackage.utilities import connect_to_db
+
 from prefect import flow, get_run_logger
 
 from ..config import get_date_range
@@ -5,6 +7,7 @@ from ..tasks.asset_tasks import run_inv_ar_split_task
 from ..tasks.expense_tasks import run_expense_split_to_staging_task
 from ..tasks.revenue_tasks import run_revenue_other_split_task
 from ..tasks.unassigned_tasks import run_unassigned_split_task
+from ..utils import cleanup_staging_month
 
 
 @flow(name="业务线数据中间库抽取流程(Staging)", description="将业务线拆分1-4步骤数据以EAV格式打平并存入PostgreSQL系统待填报")
@@ -18,6 +21,20 @@ def bus_line_staging_flow(start_date: str | None = None, end_date: str | None = 
         logger.info(f"使用自定义日期范围: {start_date} 到 {end_date}")
     else:
         logger.info(f"使用默认日期范围 (上月): {date_range[0]} 到 {date_range[-1]}")
+
+    # 前置清理：删除目标月份在各 staging 表中的旧数据，避免 task 间互相覆盖
+    conn, cur = connect_to_db()
+    try:
+        cleanup_staging_month(cur, "staging_bus_expense", "会计期间", date_range)
+        cleanup_staging_month(cur, "staging_bus_revenue", "会计期间", date_range)
+        cleanup_staging_month(cur, "staging_bus_profit_bd", "日期", date_range)
+        cleanup_staging_month(cur, "staging_bus_inventory", "会计期间", date_range)
+        cleanup_staging_month(cur, "staging_bus_receivable", "会计期间", date_range)
+        cleanup_staging_month(cur, "staging_bus_in_transit_inventory", "会计期间", date_range)
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
 
     # 1. 费用数据拆分
     run_expense_split_to_staging_task(date_range)

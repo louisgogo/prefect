@@ -53,6 +53,12 @@ def run_inv_ar_split_task(date_range):
         # 筛选业务线为'无'、'小POS'或'审核业务'的数据
         df_inv_matched = df_inv_org[df_inv_org["业务线"].isin(["无", "小POS", "审核业务"])]
 
+        # Get groups before dropping the column
+        inv_groups = []
+        if not df_inv_matched.empty:
+            inv_groups = df_inv_matched[df_inv_matched["分组简称"].notna()]["分组简称"].unique()
+            inv_groups = [g for g in inv_groups if g in groups_frontend]
+
         if not df_inv_matched.empty:
             df_inv_matched = df_inv_matched.drop(["业务线", "分组简称"], axis=1, errors="ignore")
             df_inv_matched = df_inv_matched.drop(["一级组织", "二级组织", "三级组织"], axis=1, errors="ignore")
@@ -97,6 +103,7 @@ def run_inv_ar_split_task(date_range):
             ]
             df_inv["年份"] = pd.to_datetime(df_inv["会计期间"]).dt.year
             df_inv[bus_lines] = np.nan
+            df_inv["数据来源"] = "存货数据"
         else:
             df_inv = pd.DataFrame()
 
@@ -126,8 +133,14 @@ def run_inv_ar_split_task(date_range):
             & (df_ar_org["应收账款余额"] != 0)
         ]
 
+        # Get groups before dropping the column
+        ar_groups = []
         if not df_ar_matched.empty:
-            df_ar_matched = df_ar_matched.drop(["业务线"], axis=1, errors="ignore")
+            ar_groups = df_ar_matched[df_ar_matched["分组简称"].notna()]["分组简称"].unique()
+            ar_groups = [g for g in ar_groups if g in groups_frontend]
+
+        if not df_ar_matched.empty:
+            df_ar_matched = df_ar_matched.drop(["业务线", "分组简称"], axis=1, errors="ignore")
             df_ar_matched = df_ar_matched.drop(["一级组织", "二级组织", "三级组织"], axis=1, errors="ignore")
             df_ar_matched[["一级组织", "二级组织", "三级组织"]] = df_ar_matched["唯一层级"].str.split(
                 "-", n=2, expand=True
@@ -182,6 +195,7 @@ def run_inv_ar_split_task(date_range):
             ]
             df_ar["年份"] = pd.to_datetime(df_ar["会计期间"]).dt.year
             df_ar[bus_lines] = np.nan
+            df_ar["数据来源"] = "应收账款"
         else:
             df_ar = pd.DataFrame()
 
@@ -210,8 +224,14 @@ def run_inv_ar_split_task(date_range):
             (df_transit_org["业务线"].isin(["无", "小POS"])) & (df_transit_org["订单金额"] != 0)
         ]
 
+        # Get groups before dropping the column
+        transit_groups = []
         if not df_transit_matched.empty:
-            df_transit_matched = df_transit_matched.drop(["业务线"], axis=1, errors="ignore")
+            transit_groups = df_transit_matched[df_transit_matched["分组简称"].notna()]["分组简称"].unique()
+            transit_groups = [g for g in transit_groups if g in groups_frontend]
+
+        if not df_transit_matched.empty:
+            df_transit_matched = df_transit_matched.drop(["业务线", "分组简称"], axis=1, errors="ignore")
             df_transit_matched = df_transit_matched.drop(
                 ["一级组织", "二级组织", "三级组织"], axis=1, errors="ignore"
             )
@@ -238,7 +258,6 @@ def run_inv_ar_split_task(date_range):
                     "供应商编码",
                     "供应商名称",
                     "存货类别",
-                    "产品大类",
                     "物料编码",
                     "物料名称",
                     "订单金额",
@@ -254,6 +273,7 @@ def run_inv_ar_split_task(date_range):
             ]
             df_transit["年份"] = pd.to_datetime(df_transit["会计期间"]).dt.year
             df_transit[bus_lines] = np.nan
+            df_transit["数据来源"] = "在途存货"
         else:
             df_transit = pd.DataFrame()
 
@@ -265,11 +285,8 @@ def run_inv_ar_split_task(date_range):
             cur.fetchall(), columns=["unique_lvl", "prim_org", "sec_org", "short_name", "category"]
         )
 
-        # 根据数据中的分组简称确定要拆分的groups
+        # 插入存货数据
         if not df_inv.empty:
-            inv_groups = df_inv_matched[df_inv_matched["分组简称"].notna()]["分组简称"].unique()
-            # 只保留在groups_frontend中的分组
-            inv_groups = [g for g in inv_groups if g in groups_frontend]
             if len(inv_groups) > 0:
                 insert_to_staging_table(
                     df=df_inv,
@@ -296,9 +313,8 @@ def run_inv_ar_split_task(date_range):
                     is_by_df=True,
                 )
 
+        # 插入应收账款数据
         if not df_ar.empty:
-            ar_groups = df_ar_matched[df_ar_matched["分组简称"].notna()]["分组简称"].unique()
-            ar_groups = [g for g in ar_groups if g in groups_frontend]
             if len(ar_groups) > 0:
                 insert_to_staging_table(
                     df=df_ar,
@@ -324,9 +340,8 @@ def run_inv_ar_split_task(date_range):
                     is_by_df=True,
                 )
 
+        # 插入在途存货数据
         if not df_transit.empty:
-            transit_groups = df_transit_matched[df_transit_matched["分组简称"].notna()]["分组简称"].unique()
-            transit_groups = [g for g in transit_groups if g in groups_frontend]
             if len(transit_groups) > 0:
                 insert_to_staging_table(
                     df=df_transit,

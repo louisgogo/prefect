@@ -72,7 +72,7 @@ def run_revenue_other_split_task(date_range):
                 ]
             ]
             df_revenue[bus_lines] = np.nan
-            # 保留 '不含税金额本位币' 列名，与 fact_revenue.amt_tax_exc_loc 对齐
+            df_revenue["数据来源"] = "前台收入"
 
         # 2. 其他项目数据（直接在SQL中过滤日期、层级和科目）
         print("正在获取其他项目数据...")
@@ -112,7 +112,7 @@ def run_revenue_other_split_task(date_range):
             df_profit[bus_lines] = np.nan
             df_profit = df_profit.dropna(subset=["本月金额"])
             df_profit = df_profit[df_profit["本月金额"] != 0]
-            # 保留 '本月金额' 列名，与 fact_profit_bd.mo_amt 对齐
+            df_profit["数据来源"] = "前台其他"
         # 组织映射
         cur.execute(
             "SELECT distinct unique_lvl, prim_org, sec_org, short_name, category FROM dim_org_struc"

@@ -278,7 +278,7 @@ def reconcile_wanglai_task(
     df_ap = df_wanglai[df_wanglai["科目名称"].str.contains("付", na=False)].copy()
     df_ap = pd.merge(df_ap, df_params, left_on="科目名称", right_on="项目", how="left")
     df_ap["唯一名称"] = df_ap["对方简称"] + "-" + df_ap["公司简称"] + "-" + df_ap["统一名称"].fillna("")
-    df_ap_grouped = df_ap.groupby(["唯一名称", "日期"], as_index=False)["金额"].sum()
+    df_ap_grouped = df_ap.groupby(["唯一名称", "日期"], as_index=False, dropna=False)["金额"].sum()
 
     # 应收
     df_ar = df_wanglai[df_wanglai["科目名称"].str.contains("收", na=False)].copy()
