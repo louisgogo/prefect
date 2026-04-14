@@ -12,6 +12,7 @@ from modules import (
     data_import_flow,
     fetch_budget_shared_rate_flow,
     profit_refresh_flow,
+    profit_report_flow,
     recon_flow,
 )
 from modules.bus_line_staging import bus_line_staging_flow
@@ -178,13 +179,26 @@ def deploy_fetch_budget_shared_rate_flow():
     )
 
 
+def deploy_profit_report_flow():
+    """部署利润表收集汇总流程"""
+    print("=" * 60)
+    print("利润表收集汇总流程 - 本地测试部署")
+    print("=" * 60)
+
+    profit_report_flow.serve(
+        name="利润表收集汇总流程-本地测试",
+        tags=["本地测试", "报表收集", "利润表"],
+        description="本地测试用：按PQ逻辑收集数据源并汇总生成2-1利润拆分，导出CSV。默认执行上个月。",
+    )
+
+
 if __name__ == "__main__":
     print("开始部署流程...")
     print("确保已启动 Prefect Server：prefect server start")
     print("请在 Prefect UI 中查看：http://127.0.0.1:4200")
     print("\n" + "=" * 60)
 
-    # 使用多进程同时部署四个流程
+    # 使用多进程同时部署流程
     process1 = Process(target=deploy_business_line_profit_flow)
     process2 = Process(target=deploy_shared_rate_flow)
     process3 = Process(target=deploy_data_import_flow)
@@ -193,6 +207,7 @@ if __name__ == "__main__":
     process6 = Process(target=deploy_profit_refresh_flow)
     process7 = Process(target=deploy_bus_line_staging_flow)
     process8 = Process(target=deploy_fetch_budget_shared_rate_flow)
+    process9 = Process(target=deploy_profit_report_flow)
 
     process1.start()
     time.sleep(1)
@@ -209,6 +224,8 @@ if __name__ == "__main__":
     process7.start()
     time.sleep(1)
     process8.start()
+    time.sleep(1)
+    process9.start()
 
     # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
@@ -220,7 +237,17 @@ if __name__ == "__main__":
         process6.join()
     except KeyboardInterrupt:
         print("\n正在停止部署...")
-        for p in [process1, process2, process3, process4, process5, process6, process7, process8]:
+        for p in [
+            process1,
+            process2,
+            process3,
+            process4,
+            process5,
+            process6,
+            process7,
+            process8,
+            process9,
+        ]:
             p.terminate()
             p.join()
         print("部署已停止")

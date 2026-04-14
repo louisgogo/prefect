@@ -12,6 +12,7 @@ from modules import (
     data_import_flow,
     fetch_budget_shared_rate_flow,
     profit_refresh_flow,
+    profit_report_flow,
     recon_flow,
 )
 from modules.bus_line_staging import bus_line_staging_flow
@@ -114,6 +115,15 @@ def _serve_bus_line_staging():
     )
 
 
+def _serve_profit_report():
+    """模块级函数，供 Process 调用"""
+    profit_report_flow.serve(
+        name="子流程-利润表收集汇总",
+        tags=["报表收集", "利润表", "手动触发", "月度任务"],
+        description="利润表收集、汇总流程：按PQ逻辑收集数据源并汇总生成2-1利润拆分，导出CSV。默认执行上个月。",
+    )
+
+
 def deploy_to_remote_server():
     """
     从本地推送流程到远程 Prefect Server
@@ -168,6 +178,7 @@ def deploy_to_remote_server():
     process6 = Process(target=_serve_profit_refresh)
     process7 = Process(target=_serve_recon)
     process8 = Process(target=_serve_bus_line_staging)
+    process9 = Process(target=_serve_profit_report)
 
     process1.start()
     time.sleep(1)
@@ -184,6 +195,8 @@ def deploy_to_remote_server():
     process7.start()
     time.sleep(1)
     process8.start()
+    time.sleep(1)
+    process9.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -200,7 +213,17 @@ def deploy_to_remote_server():
         process7.join()
     except KeyboardInterrupt:
         print("\n\n正在停止部署...")
-        for p in [process1, process2, process3, process4, process5, process6, process7, process8]:
+        for p in [
+            process1,
+            process2,
+            process3,
+            process4,
+            process5,
+            process6,
+            process7,
+            process8,
+            process9,
+        ]:
             p.terminate()
             p.join()
         print("部署已停止")
