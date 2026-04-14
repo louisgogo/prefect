@@ -44,6 +44,7 @@ def run_expense_split_to_staging_task(date_range):
     cur.execute(
         f"""SELECT * FROM fact_expense
         WHERE acct_period IN ({date_list})
+        AND dist_bus_line IS NULL
         AND ((exp_item_code IN ({expense_categorys_text_1}) AND unique_lvl LIKE '%行政中心%')
              OR (exp_item_code IN ({expense_categorys_text_2}) AND unique_lvl LIKE '%人力资源中心%'))"""
     )
