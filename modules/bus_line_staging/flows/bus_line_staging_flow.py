@@ -8,7 +8,7 @@ from ..tasks.unassigned_tasks import run_unassigned_split_task
 
 
 @flow(name="业务线数据中间库抽取流程(Staging)", description="将业务线拆分1-4步骤数据以EAV格式打平并存入PostgreSQL系统待填报")
-def bus_line_staging_flow(start_date: str = None, end_date: str = None):
+def bus_line_staging_flow(start_date: str | None = None, end_date: str | None = None):
     logger = get_run_logger()
     logger.info("开始执行业务线数据打平入库(Staging)全流程...")
 
