@@ -1,4 +1,5 @@
 """从本地推送到远程 Prefect Server 的部署脚本"""
+
 import os
 import sys
 import time
@@ -25,14 +26,16 @@ sys.path.append(current_dir)
 # 若已设置环境变量 PREFECT_API_URL，则优先使用环境变量；否则使用下面地址
 PREFECT_SERVER_URL = "http://10.18.8.191:4200"
 # API 地址（Prefect 要求带 /api 后缀）
-PREFECT_API_URL = os.environ.get("PREFECT_API_URL") or f"{PREFECT_SERVER_URL.rstrip('/')}/api"
+PREFECT_API_URL = (
+    os.environ.get("PREFECT_API_URL") or f"{PREFECT_SERVER_URL.rstrip('/')}/api"
+)
 
 
-def _serve_business_line(last_month_year: int, last_month: int):
+def _serve_business_line(process_year: int, months: list):
     """模块级函数，供 Process 调用（Windows 要求可 pickle，不能是嵌套函数）"""
     business_line_profit_flow.serve(
         name="主流程-业务线损益计算",
-        parameters={"year": last_month_year, "month": last_month},
+        parameters={"year": process_year, "months": months},
         tags=["业务线核算", "月度任务", "自动执行"],
         description="业务线损益计算流程：生成收入、费用、利润、应收、存货、在途存货明细表，并刷新利润表",
     )
@@ -64,7 +67,9 @@ def _serve_data_import(last_month_year: int, last_month: int):
 
 def _serve_budget_update():
     """模块级函数，供 Process 调用（预算更新为手动触发，参数按当前月份设默认值）"""
-    from modules.budget_update.flows.budget_update_flow import _get_budget_defaults_by_date
+    from modules.budget_update.flows.budget_update_flow import (
+        _get_budget_defaults_by_date,
+    )
 
     budget_defaults = _get_budget_defaults_by_date()
     budget_update_flow.serve(
@@ -86,7 +91,9 @@ def _serve_profit_refresh():
 
 def _serve_fetch_budget_shared_rate():
     """模块级函数，供 Process 调用"""
-    from modules.shared_rate.flows.fetch_budget_shared_rate_flow import _get_default_dates
+    from modules.shared_rate.flows.fetch_budget_shared_rate_flow import (
+        _get_default_dates,
+    )
 
     defaults = _get_default_dates()
     fetch_budget_shared_rate_flow.serve(
@@ -146,7 +153,9 @@ def deploy_to_remote_server():
     print(f"部署目标 Prefect API: {api_url}")
     print(f"部署目标 UI 地址: {PREFECT_SERVER_URL}")
     if "127.0.0.1" in api_url or "localhost" in api_url:
-        print("\n⚠️  当前为本地地址；若需推送到远程服务器，请修改本文件顶部 PREFECT_SERVER_URL")
+        print(
+            "\n⚠️  当前为本地地址；若需推送到远程服务器，请修改本文件顶部 PREFECT_SERVER_URL"
+        )
         # systemd 等非交互环境没有 stdin，直接继续；仅在有终端时询问
         if sys.stdin.isatty():
             response = input("是否继续部署？(y/n): ")
@@ -156,23 +165,23 @@ def deploy_to_remote_server():
         else:
             print("非交互环境，自动继续部署")
 
-    # 计算上个月的年份和月份
+    # 计算自动运行日期范围：1月到上个月；1月份则为上年全部
     now = datetime.now()
     if now.month == 1:
-        last_month_year = now.year - 1
-        last_month = 12
+        process_year = now.year - 1
+        months = list(range(1, 13))
     else:
-        last_month_year = now.year
-        last_month = now.month - 1
+        process_year = now.year
+        months = list(range(1, now.month))
 
     print("\n开始部署流程...")
     print("=" * 60)
 
     # 使用多进程同时部署多个流程（serve() 会持续运行）
     # 目标必须是模块级函数，否则 Windows 下 multiprocessing 无法 pickle 嵌套函数
-    process1 = Process(target=_serve_business_line, args=(last_month_year, last_month))
-    process2 = Process(target=_serve_shared_rate, args=(last_month_year, last_month))
-    process3 = Process(target=_serve_data_import, args=(last_month_year, last_month))
+    process1 = Process(target=_serve_business_line, args=(process_year, months))
+    process2 = Process(target=_serve_shared_rate, args=(process_year, months[-1]))
+    process3 = Process(target=_serve_data_import, args=(process_year, months[-1]))
     process4 = Process(target=_serve_budget_update)
     process5 = Process(target=_serve_fetch_budget_shared_rate)
     process6 = Process(target=_serve_profit_refresh)

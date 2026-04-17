@@ -1,4 +1,5 @@
 """生产环境部署脚本（带计划执行）"""
+
 import os
 import sys
 from datetime import datetime
@@ -23,23 +24,23 @@ if __name__ == "__main__":
     print("业务线数据计算流程 - 生产环境部署")
     print("=" * 60)
 
-    # 计算上个月的年份和月份
+    # 计算自动运行日期范围：1月到上个月；1月份则为上年全部
     now = datetime.now()
     if now.month == 1:
-        last_month_year = now.year - 1
-        last_month = 12
+        process_year = now.year - 1
+        months = list(range(1, 13))
     else:
-        last_month_year = now.year
-        last_month = now.month - 1
+        process_year = now.year
+        months = list(range(1, now.month))
 
-    print(f"默认参数：year={last_month_year}, month={last_month}")
+    print(f"默认参数：year={process_year}, months={months}")
 
     # 部署 flow 到 Prefect server（带计划执行）
     business_line_profit_flow.serve(
         name="主流程-业务线损益计算",
         parameters={
-            "year": last_month_year,
-            "month": last_month,
+            "year": process_year,
+            "months": months,
         },
         tags=["业务线核算", "月度任务", "自动执行"],
         description="业务线损益计算流程：生成收入、费用、利润、应收、存货、在途存货明细表，并刷新利润表",
@@ -95,10 +96,14 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("预算更新流程 - 生产环境部署")
     print("=" * 60)
-    from modules.budget_update.flows.budget_update_flow import _get_budget_defaults_by_date
+    from modules.budget_update.flows.budget_update_flow import (
+        _get_budget_defaults_by_date,
+    )
 
     budget_defaults = _get_budget_defaults_by_date()
-    print("说明：预算更新为手动触发；参数已按当前月份设默认值（11月～2月→年初预算，4月～7月→年中预算）")
+    print(
+        "说明：预算更新为手动触发；参数已按当前月份设默认值（11月～2月→年初预算，4月～7月→年中预算）"
+    )
     print("易混点：report_date=要替换的那批日期；version=本批新数据的填报日期标签。")
     budget_update_flow.serve(
         name="主流程-预算更新",
@@ -110,7 +115,9 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("利润表刷新流程 - 生产环境部署")
     print("=" * 60)
-    print(f"说明：利润表刷新通常在业务线损益计算流程最后一步自动调用。部署此任务是为了方便单独手动触发。")
+    print(
+        f"说明：利润表刷新通常在业务线损益计算流程最后一步自动调用。部署此任务是为了方便单独手动触发。"
+    )
     print("易混点：date_range参数目前只为了占位，通常使用手动触发时需要设置参数")
     profit_refresh_flow.serve(
         name="子流程-利润表刷新",
@@ -121,7 +128,9 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("业务线Staging抽取流程 - 生产环境部署")
     print("=" * 60)
-    print("说明：用于从各类数据源中提取业务线拆分的基础数据（含费用、收入、存货等），打竖后存入PostgreSQL以便前端填报")
+    print(
+        "说明：用于从各类数据源中提取业务线拆分的基础数据（含费用、收入、存货等），打竖后存入PostgreSQL以便前端填报"
+    )
     bus_line_staging_flow.serve(
         name="主流程-业务线Staging抽取",
         tags=["Staging", "业务线核算", "自动执行", "月度任务"],

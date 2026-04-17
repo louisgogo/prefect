@@ -1,4 +1,5 @@
 """本地测试部署脚本"""
+
 import os
 import sys
 import time
@@ -40,13 +41,23 @@ def deploy_business_line_profit_flow():
     print("业务线损益计算流程 - 本地测试部署")
     print("=" * 60)
 
-    print("说明：请在 UI 中手动输入参数（year, month, months）")
+    # 计算自动运行日期范围：1月到上个月；1月份则为上年全部
+    now = datetime.now()
+    if now.month == 1:
+        process_year = now.year - 1
+        months = list(range(1, 13))
+    else:
+        process_year = now.year
+        months = list(range(1, now.month))
+
+    print(f"默认参数：year={process_year}, months={months}")
+    print("说明：请在 UI 中手动输入参数（year, month, months），或直接使用默认值")
     print("提示：year 是必需参数，month 和 months 二选一")
 
     # 部署到本地 Prefect Server（无计划执行，仅用于手动触发）
-    # 不指定 parameters，让用户在 UI 中手动输入，避免误操作
     business_line_profit_flow.serve(
         name="业务线损益计算流程-本地测试",
+        parameters={"year": process_year, "months": months},
         tags=["本地测试", "业务线核算"],
         description="本地测试用：业务线损益计算流程（业务线数据计算+利润表刷新）",
     )
@@ -97,7 +108,9 @@ def deploy_data_import_flow():
 
 def deploy_budget_update_flow():
     """部署预算更新流程（带按当前日期计算的默认参数）"""
-    from modules.budget_update.flows.budget_update_flow import _get_budget_defaults_by_date
+    from modules.budget_update.flows.budget_update_flow import (
+        _get_budget_defaults_by_date,
+    )
 
     print("=" * 60)
     print("预算更新流程 - 本地测试部署")
@@ -105,7 +118,9 @@ def deploy_budget_update_flow():
 
     defaults = _get_budget_defaults_by_date()
     print("说明：以下参数已按当前月份设默认值，可在 UI 中修改")
-    print("默认值规则：上年11月～2月→年初预算（11/12月用下年度-01-01，1/2月用当年度-01-01）；4月～7月→年中预算（当年度-07-01）")
+    print(
+        "默认值规则：上年11月～2月→年初预算（11/12月用下年度-01-01，1/2月用当年度-01-01）；4月～7月→年中预算（当年度-07-01）"
+    )
     print("当前默认参数：")
     for k, v in defaults.items():
         print(f"  - {k}: {v}")
@@ -164,7 +179,9 @@ def deploy_bus_line_staging_flow():
 
 def deploy_fetch_budget_shared_rate_flow():
     """部署拉取预算综合比例流程"""
-    from modules.shared_rate.flows.fetch_budget_shared_rate_flow import _get_default_dates
+    from modules.shared_rate.flows.fetch_budget_shared_rate_flow import (
+        _get_default_dates,
+    )
 
     print("=" * 60)
     print("拉取预算综合比例流程 - 本地测试部署")
