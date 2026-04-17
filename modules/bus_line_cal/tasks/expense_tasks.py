@@ -1,14 +1,21 @@
 """费用明细生成相关 Tasks"""
+
 import os
 import sys
 
 import pandas as pd
-from mypackage.utilities import connect_to_db, delete_data_add_data_by_DateRange, val_dist
+from mypackage.utilities import (
+    connect_to_db,
+    delete_data_add_data_by_DateRange,
+    val_dist,
+)
 
 from prefect import task
 
 # 添加根目录到路径（prefect目录）
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.append(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
 
 
 @task(name="load_expense_data", log_prints=True)
@@ -24,8 +31,13 @@ def load_expense_data_task(date_range: pd.DatetimeIndex) -> pd.DataFrame:
     """
     try:
         conn, cur = connect_to_db()
-        cur.execute("SELECT * FROM fact_expense WHERE unique_lvl NOT LIKE '%无归属%'")
-        df_expense = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
+        cur.execute(
+            "SELECT * FROM fact_expense WHERE unique_lvl NOT LIKE %s AND acct_period >= %s AND acct_period <= %s",
+            ("%无归属%", date_range.min(), date_range.max()),
+        )
+        df_expense = pd.DataFrame(
+            cur.fetchall(), columns=[desc[0] for desc in cur.description]
+        )
 
         # 删除最后更新时间
         if "last_modified" in df_expense.columns:
@@ -65,16 +77,26 @@ def process_gap_expense_task(
         df_expense_bus_gap_rate = (
             df_expense_bus.groupby(["source_no"]).agg({"rate": "sum"}).reset_index()
         )
-        df_expense_bus_gap_rate = df_expense_bus_gap_rate[df_expense_bus_gap_rate["rate"] < 1]
-        df_expense_bus_gap_rate["rate"] = 1 - df_expense_bus_gap_rate["rate"].astype("float")
+        df_expense_bus_gap_rate = df_expense_bus_gap_rate[
+            df_expense_bus_gap_rate["rate"] < 1
+        ]
+        df_expense_bus_gap_rate["rate"] = 1 - df_expense_bus_gap_rate["rate"].astype(
+            "float"
+        )
         df_expense_bus_gap_list = df_expense_bus_gap_rate["source_no"].tolist()
 
         # 处理公摊费用
         df_expense_bus_gap = df_expense[
             df_expense["source_no"].isin(df_expense_bus_gap_list)
-        ].merge(df_expense_bus_gap_rate[["source_no", "rate"]], on=["source_no"], how="left")
-        df_expense_bus_gap = df_expense_bus_gap.astype({"rate": "float", "exp_amt": "float"})
-        df_expense_bus_gap["exp_amt"] = df_expense_bus_gap["exp_amt"] * df_expense_bus_gap["rate"]
+        ].merge(
+            df_expense_bus_gap_rate[["source_no", "rate"]], on=["source_no"], how="left"
+        )
+        df_expense_bus_gap = df_expense_bus_gap.astype(
+            {"rate": "float", "exp_amt": "float"}
+        )
+        df_expense_bus_gap["exp_amt"] = (
+            df_expense_bus_gap["exp_amt"] * df_expense_bus_gap["rate"]
+        )
         df_expense_bus_gap["bus_line"] = "无"
         df_expense_bus_gap["source_lvl"] = df_expense_bus_gap["unique_lvl"]
         df_expense_bus_gap["category"] = "公摊费用"
@@ -104,12 +126,16 @@ def process_manual_expense_task(
         df_expense_bus = df_upload_merge_all[df_upload_merge_all["class"] == "费用"]
         df_expense_bus_list = df_expense_bus["source_no"].tolist()
 
-        df_expense_bus_hand = df_expense[df_expense["source_no"].isin(df_expense_bus_list)].merge(
+        df_expense_bus_hand = df_expense[
+            df_expense["source_no"].isin(df_expense_bus_list)
+        ].merge(
             df_expense_bus[["source_no", "bus_line", "unique_lvl", "category", "rate"]],
             on=["source_no"],
             how="left",
         )
-        df_expense_bus_hand = df_expense_bus_hand.astype({"rate": "float", "exp_amt": "float"})
+        df_expense_bus_hand = df_expense_bus_hand.astype(
+            {"rate": "float", "exp_amt": "float"}
+        )
         df_expense_bus_hand = df_expense_bus_hand.rename(
             columns={"unique_lvl_x": "source_lvl", "unique_lvl_y": "unique_lvl"}
         )
@@ -144,9 +170,9 @@ def process_auto_expense_task(
         df_expense_bus_list = df_expense_bus["source_no"].tolist()
 
         # 不位于分拆表中的数据
-        df_expense_bus_auto = df_expense[~df_expense["source_no"].isin(df_expense_bus_list)].merge(
-            df_org[["unique_lvl", "bus_line"]], on=["unique_lvl"], how="left"
-        )
+        df_expense_bus_auto = df_expense[
+            ~df_expense["source_no"].isin(df_expense_bus_list)
+        ].merge(df_org[["unique_lvl", "bus_line"]], on=["unique_lvl"], how="left")
         df_expense_bus_auto["source_lvl"] = df_expense_bus_auto["unique_lvl"]
         df_expense_bus_auto["rate"] = 1
         df_expense_bus_auto["category"] = df_expense_bus_auto["bus_line"].apply(
@@ -179,7 +205,8 @@ def merge_expense_data_task(
     """
     try:
         df_expense_bus_all = pd.concat(
-            [df_expense_bus_hand, df_expense_bus_auto, df_expense_bus_gap], ignore_index=True
+            [df_expense_bus_hand, df_expense_bus_auto, df_expense_bus_gap],
+            ignore_index=True,
         )
         df_expense_bus_all = df_expense_bus_all.drop(["id"], axis=1, errors="ignore")
 
@@ -206,7 +233,9 @@ def update_energy_hardware_expense_task(df: pd.DataFrame) -> pd.DataFrame:
         df["acct_period"] = pd.to_datetime(df["acct_period"])
 
         # 构建掩码：2025-08-01 之后且业务线为'能源硬件'
-        mask = (df["acct_period"] >= pd.to_datetime("2025-08-01")) & (df["bus_line"] == "能源硬件")
+        mask = (df["acct_period"] >= pd.to_datetime("2025-08-01")) & (
+            df["bus_line"] == "能源硬件"
+        )
 
         rows_to_change = mask.sum()
         if rows_to_change > 0:
@@ -254,8 +283,12 @@ def apply_shared_rate_to_expense_task(
     try:
         conn, cur = connect_to_db()
         cur.execute("SELECT * FROM fact_bus_shared_rate")
-        df_shared_rate = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
-        df_shared_rate = df_shared_rate.drop(["id"], axis=1).rename(columns={"date": "acct_period"})
+        df_shared_rate = pd.DataFrame(
+            cur.fetchall(), columns=[desc[0] for desc in cur.description]
+        )
+        df_shared_rate = df_shared_rate.drop(["id"], axis=1).rename(
+            columns={"date": "acct_period"}
+        )
         df_shared_rate["acct_period"] = pd.to_datetime(df_shared_rate["acct_period"])
         cur.close()
         conn.close()
@@ -300,13 +333,17 @@ def save_expense_detail_task(df: pd.DataFrame, date_range: pd.DatetimeIndex) -> 
     try:
         table_name = "fact_bus_expense"
         date_column = "acct_period"
-        df = df.rename(columns={"unique_lvl": "sec_dist_lvl", "source_lvl": "unique_lvl"})
+        df = df.rename(
+            columns={"unique_lvl": "sec_dist_lvl", "source_lvl": "unique_lvl"}
+        )
         # 删除 id 列（如果存在），让数据库自动生成，避免主键冲突
         if "id" in df.columns:
             df = df.drop(["id"], axis=1)
         df_date_column = "acct_period"
 
-        delete_data_add_data_by_DateRange(table_name, date_column, df, df_date_column, date_range)
+        delete_data_add_data_by_DateRange(
+            table_name, date_column, df, df_date_column, date_range
+        )
         print(f"保存费用明细到数据库完成，共 {len(df)} 条记录")
     except Exception as e:
         print(f"保存费用明细到数据库时发生错误: {str(e)}")

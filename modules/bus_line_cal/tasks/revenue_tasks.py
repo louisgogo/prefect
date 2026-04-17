@@ -1,15 +1,22 @@
 """收入明细生成相关 Tasks"""
+
 import os
 import sys
 from typing import Tuple
 
 import pandas as pd
-from mypackage.utilities import connect_to_db, delete_data_add_data_by_DateRange, val_dist
+from mypackage.utilities import (
+    connect_to_db,
+    delete_data_add_data_by_DateRange,
+    val_dist,
+)
 
 from prefect import task
 
 # 添加根目录到路径（prefect目录）
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.append(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
 
 
 @task(name="load_revenue_data", log_prints=True)
@@ -25,8 +32,13 @@ def load_revenue_data_task(date_range: pd.DatetimeIndex) -> pd.DataFrame:
     """
     try:
         conn, cur = connect_to_db()
-        cur.execute("SELECT * FROM fact_revenue WHERE unique_lvl NOT LIKE '%无归属%'")
-        df_revenue = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
+        cur.execute(
+            "SELECT * FROM fact_revenue WHERE unique_lvl NOT LIKE %s AND acct_period >= %s AND acct_period <= %s",
+            ("%无归属%", date_range.min(), date_range.max()),
+        )
+        df_revenue = pd.DataFrame(
+            cur.fetchall(), columns=[desc[0] for desc in cur.description]
+        )
 
         # 删除最后更新时间
         if "last_modified" in df_revenue.columns:
@@ -63,24 +75,38 @@ def process_manual_revenue_task(
         df_revenue_bus = df_upload_merge_all[df_upload_merge_all["class"] == "收入"]
         df_revenue_bus_list = df_revenue_bus["source_no"].tolist()
 
-        df_revenue_bus_hand = df_revenue[df_revenue["source_no"].isin(df_revenue_bus_list)].merge(
+        df_revenue_bus_hand = df_revenue[
+            df_revenue["source_no"].isin(df_revenue_bus_list)
+        ].merge(
             df_revenue_bus[["source_no", "bus_line", "unique_lvl", "category", "rate"]],
             on=["source_no"],
             how="left",
         )
 
         # 应用比例
-        numeric_cols = ["amt_tax_exc_loc", "cost_amt", "freight_cost", "soft_cost", "tariff_cost"]
+        numeric_cols = [
+            "amt_tax_exc_loc",
+            "cost_amt",
+            "freight_cost",
+            "soft_cost",
+            "tariff_cost",
+        ]
         df_revenue_bus_hand = df_revenue_bus_hand.astype(
             {
                 "rate": "float",
-                **{col: "float" for col in numeric_cols if col in df_revenue_bus_hand.columns},
+                **{
+                    col: "float"
+                    for col in numeric_cols
+                    if col in df_revenue_bus_hand.columns
+                },
             }
         )
 
         for col in numeric_cols:
             if col in df_revenue_bus_hand.columns:
-                df_revenue_bus_hand[col] = df_revenue_bus_hand[col] * df_revenue_bus_hand["rate"]
+                df_revenue_bus_hand[col] = (
+                    df_revenue_bus_hand[col] * df_revenue_bus_hand["rate"]
+                )
 
         df_revenue_bus_hand = df_revenue_bus_hand.drop(["id"], axis=1, errors="ignore")
         df_revenue_bus_hand = df_revenue_bus_hand.rename(
@@ -114,9 +140,9 @@ def process_auto_revenue_task(
         df_revenue_bus_list = df_revenue_bus["source_no"].tolist()
 
         # 不位于分拆表中的数据
-        df_revenue_bus_auto = df_revenue[~df_revenue["source_no"].isin(df_revenue_bus_list)].merge(
-            df_org[["unique_lvl", "bus_line"]], on=["unique_lvl"], how="left"
-        )
+        df_revenue_bus_auto = df_revenue[
+            ~df_revenue["source_no"].isin(df_revenue_bus_list)
+        ].merge(df_org[["unique_lvl", "bus_line"]], on=["unique_lvl"], how="left")
         df_revenue_bus_auto["source_lvl"] = df_revenue_bus_auto["unique_lvl"]
         df_revenue_bus_auto["rate"] = 1
         df_revenue_bus_auto["category"] = df_revenue_bus_auto["bus_line"].apply(
@@ -182,7 +208,9 @@ def pivot_revenue_data_task(df_revenue_bus_all: pd.DataFrame) -> pd.DataFrame:
         df_revenue_bus_all_to_profit = pd.melt(
             df_revenue_bus_all,
             id_vars=remaining_columns,
-            value_vars=[col for col in columns_to_remove if col in df_revenue_bus_all.columns],
+            value_vars=[
+                col for col in columns_to_remove if col in df_revenue_bus_all.columns
+            ],
             var_name="prim_subj",
             value_name="mo_amt",
         )
@@ -200,9 +228,10 @@ def pivot_revenue_data_task(df_revenue_bus_all: pd.DataFrame) -> pd.DataFrame:
             }
         )
 
-        # 去除透视中出现的空值
+        # 去除透视中出现的空值和零值
         df_revenue_bus_all_to_profit = df_revenue_bus_all_to_profit[
             df_revenue_bus_all_to_profit["mo_amt"].notna()
+            & (df_revenue_bus_all_to_profit["mo_amt"] != 0)
         ]
 
         print(f"逆透视收入数据完成，共 {len(df_revenue_bus_all_to_profit)} 条记录")
@@ -228,7 +257,9 @@ def update_energy_hardware_task(df: pd.DataFrame) -> pd.DataFrame:
         df["acct_period"] = pd.to_datetime(df["acct_period"])
 
         # 构建掩码：2025-08-01 之后且业务线为'能源硬件'
-        mask = (df["acct_period"] >= pd.to_datetime("2025-08-01")) & (df["bus_line"] == "能源硬件")
+        mask = (df["acct_period"] >= pd.to_datetime("2025-08-01")) & (
+            df["bus_line"] == "能源硬件"
+        )
 
         rows_to_change = mask.sum()
         if rows_to_change > 0:
@@ -276,17 +307,23 @@ def apply_shared_rate_to_revenue_task(
     try:
         conn, cur = connect_to_db()
         cur.execute("SELECT * FROM fact_bus_shared_rate")
-        df_shared_rate = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
-        df_shared_rate = df_shared_rate.drop(["id"], axis=1).rename(columns={"date": "acct_period"})
+        df_shared_rate = pd.DataFrame(
+            cur.fetchall(), columns=[desc[0] for desc in cur.description]
+        )
+        df_shared_rate = df_shared_rate.drop(["id"], axis=1).rename(
+            columns={"date": "acct_period"}
+        )
         df_shared_rate["acct_period"] = pd.to_datetime(df_shared_rate["acct_period"])
         cur.close()
         conn.close()
 
         # 分离业务线为"无"的数据和其他数据
-        df_wu = df_revenue_bus_all_to_profit[df_revenue_bus_all_to_profit["bus_line"] == "无"].drop(
-            ["bus_line", "rate"], axis=1
-        )
-        df_you = df_revenue_bus_all_to_profit[df_revenue_bus_all_to_profit["bus_line"] != "无"]
+        df_wu = df_revenue_bus_all_to_profit[
+            df_revenue_bus_all_to_profit["bus_line"] == "无"
+        ].drop(["bus_line", "rate"], axis=1)
+        df_you = df_revenue_bus_all_to_profit[
+            df_revenue_bus_all_to_profit["bus_line"] != "无"
+        ]
 
         df_wu["acct_period"] = pd.to_datetime(df_wu["acct_period"])
         df_wu = pd.merge(
@@ -325,13 +362,17 @@ def save_revenue_detail_task(df: pd.DataFrame, date_range: pd.DatetimeIndex) -> 
     try:
         table_name = "fact_bus_revenue"
         date_column = "acct_period"
-        df = df.rename(columns={"unique_lvl": "sec_dist_lvl", "source_lvl": "unique_lvl"})
+        df = df.rename(
+            columns={"unique_lvl": "sec_dist_lvl", "source_lvl": "unique_lvl"}
+        )
         # 删除 id 列（如果存在），让数据库自动生成，避免主键冲突
         if "id" in df.columns:
             df = df.drop(["id"], axis=1)
         df_date_column = "acct_period"
 
-        delete_data_add_data_by_DateRange(table_name, date_column, df, df_date_column, date_range)
+        delete_data_add_data_by_DateRange(
+            table_name, date_column, df, df_date_column, date_range
+        )
         print(f"保存收入明细到数据库完成，共 {len(df)} 条记录")
     except Exception as e:
         print(f"保存收入明细到数据库时发生错误: {str(e)}")

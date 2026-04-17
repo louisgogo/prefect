@@ -1,4 +1,5 @@
 """利润表刷新相关 Tasks"""
+
 import os
 import sys
 
@@ -7,7 +8,9 @@ import pandas as pd
 from prefect import task
 
 # 添加根目录到路径（prefect目录）
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.append(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
 from mypackage.utilities import connect_to_db
 
 
@@ -24,7 +27,10 @@ def load_revenue_for_profit_task(date_range: pd.DatetimeIndex) -> pd.DataFrame:
     """
     try:
         conn, cur = connect_to_db()
-        cur.execute("SELECT * FROM fact_revenue")
+        cur.execute(
+            "SELECT * FROM fact_revenue WHERE acct_period >= %s AND acct_period <= %s",
+            (date_range.min(), date_range.max()),
+        )
         df = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
 
         # 筛选日期范围
@@ -32,12 +38,27 @@ def load_revenue_for_profit_task(date_range: pd.DatetimeIndex) -> pd.DataFrame:
         df = df[df["acct_period"].isin(date_range)]
 
         # 收入表转换
-        cols_rm = ["amt_tax_exc_loc", "cost_amt", "freight_cost", "soft_cost", "tariff_cost"]
+        cols_rm = [
+            "amt_tax_exc_loc",
+            "cost_amt",
+            "freight_cost",
+            "soft_cost",
+            "tariff_cost",
+        ]
         cols_kp = [col for col in df.columns if col not in cols_rm]
         df = pd.melt(df, id_vars=cols_kp, var_name="prim_subj", value_name="mo_amt")
         df = df[
-            ["source_no", "fin_con", "fin_ind", "unique_lvl", "acct_period", "prim_subj", "mo_amt"]
+            [
+                "source_no",
+                "fin_con",
+                "fin_ind",
+                "unique_lvl",
+                "acct_period",
+                "prim_subj",
+                "mo_amt",
+            ]
         ]
+        df = df[df["mo_amt"].notna() & (df["mo_amt"] != 0)]
         df["prim_subj"] = df["prim_subj"].replace(
             {
                 "amt_tax_exc_loc": "营业收入",
@@ -124,12 +145,10 @@ def refresh_offset_by_month_task(date_range: pd.DatetimeIndex) -> pd.DataFrame:
 
         conn, cur = connect_to_db()
         # 全量读取累计抵销数，排除汇总科目（与 Notebook 保持一致）
-        cur.execute(
-            """
+        cur.execute("""
             SELECT * FROM fact_offset
             WHERE subj_name NOT IN ('营业利润', '净利润', '利润总额')
-        """
-        )
+        """)
         df = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
         cur.close()
         conn.close()
@@ -152,12 +171,22 @@ def refresh_offset_by_month_task(date_range: pd.DatetimeIndex) -> pd.DataFrame:
         # 列重命名，统一字段名
         df["date"] = pd.to_datetime(df["date"])
         df = df[["source_no", "unique_lvl", "date", "subj_name", "offset_num"]].rename(
-            columns={"offset_num": "amt", "date": "acct_period", "subj_name": "prim_subj"}
+            columns={
+                "offset_num": "amt",
+                "date": "acct_period",
+                "subj_name": "prim_subj",
+            }
         )
 
         # 按科目 + 期间 + 层级分组求和（累计数）
-        df = df.groupby(["prim_subj", "acct_period", "unique_lvl"])["amt"].sum().reset_index()
-        df = df.sort_values(["prim_subj", "unique_lvl", "acct_period"]).reset_index(drop=True)
+        df = (
+            df.groupby(["prim_subj", "acct_period", "unique_lvl"])["amt"]
+            .sum()
+            .reset_index()
+        )
+        df = df.sort_values(["prim_subj", "unique_lvl", "acct_period"]).reset_index(
+            drop=True
+        )
 
         # 累计数 → 月度数：同 prim_subj + unique_lvl 分组内做 diff()
         df["mo_amt"] = df.groupby(["prim_subj", "unique_lvl"])["amt"].diff()
@@ -202,9 +231,13 @@ def merge_profit_data_task(
         合并后的数据 DataFrame
     """
     try:
-        df_t = pd.concat([df_revenue, df_expense_other, df_offset], axis=0, ignore_index=True)
+        df_t = pd.concat(
+            [df_revenue, df_expense_other, df_offset], axis=0, ignore_index=True
+        )
         df_t["acct_period"] = pd.to_datetime(df_t["acct_period"])
-        df_t = df_t[(df_t["amt"].notna()) & (df_t["amt"].notnull()) & (df_t["amt"] != 0)]
+        df_t = df_t[
+            (df_t["amt"].notna()) & (df_t["amt"].notnull()) & (df_t["amt"] != 0)
+        ]
 
         print(f"合并利润数据完成，共 {len(df_t)} 条记录")
         return df_t
@@ -266,7 +299,9 @@ def calculate_profit_indicators_task(df_profit: pd.DataFrame) -> pd.DataFrame:
                 df_profit_pivot[col] = 0
 
         # 计算利润指标
-        df_profit_pivot["毛利润"] = df_profit_pivot["营业收入"] - df_profit_pivot["营业成本"]
+        df_profit_pivot["毛利润"] = (
+            df_profit_pivot["营业收入"] - df_profit_pivot["营业成本"]
+        )
         df_profit_pivot["营业利润"] = (
             df_profit_pivot["营业收入"]
             - (
@@ -318,7 +353,9 @@ def calculate_profit_indicators_task(df_profit: pd.DataFrame) -> pd.DataFrame:
             value_name="amt",
         )
         df_profit_melt = (
-            df_profit_melt.groupby(["fin_con", "fin_ind", "unique_lvl", "acct_period", "prim_subj"])
+            df_profit_melt.groupby(
+                ["fin_con", "fin_ind", "unique_lvl", "acct_period", "prim_subj"]
+            )
             .sum()
             .reset_index()
         )
@@ -335,7 +372,9 @@ def calculate_profit_indicators_task(df_profit: pd.DataFrame) -> pd.DataFrame:
 
 
 @task(name="save_profit_table", log_prints=True)
-def save_profit_table_task(df_profit: pd.DataFrame, date_range: pd.DatetimeIndex) -> None:
+def save_profit_table_task(
+    df_profit: pd.DataFrame, date_range: pd.DatetimeIndex
+) -> None:
     """
     保存到 fact_profit 表
 
@@ -412,7 +451,9 @@ def calculate_bus_profit_indicators_task(df_bus_profit: pd.DataFrame) -> pd.Data
     try:
         # 数据聚合
         df_index = df_bus_profit.columns.tolist()[1:-1]  # 排除第一列和最后一列
-        df_profit_agg = df_bus_profit[df_index].groupby(df_index[:-1]).sum().reset_index()
+        df_profit_agg = (
+            df_bus_profit[df_index].groupby(df_index[:-1]).sum().reset_index()
+        )
 
         # 数据透视
         df_profit_pivot = (
@@ -453,7 +494,9 @@ def calculate_bus_profit_indicators_task(df_bus_profit: pd.DataFrame) -> pd.Data
                 df_profit_pivot[col] = 0.0
 
         # 计算利润指标
-        df_profit_pivot["毛利润"] = df_profit_pivot["营业收入"] - df_profit_pivot["营业成本"]
+        df_profit_pivot["毛利润"] = (
+            df_profit_pivot["营业收入"] - df_profit_pivot["营业成本"]
+        )
         df_profit_pivot["营业利润"] = (
             df_profit_pivot["营业收入"]
             - (
@@ -506,7 +549,14 @@ def calculate_bus_profit_indicators_task(df_bus_profit: pd.DataFrame) -> pd.Data
         )
         df_profit_melt = (
             df_profit_melt.groupby(
-                ["fin_con", "fin_ind", "unique_lvl", "acct_period", "prim_subj", "bus_line"]
+                [
+                    "fin_con",
+                    "fin_ind",
+                    "unique_lvl",
+                    "acct_period",
+                    "prim_subj",
+                    "bus_line",
+                ]
             )
             .sum()
             .reset_index()
@@ -514,7 +564,9 @@ def calculate_bus_profit_indicators_task(df_bus_profit: pd.DataFrame) -> pd.Data
         df_profit_melt["source_no"] = "C" + df_profit_melt.index.astype(str)
 
         # 合并原始数据和计算出的利润指标
-        df_upload = pd.concat([df_bus_profit, df_profit_melt], axis=0, ignore_index=True)
+        df_upload = pd.concat(
+            [df_bus_profit, df_profit_melt], axis=0, ignore_index=True
+        )
 
         print(f"计算业务线利润指标完成，共 {len(df_upload)} 条记录")
         return df_upload
@@ -524,7 +576,9 @@ def calculate_bus_profit_indicators_task(df_bus_profit: pd.DataFrame) -> pd.Data
 
 
 @task(name="save_bus_profit_table", log_prints=True)
-def save_bus_profit_table_task(df_bus_profit: pd.DataFrame, date_range: pd.DatetimeIndex) -> None:
+def save_bus_profit_table_task(
+    df_bus_profit: pd.DataFrame, date_range: pd.DatetimeIndex
+) -> None:
     """
     保存到 fact_bus_profit 表
 

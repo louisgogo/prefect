@@ -876,6 +876,242 @@ def _aggregate_feiyong_to_lirun(
     return df_result
 
 
+# 利润表核对的16个一级科目（与PQ利润表-核对保持一致）
+PROFIT_VALIDATION_SUBJECTS = [
+    "营业收入",
+    "营业成本",
+    "税金及附加",
+    "销售费用",
+    "管理费用",
+    "研发费用",
+    "财务费用",
+    "投资收益",
+    "公允价值变动收益",
+    "信用减值损失",
+    "资产减值损失",
+    "资产处置收益",
+    "其他收益",
+    "营业外收入",
+    "营业外支出",
+    "所得税费用",
+]
+
+EXCLUDED_PROJECTS = ["新国都", "体系外", "业报调整", "抵销数"]
+
+
+@task(name="validate_profit_report", log_prints=True)
+def validate_profit_report_task(df_profit: pd.DataFrame) -> Dict[str, Any]:
+    """
+    利润表校验任务：从数据库 fact_profit_stmt 读取累计数，
+    按PQ逻辑计算当月实际数，并与收集汇总的 2-1利润拆分 按合并主体+科目核对。
+    """
+    from mypackage.utilities import connect_to_db
+
+    last_month_start, last_month_end = _get_last_month_range()
+    target_date = last_month_start
+    prev_month_date = (target_date.replace(day=1) - timedelta(days=1)).replace(day=1)
+
+    print(f"--> 开始利润表校验")
+    print(f"    目标月份: {target_date}，上月累计: {prev_month_date}")
+
+    # 1. 从数据库读取 fact_profit_stmt
+    try:
+        conn, cur = connect_to_db()
+        subjects_sql = ",".join([f"'{s}'" for s in PROFIT_VALIDATION_SUBJECTS])
+        sql = f"""
+            SELECT subj, project, date, amt
+            FROM fact_profit_stmt
+            WHERE subj IN ({subjects_sql})
+              AND date IN (%s, %s)
+            ORDER BY project, subj, date
+        """
+        cur.execute(sql, (prev_month_date, target_date))
+        cols = [desc[0] for desc in cur.description]
+        rows = cur.fetchall()
+        df_db = pd.DataFrame(rows, columns=cols)
+        cur.close()
+        conn.close()
+        print(f"--> 从数据库读取完成: {len(df_db)} 行")
+    except Exception as e:
+        print(f"[ERROR] 读取 fact_profit_stmt 失败: {e}")
+        raise
+
+    if df_db.empty:
+        print("[WARN] 数据库中未找到利润表数据，跳过校验")
+        return {"success": True, "matched": 0, "diff_count": 0, "details": []}
+
+    # 2. 数据类型转换
+    df_db["amt"] = pd.to_numeric(df_db["amt"], errors="coerce").fillna(0)
+    df_db["date"] = pd.to_datetime(df_db["date"]).dt.date
+
+    # 3. 计算当月实际数（PQ逻辑：1月=累计数，其他月=当月累计-上月累计）
+    # 先 pivot 出当月和上月两列
+    df_pivot = df_db.pivot_table(
+        index=["subj", "project"],
+        columns="date",
+        values="amt",
+        aggfunc="sum",
+    ).reset_index()
+
+    # 确定列名
+    curr_col = target_date
+    prev_col = prev_month_date
+
+    df_pivot[curr_col] = pd.to_numeric(df_pivot.get(curr_col, 0), errors="coerce").fillna(0)
+    df_pivot[prev_col] = pd.to_numeric(df_pivot.get(prev_col, 0), errors="coerce").fillna(0)
+
+    # 当月实际数
+    if target_date.month == 1:
+        df_pivot["本月金额"] = df_pivot[curr_col]
+    else:
+        df_pivot["本月金额"] = df_pivot[curr_col] - df_pivot[prev_col]
+
+    df_db_month = df_pivot[["subj", "project", "本月金额"]].copy()
+    df_db_month = df_db_month.rename(columns={"subj": "科目", "project": "项目", "本月金额": "利润表本月金额"})
+    df_db_month["日期"] = target_date
+
+    # 排除不需要核对的项目
+    exclude_pattern = "|".join(EXCLUDED_PROJECTS)
+    df_db_month = df_db_month[
+        ~df_db_month["项目"].str.contains(exclude_pattern, na=False, regex=True)
+    ].copy()
+
+    # 4. 收集汇总的 2-1利润拆分 按 {财报合并, 一级科目, 日期} 汇总
+    if df_profit is None or df_profit.empty:
+        print("[WARN] 2-1利润拆分 无数据，跳过校验")
+        return {"success": True, "matched": 0, "diff_count": 0, "details": []}
+
+    df_profit_copy = df_profit.copy()
+    if "日期" in df_profit_copy.columns:
+        df_profit_copy["日期"] = pd.to_datetime(df_profit_copy["日期"], errors="coerce").dt.date
+    if "本月金额" in df_profit_copy.columns:
+        df_profit_copy["本月金额"] = pd.to_numeric(df_profit_copy["本月金额"], errors="coerce").fillna(0)
+
+    group_cols = [c for c in ["财报合并", "一级科目", "日期"] if c in df_profit_copy.columns]
+    if not group_cols:
+        print("[WARN] 2-1利润拆分 缺少必要列，跳过校验")
+        return {"success": True, "matched": 0, "diff_count": 0, "details": []}
+
+    df_collected = df_profit_copy.groupby(group_cols, as_index=False, dropna=False)["本月金额"].sum()
+    df_collected = df_collected.rename(columns={"财报合并": "项目", "一级科目": "科目", "本月金额": "利润拆分本月金额"})
+
+    # 排除不需要核对的项目
+    df_collected = df_collected[
+        ~df_collected["项目"].str.contains(exclude_pattern, na=False, regex=True)
+    ].copy()
+
+    # 5. 合并核对（LeftOuter: 利润表 -> 利润拆分）
+    merged = pd.merge(
+        df_db_month,
+        df_collected,
+        on=["项目", "科目", "日期"],
+        how="outer",
+        indicator=True,
+        suffixes=("", "_col"),
+    )
+
+    # 填充空值
+    merged["利润表本月金额"] = pd.to_numeric(merged.get("利润表本月金额", 0), errors="coerce").fillna(0)
+    merged["利润拆分本月金额"] = pd.to_numeric(merged.get("利润拆分本月金额", 0), errors="coerce").fillna(0)
+
+    # 计算差额（与PQ保持一致：Round(利润表本月金额 - 利润拆分本月金额, 2)）
+    merged["利润表差额"] = (merged["利润表本月金额"] - merged["利润拆分本月金额"]).round(2)
+
+    # 6. 输出核对结果
+    diff_rows = merged[abs(merged["利润表差额"]) > 0.01]
+    only_db = merged[merged["_merge"] == "left_only"]
+    only_collected = merged[merged["_merge"] == "right_only"]
+
+    print(f"\n【利润表校验结果】")
+    print(f"  数据库行数: {len(df_db_month)}")
+    print(f"  收集汇总行数: {len(df_collected)}")
+    print(f"  匹配行数: {len(merged[merged['_merge'] == 'both'])}")
+    print(f"  仅数据库有: {len(only_db)}")
+    print(f"  仅收集汇总有: {len(only_collected)}")
+    print(f"  差额>0.01 行数: {len(diff_rows)}")
+
+    if not diff_rows.empty:
+        print("\n  差额明细（前20条）:")
+        for _, row in diff_rows.head(20).iterrows():
+            print(
+                f"    {row['项目']} | {row['科目']} | "
+                f"利润表={row['利润表本月金额']:,.2f} | "
+                f"利润拆分={row['利润拆分本月金额']:,.2f} | "
+                f"差额={row['利润表差额']:,.2f}"
+            )
+
+    if not only_db.empty:
+        print("\n  仅数据库有（前10条）:")
+        for _, row in only_db.head(10).iterrows():
+            print(f"    {row['项目']} | {row['科目']} | 利润表={row['利润表本月金额']:,.2f}")
+
+    if not only_collected.empty:
+        print("\n  仅收集汇总有（前10条）:")
+        for _, row in only_collected.head(10).iterrows():
+            print(f"    {row['项目']} | {row['科目']} | 利润拆分={row['利润拆分本月金额']:,.2f}")
+
+    total_diff = diff_rows["利润表差额"].sum() if not diff_rows.empty else 0
+    print(f"\n  总差额合计: {total_diff:,.2f}")
+
+    has_error = len(diff_rows) > 0 or len(only_db) > 0 or len(only_collected) > 0
+    if has_error:
+        print("  [WARN] 利润表校验发现差异，请关注！")
+    else:
+        print("  [OK] 利润表校验通过，无差异")
+
+    # 7. 导出差异清单Excel（仅差异行，单sheet）
+    output_path = ""
+    diff_export = merged.copy()
+    diff_export["差异类型"] = ""
+    diff_export.loc[diff_export["_merge"] == "left_only", "差异类型"] = "仅数据库有"
+    diff_export.loc[diff_export["_merge"] == "right_only", "差异类型"] = "仅收集汇总有"
+    diff_export.loc[
+        (diff_export["_merge"] == "both") & (abs(diff_export["利润表差额"]) > 0.01),
+        "差异类型",
+    ] = "金额不匹配"
+
+    diff_export_rows = diff_export[diff_export["差异类型"] != ""].copy()
+    diff_export_rows = diff_export_rows[["差异类型", "项目", "科目", "日期", "利润表本月金额", "利润拆分本月金额", "利润表差额"]]
+
+    if not diff_export_rows.empty:
+        if platform.system() == "Windows":
+            output_path = r"Z:\11-业务报表\1.补充数据\9.手工刷新\利润表核对差异明细.xlsx"
+        else:
+            output_path = r"/mnt/xgd_share/11-业务报表/1.补充数据/9.手工刷新/利润表核对差异明细.xlsx"
+        try:
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+                diff_export_rows.to_excel(writer, sheet_name="差异明细", index=False)
+            print(f"  差异清单已导出: {output_path} (共 {len(diff_export_rows)} 行)")
+        except (PermissionError, OSError):
+            # 文件被占用时写入带时间戳的备用文件
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            alt_path = os.path.join(os.path.dirname(output_path), f"利润表核对差异明细_{ts}.xlsx")
+            with pd.ExcelWriter(alt_path, engine="openpyxl") as writer:
+                diff_export_rows.to_excel(writer, sheet_name="差异明细", index=False)
+            output_path = alt_path
+            print(f"  差异清单已导出: {output_path} (共 {len(diff_export_rows)} 行)")
+        except Exception as e:
+            print(f"  [WARN] 导出差异清单失败: {e}")
+    else:
+        print("  无差异，跳过Excel导出")
+
+    # 返回结构化结果
+    details = merged[["项目", "科目", "日期", "利润表本月金额", "利润拆分本月金额", "利润表差额"]].to_dict("records")
+
+    return {
+        "success": True,
+        "matched": int(len(merged[merged["_merge"] == "both"])),
+        "diff_count": int(len(diff_rows)),
+        "only_db_count": int(len(only_db)),
+        "only_collected_count": int(len(only_collected)),
+        "total_diff": float(total_diff),
+        "has_error": bool(has_error),
+        "diff_file": output_path,
+        "details": details,
+    }
+
+
 @task(name="load_map_translate", log_prints=True)
 def load_map_translate_task() -> pd.DataFrame:
     """从数据库读取 map_translate 表"""
