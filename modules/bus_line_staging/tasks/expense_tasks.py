@@ -292,11 +292,20 @@ def run_expense_split_to_staging_task(date_range):
                     columns="业务线", values="比例", index=idx_cols, aggfunc="first"
                 ).reset_index()
 
-                # 补充缺失的列
+                # 补充缺失的列（只补充df_template中有但df_labor_backend中没有的列）
                 missing_cols = set(df_template.columns) - set(df_labor_backend.columns)
                 for c in missing_cols:
                     df_labor_backend[c] = np.nan
-                df_labor_backend = df_labor_backend[df_template.columns]
+                # 保留df_labor_backend中的所有列（包括业务线比例列），同时确保df_template中的列都存在
+                # 按df_template的列顺序排列，但保留df_labor_backend额外的列（业务线比例）
+                all_cols = list(df_template.columns) + [
+                    c
+                    for c in df_labor_backend.columns
+                    if c not in df_template.columns and c in bus_lines
+                ]
+                df_labor_backend = df_labor_backend[
+                    [c for c in all_cols if c in df_labor_backend.columns]
+                ]
 
                 # 填充分摊业务线的值（如果是分摊的费用，则对应业务线比例为1）
                 for col in bus_lines:

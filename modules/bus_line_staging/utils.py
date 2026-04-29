@@ -171,16 +171,28 @@ def get_table_columns(table_name, bus_lines):
 
 
 def create_staging_table(cur, table_name, bus_lines):
-    """创建staging表（中文列名），仅当表不存在时创建"""
+    """创建staging表（中文列名）。表不存在则创建；已存在则自动补全缺失的业务线列。"""
     schema = TABLE_SCHEMAS.get(table_name, {})
 
     # 检查表是否已存在
     cur.execute(f"SELECT to_regclass('{table_name}')")
     if cur.fetchone()[0] is not None:
-        print(f"Table {table_name} already exists, skipping creation.")
+        # 表已存在：检查并补全缺失的业务线列
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
+            (table_name,),
+        )
+        existing_cols = {row[0] for row in cur.fetchall()}
+        missing = [col for col in bus_lines if col not in existing_cols]
+        if missing:
+            for col in missing:
+                cur.execute(f'ALTER TABLE {table_name} ADD COLUMN "{col}" DECIMAL(10,4)')
+                print(f'Table {table_name}: added missing column "{col}".')
+        else:
+            print(f"Table {table_name} already exists, columns aligned.")
         return
 
-    # 构建列定义
+    # 表不存在：构建列定义并创建
     columns_def = ["id SERIAL PRIMARY KEY"]
 
     # 组织列
@@ -358,10 +370,11 @@ def insert_to_staging_table(
             # 获取表的所有列
             table_columns = get_table_columns(table_name, bus_lines)
 
-            # 确保所有业务线列存在（默认为NULL）
+            # 确保所有业务线列存在（保留已有值，缺失的设为NULL）
             for col in bus_lines:
                 if col not in final_df.columns:
                     final_df[col] = None
+                # 注意：如果col已存在，保留原值（不覆盖）
 
             # 添加审核状态
             final_df["审核状态"] = "PENDING"
