@@ -292,6 +292,15 @@ def run_expense_split_to_staging_task(date_range):
                     columns="业务线", values="比例", index=idx_cols, aggfunc="first"
                 ).reset_index()
 
+                # 如果pivot_table返回空（所有比例都是NaN），则使用原始df_1数据
+                if df_labor_backend.empty:
+                    print(f"警告: pivot_table返回空结果（所有人力费用未匹配到预算比例），使用原始数据...")
+                    # 从df_1重建数据结构，业务线比例为NaN
+                    df_labor_backend = df_1.copy()
+                    # 为每个业务线添加一列（值为NaN）
+                    for col in bus_lines:
+                        df_labor_backend[col] = np.nan
+
                 # 补充缺失的列（只补充df_template中有但df_labor_backend中没有的列）
                 missing_cols = set(df_template.columns) - set(df_labor_backend.columns)
                 for c in missing_cols:
