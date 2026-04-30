@@ -36,33 +36,80 @@ def _get_data_source_paths() -> Tuple[str, str]:
 
 
 # ──────────────────────────────────────────────
-# Task 0：同步数据源（只保留本月文件）
+# Task 0：同步数据源（同步目标月份到当前月份之间修改的文件）
 # ──────────────────────────────────────────────
 
 
+def _calc_month_start_end_ts(year: int, month: int) -> Tuple[float, float]:
+    """计算某年月的起始和结束时间戳."""
+    start = datetime(year, month, 1).timestamp()
+    if month == 12:
+        end = datetime(year + 1, 1, 1).timestamp()
+    else:
+        end = datetime(year, month + 1, 1).timestamp()
+    return start, end
+
+
 @task(name="sync_data_source", log_prints=True)
-def sync_data_source_task() -> Dict[str, Any]:
+def sync_data_source_task(target_date: Optional[str] = None) -> Dict[str, Any]:
     """
-    从 2-往来对账填报表 同步 4月修改的文件到 9-数据源。
-    删除数据源旧文件，只保留修改日期为 2026年4月 的文件。
+    从 2-往来对账填报表 同步文件到 9-数据源。
+    同步目标月份到当前自然月份之间所有修改的文件，防止遗漏。
+
+    Args:
+        target_date: 目标月份，格式 YYYY-MM-DD（如 "2026-02-01"）。
+                     不传则自动使用上个自然月（相对于运行日期）。
 
     Returns:
-        {'success': bool, 'copied': int, 'skipped': int, 'message': str}
+        {'success': bool, 'copied': int, 'skipped': int, 'message': str, 'months': list}
     """
     source_dir, target_dir = _get_data_source_paths()
 
-    # 4月时间范围 (2026-04)
-    april_start = datetime(2026, 4, 1).timestamp()
-    april_end = datetime(2026, 5, 1).timestamp()
+    # 计算目标月份和当前月份
+    if target_date:
+        try:
+            target = pd.to_datetime(target_date).date()
+        except Exception:
+            target = date.today()
+    else:
+        today = date.today()
+        target = today.replace(day=1) - timedelta(days=1)
+
+    target_month = date(target.year, target.month, 1)
+    current_month = date.today().replace(day=1)
+
+    # 计算需要同步的月份范围（目标月份到当前月份，包含两端）
+    months_to_sync = []
+    current = target_month
+    while current <= current_month:
+        months_to_sync.append((current.year, current.month))
+        if current.month == 12:
+            current = date(current.year + 1, 1, 1)
+        else:
+            current = date(current.year, current.month + 1, 1)
+
+    # 构建时间戳范围
+    sync_ranges = []
+    for y, m in months_to_sync:
+        start_ts, end_ts = _calc_month_start_end_ts(y, m)
+        sync_ranges.append((start_ts, end_ts, f"{y}年{m}月"))
 
     print(f"--> 开始同步数据源")
     print(f"    源目录: {source_dir}")
     print(f"    目标目录: {target_dir}")
-    print(f"    筛选条件: 2026年4月修改的文件")
+    print(f"    目标月份: {target_month}")
+    print(f"    当前月份: {current_month}")
+    print(f"    同步月份: {[r[2] for r in sync_ranges]}")
 
     # 检查源目录
     if not os.path.exists(source_dir):
-        return {"success": False, "copied": 0, "skipped": 0, "message": f"源目录不存在: {source_dir}"}
+        return {
+            "success": False,
+            "copied": 0,
+            "skipped": 0,
+            "message": f"源目录不存在: {source_dir}",
+            "months": [],
+        }
 
     # 1. 清空目标目录中的所有文件
     deleted_count = 0
@@ -77,9 +124,10 @@ def sync_data_source_task() -> Dict[str, Any]:
                     print(f"    [WARN] 删除失败 {filepath}: {e}")
         print(f"--> 已清理目标目录，删除 {deleted_count} 个旧文件")
 
-    # 2. 找出源目录中4月修改的文件并复制
+    # 2. 找出源目录中在目标月份到当前月份之间修改的文件并复制
     copied_count = 0
     skipped_count = 0
+    copied_months = set()
 
     for root, dirs, files in os.walk(source_dir):
         for file in files:
@@ -90,10 +138,16 @@ def sync_data_source_task() -> Dict[str, Any]:
 
             source_path = os.path.join(root, file)
 
-            # 检查修改时间是否在4月
+            # 检查修改时间是否在同步范围内
             try:
                 mtime = os.path.getmtime(source_path)
-                if not (april_start <= mtime < april_end):
+                in_range = False
+                for start_ts, end_ts, month_str in sync_ranges:
+                    if start_ts <= mtime < end_ts:
+                        in_range = True
+                        copied_months.add(month_str)
+                        break
+                if not in_range:
                     skipped_count += 1
                     continue
             except Exception as e:
@@ -125,7 +179,8 @@ def sync_data_source_task() -> Dict[str, Any]:
         "success": True,
         "copied": copied_count,
         "skipped": skipped_count,
-        "message": f"同步完成，复制 {copied_count} 个4月文件",
+        "message": f"同步完成，复制 {copied_count} 个文件（月份: {list(copied_months)}）",
+        "months": list(copied_months),
     }
 
 

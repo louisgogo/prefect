@@ -14,6 +14,7 @@ from prefect import flow
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from ..tasks.recon_auto_fill_tasks import check_and_fill_recon_data_task
 from ..tasks.recon_calc_tasks import (
     load_mapping_config_task,
     load_recon_raw_task,
@@ -52,20 +53,21 @@ def recon_flow(target_date: Optional[str] = None) -> None:
           4. 合并 MySQL + Excel 数据写入 PostgreSQL
 
         阶段2 - 对账核对与结果输出：
-          5. 加载共享盘 映射配置表.xlsx（参数表/差异说明）
-          6. 从 PostgreSQL 读取目标月原始数据
-          7. 往来余额 三向核对（应收 vs 应付）
-          8. 销售/采购 发生额核对
-          9. 现金流量 收入 vs 支付核对
-         10. 写入结果表（PostgreSQL）+ 导出备份 Excel
+          5. 检测 recon_name 表，如无目标月数据则从上月复制，日期修改为目标月份
+          6. 加载共享盘 映射配置表.xlsx（参数表/差异说明）
+          7. 从 PostgreSQL 读取目标月原始数据
+          8. 往来余额 三向核对（应收 vs 应付）
+          9. 销售/采购 发生额核对
+         10. 现金流量 收入 vs 支付核对
+         11. 写入结果表（PostgreSQL）+ 导出备份 Excel
     """
     print("=" * 60)
     print(f"往来对账流程启动，目标月份: {target_date or '上个自然月（自动计算）'}")
     print("=" * 60)
 
     # ──── 阶段0：同步数据源 ───────────────────────────────────
-    print("\n【阶段0】同步数据源（从填报表复制4月文件）...")
-    sync_result = sync_data_source_task()
+    print("\n【阶段0】同步数据源（同步目标月份到当前月份之间的文件）...")
+    sync_result = sync_data_source_task(target_date=target_date)
     if not sync_result.get("success"):
         print(f"[WARN] 数据源同步异常: {sync_result.get('message')}，继续执行")
     else:
@@ -94,7 +96,16 @@ def recon_flow(target_date: Optional[str] = None) -> None:
     # ──── 阶段2：对账核对 ────────────────────────────────────
     print("\n【阶段2】开始对账核对...")
 
-    # Step 5: 加载映射配置表
+    # Step 5: 检测 recon_name 表数据并自动填充
+    auto_fill_result = check_and_fill_recon_data_task(target_date=target_date)
+    if auto_fill_result.get("action") == "filled":
+        print(f"【自动填充】{auto_fill_result.get('message')}")
+    elif auto_fill_result.get("action") == "skipped":
+        print(f"【自动填充】{auto_fill_result.get('message')}")
+    else:
+        print(f"[WARN] 自动填充检测异常: {auto_fill_result.get('message')}")
+
+    # Step 6: 加载映射配置表
     (
         df_params,
         df_unit_map,
@@ -104,30 +115,30 @@ def recon_flow(target_date: Optional[str] = None) -> None:
         df_diff_xianjinliu,
     ) = load_mapping_config_task()
 
-    # Step 6: 读取原始数据
+    # Step 7: 读取原始数据
     df_raw = load_recon_raw_task(target_date=target_date)
 
-    # Step 7: 往来核对
+    # Step 8: 往来核对
     res_wanglai = reconcile_wanglai_task(
         df_raw=df_raw,
         df_params=df_params,
         df_diff_wanglai=df_diff_wanglai,
     )
 
-    # Step 8: 销售/采购核对
+    # Step 9: 销售/采购核对
     res_transaction = process_sales_purchases_task(
         df_raw=df_raw,
         df_diff_xiaoshou=df_diff_xiaoshou,
     )
 
-    # Step 9: 现金流核对
+    # Step 10: 现金流核对
     res_cashflow = process_cashflow_task(
         df_raw=df_raw,
         df_params=df_params,
         df_diff_xianjinliu=df_diff_xianjinliu,
     )
 
-    # Step 10: 保存结果
+    # Step 11: 保存结果
     output_path = save_recon_results_task(
         res_wanglai=res_wanglai,
         res_transaction=res_transaction,

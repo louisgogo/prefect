@@ -247,7 +247,11 @@ def update_production_data_task(
 
 @task(name="update_rd_data", log_prints=True)
 def update_rd_data_task(
-    dfs: Dict[str, pd.DataFrame], start_date: str, end_date: str, replace_existing: bool = True
+    dfs: Dict[str, pd.DataFrame],
+    start_date: str,
+    end_date: str,
+    replace_existing: bool = True,
+    root_directory: Optional[str] = None,
 ) -> None:
     """
     更新研发数据
@@ -257,6 +261,7 @@ def update_rd_data_task(
         start_date: 开始日期
         end_date: 结束日期
         replace_existing: 是否替换已存在的数据
+        root_directory: Excel文件根目录路径（用于读取产品细类）
     """
     print("=" * 60)
     print("开始更新研发数据")
@@ -264,6 +269,56 @@ def update_rd_data_task(
 
     updated_count = 0
     skipped_count = 0
+
+    table_name = "excel_sub_prod"
+    df_sub_prod = None
+
+    if "excel_sub_prod" in dfs:
+        df_sub_prod = dfs["excel_sub_prod"].copy()
+        print(f"✓ 从dfs中找到 'excel_sub_prod' 数据")
+    elif root_directory:
+        file_path = os.path.join(root_directory, "2.研发数据", "产品细类.xlsx")
+        if os.path.exists(file_path):
+            print(f"✓ 直接从Excel文件读取: {file_path}")
+            df_sub_prod = pd.read_excel(file_path, sheet_name="产品细类")
+        else:
+            print(f"⚠️  文件不存在: {file_path}")
+
+    if df_sub_prod is not None and not df_sub_prod.empty:
+        required_columns = ["encoding", "name", "product_sub_category"]
+        if all(col in df_sub_prod.columns for col in required_columns):
+            df_sub_prod = df_sub_prod[required_columns]
+            df_sub_prod = df_sub_prod.dropna(subset=["encoding", "product_sub_category"])
+
+            for col in df_sub_prod.columns:
+                if df_sub_prod[col].dtype == "object":
+                    df_sub_prod[col] = df_sub_prod[col].astype(str).str.strip()
+
+            print(f"✓ 准备更新 {table_name}（全表更新），共 {len(df_sub_prod)} 条数据")
+            db_url = url_to_db()
+            engine = create_engine(db_url)
+
+            with engine.connect() as connection:
+                try:
+                    connection.execute(text(f"TRUNCATE TABLE {table_name}"))
+                    connection.commit()
+                    print("✓ 表数据已清空")
+
+                    df_sub_prod.to_sql(table_name, connection, if_exists="append", index=False)
+                    connection.commit()
+                    print(f"✓ 新数据已导入: {len(df_sub_prod)} 条")
+                    updated_count += 1
+                except Exception as e:
+                    connection.rollback()
+                    print(f"❌ 更新 {table_name} 失败: {e}")
+                    skipped_count += 1
+        else:
+            missing = [col for col in required_columns if col not in df_sub_prod.columns]
+            print(f"⚠️  跳过 {table_name}（缺少列: {missing}）")
+            skipped_count += 1
+    else:
+        print(f"⊘ 跳过 {table_name}（无数据）")
+        skipped_count += 1
 
     # 1. 工时统计表（全表更新）
     table_name = "excel_labor_hours"

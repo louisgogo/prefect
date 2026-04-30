@@ -157,11 +157,9 @@ def data_import_flow(
         print(f"日期范围: {start_date} 到 {end_date}")
 
         try:
-            # 1. 更新生产数据
             update_production_data_task(dfs, start_date, end_date, replace_existing)
 
-            # 2. 更新研发数据
-            update_rd_data_task(dfs, start_date, end_date, replace_existing)
+            update_rd_data_task(dfs, start_date, end_date, replace_existing, root_directory)
 
             # 3. 更新采购数据
             update_purchase_data_task(dfs, start_date, end_date, replace_existing)

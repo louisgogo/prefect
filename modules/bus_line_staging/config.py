@@ -57,6 +57,7 @@ def get_date_range(start_date=None, end_date=None):
 
 
 # --- 组织架构分组 (硬编码) ---
+# 说明: 分组用于控制哪些部门需要主动填表，不在分组中的组织会被倒挤到"其他"分类
 
 groups_backend = [
     "bsec_center",  # 董事会秘书处
@@ -70,6 +71,21 @@ groups_backend = [
     "shrc_center",  # 人力资源中心
     "sac_center",  # 行政中心
     "slc_center",  # 法务中心
+    # 新增后台组织 (2026-04-28)
+    "board_pub_center",  # 董事会公共部门
+    "board_exec_center",  # 董事会领导个人部门
+    "bsic_center",  # 战略投资委员会
+    "nxd_pub_center",  # 新国都本部公共部门
+    "svc_pub_center",  # 服务事业群公共部门
+    "pfc_pub_center",  # 计划财务中心公共部门
+    "pfc_acc_center",  # 会计部
+    "pfc_fmg_center",  # 财务管理部
+    "pfc_fnd_center",  # 资金管理部
+    "pfc_tax_center",  # 税务管理部
+    "pfc_zz_center",  # 中正财务部
+    "pfc_jl_center",  # 嘉联财务部
+    "pfc_pay_center",  # 支付财务部
+    "pfc_cs_center",  # 长沙财务部
 ]
 
 groups_middle = [
