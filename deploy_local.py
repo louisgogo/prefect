@@ -7,6 +7,7 @@ from datetime import datetime
 from multiprocessing import Process
 
 from modules import (
+    ai_data_etl_flow,
     budget_update_flow,
     business_line_profit_flow,
     calculate_shared_rate_flow,
@@ -106,11 +107,28 @@ def deploy_data_import_flow():
     )
 
 
+def deploy_ai_data_etl_flow():
+    """部署AI数据ETL流程"""
+    print("=" * 60)
+    print("AI数据ETL流程 - 本地测试部署")
+    print("=" * 60)
+
+    print("说明：请在 UI 中手动输入参数（或使用默认值）")
+    print("提示：")
+    print("  - type: 数据类型，可选'业务线数据'或'业报数据'，默认'业务线数据'")
+    print("\n业务线数据模式：使用 fact_bus_* 表（业务线分表）")
+    print("业报数据模式：使用 fact_* 表（业报主表）")
+
+    ai_data_etl_flow.serve(
+        name="AI数据ETL流程-本地测试",
+        tags=["本地测试", "AI数据", "ETL"],
+        description="本地测试用：为AI平台生成业务数据视图（业务线/业报数据）",
+    )
+
+
 def deploy_budget_update_flow():
     """部署预算更新流程（带按当前日期计算的默认参数）"""
-    from modules.budget_update.flows.budget_update_flow import (
-        _get_budget_defaults_by_date,
-    )
+    from modules.budget_update.flows.budget_update_flow import _get_budget_defaults_by_date
 
     print("=" * 60)
     print("预算更新流程 - 本地测试部署")
@@ -118,9 +136,7 @@ def deploy_budget_update_flow():
 
     defaults = _get_budget_defaults_by_date()
     print("说明：以下参数已按当前月份设默认值，可在 UI 中修改")
-    print(
-        "默认值规则：上年11月～2月→年初预算（11/12月用下年度-01-01，1/2月用当年度-01-01）；4月～7月→年中预算（当年度-07-01）"
-    )
+    print("默认值规则：上年11月～2月→年初预算（11/12月用下年度-01-01，1/2月用当年度-01-01）；4月～7月→年中预算（当年度-07-01）")
     print("当前默认参数：")
     for k, v in defaults.items():
         print(f"  - {k}: {v}")
@@ -179,9 +195,7 @@ def deploy_bus_line_staging_flow():
 
 def deploy_fetch_budget_shared_rate_flow():
     """部署拉取预算综合比例流程"""
-    from modules.shared_rate.flows.fetch_budget_shared_rate_flow import (
-        _get_default_dates,
-    )
+    from modules.shared_rate.flows.fetch_budget_shared_rate_flow import _get_default_dates
 
     print("=" * 60)
     print("拉取预算综合比例流程 - 本地测试部署")
@@ -219,12 +233,13 @@ if __name__ == "__main__":
     process1 = Process(target=deploy_business_line_profit_flow)
     process2 = Process(target=deploy_shared_rate_flow)
     process3 = Process(target=deploy_data_import_flow)
-    process4 = Process(target=deploy_budget_update_flow)
-    process5 = Process(target=deploy_recon_flow)
-    process6 = Process(target=deploy_profit_refresh_flow)
-    process7 = Process(target=deploy_bus_line_staging_flow)
-    process8 = Process(target=deploy_fetch_budget_shared_rate_flow)
-    process9 = Process(target=deploy_profit_report_flow)
+    process4 = Process(target=deploy_ai_data_etl_flow)
+    process5 = Process(target=deploy_budget_update_flow)
+    process6 = Process(target=deploy_recon_flow)
+    process7 = Process(target=deploy_profit_refresh_flow)
+    process8 = Process(target=deploy_bus_line_staging_flow)
+    process9 = Process(target=deploy_fetch_budget_shared_rate_flow)
+    process10 = Process(target=deploy_profit_report_flow)
 
     process1.start()
     time.sleep(1)
@@ -243,6 +258,8 @@ if __name__ == "__main__":
     process8.start()
     time.sleep(1)
     process9.start()
+    time.sleep(1)
+    process10.start()
 
     # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
@@ -252,6 +269,7 @@ if __name__ == "__main__":
         process4.join()
         process5.join()
         process6.join()
+        process7.join()
     except KeyboardInterrupt:
         print("\n正在停止部署...")
         for p in [
@@ -264,6 +282,7 @@ if __name__ == "__main__":
             process7,
             process8,
             process9,
+            process10,
         ]:
             p.terminate()
             p.join()

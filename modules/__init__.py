@@ -1,4 +1,7 @@
 """Prefect 模块包 - 统一导出所有 flows"""
+# AI数据ETL流程
+from .ai_data_etl.flows.ai_data_etl_flow import ai_data_etl_flow
+
 # 业务线损益计算流程（业务线数据计算+利润表刷新）
 # 预算更新流程
 from .budget_update.flows.budget_update_flow import budget_update_flow
@@ -22,6 +25,7 @@ from .shared_rate.flows.fetch_budget_shared_rate_flow import fetch_budget_shared
 from .shared_rate.flows.shared_rate_flow import calculate_shared_rate_flow
 
 __all__ = [
+    "ai_data_etl_flow",
     "business_line_profit_flow",
     "calculate_shared_rate_flow",
     "fetch_budget_shared_rate_flow",

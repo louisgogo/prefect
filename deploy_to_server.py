@@ -7,6 +7,7 @@ from datetime import datetime
 from multiprocessing import Process
 
 from modules import (
+    ai_data_etl_flow,
     budget_update_flow,
     business_line_profit_flow,
     calculate_shared_rate_flow,
@@ -26,9 +27,7 @@ sys.path.append(current_dir)
 # 若已设置环境变量 PREFECT_API_URL，则优先使用环境变量；否则使用下面地址
 PREFECT_SERVER_URL = "http://10.18.8.191:4200"
 # API 地址（Prefect 要求带 /api 后缀）
-PREFECT_API_URL = (
-    os.environ.get("PREFECT_API_URL") or f"{PREFECT_SERVER_URL.rstrip('/')}/api"
-)
+PREFECT_API_URL = os.environ.get("PREFECT_API_URL") or f"{PREFECT_SERVER_URL.rstrip('/')}/api"
 
 
 def _serve_business_line(process_year: int, months: list):
@@ -65,11 +64,18 @@ def _serve_data_import(last_month_year: int, last_month: int):
     )
 
 
+def _serve_ai_data_etl():
+    """模块级函数，供 Process 调用"""
+    ai_data_etl_flow.serve(
+        name="主流程-AI数据ETL",
+        tags=["AI数据", "ETL", "手动触发"],
+        description="为AI平台生成业务数据视图（业务线/业报数据）",
+    )
+
+
 def _serve_budget_update():
     """模块级函数，供 Process 调用（预算更新为手动触发，参数按当前月份设默认值）"""
-    from modules.budget_update.flows.budget_update_flow import (
-        _get_budget_defaults_by_date,
-    )
+    from modules.budget_update.flows.budget_update_flow import _get_budget_defaults_by_date
 
     budget_defaults = _get_budget_defaults_by_date()
     budget_update_flow.serve(
@@ -91,9 +97,7 @@ def _serve_profit_refresh():
 
 def _serve_fetch_budget_shared_rate():
     """模块级函数，供 Process 调用"""
-    from modules.shared_rate.flows.fetch_budget_shared_rate_flow import (
-        _get_default_dates,
-    )
+    from modules.shared_rate.flows.fetch_budget_shared_rate_flow import _get_default_dates
 
     defaults = _get_default_dates()
     fetch_budget_shared_rate_flow.serve(
@@ -153,9 +157,7 @@ def deploy_to_remote_server():
     print(f"部署目标 Prefect API: {api_url}")
     print(f"部署目标 UI 地址: {PREFECT_SERVER_URL}")
     if "127.0.0.1" in api_url or "localhost" in api_url:
-        print(
-            "\n⚠️  当前为本地地址；若需推送到远程服务器，请修改本文件顶部 PREFECT_SERVER_URL"
-        )
+        print("\n⚠️  当前为本地地址；若需推送到远程服务器，请修改本文件顶部 PREFECT_SERVER_URL")
         # systemd 等非交互环境没有 stdin，直接继续；仅在有终端时询问
         if sys.stdin.isatty():
             response = input("是否继续部署？(y/n): ")
@@ -182,12 +184,13 @@ def deploy_to_remote_server():
     process1 = Process(target=_serve_business_line, args=(process_year, months))
     process2 = Process(target=_serve_shared_rate, args=(process_year, months[-1]))
     process3 = Process(target=_serve_data_import, args=(process_year, months[-1]))
-    process4 = Process(target=_serve_budget_update)
-    process5 = Process(target=_serve_fetch_budget_shared_rate)
-    process6 = Process(target=_serve_profit_refresh)
-    process7 = Process(target=_serve_recon)
-    process8 = Process(target=_serve_bus_line_staging)
-    process9 = Process(target=_serve_profit_report)
+    process4 = Process(target=_serve_ai_data_etl)
+    process5 = Process(target=_serve_budget_update)
+    process6 = Process(target=_serve_fetch_budget_shared_rate)
+    process7 = Process(target=_serve_profit_refresh)
+    process8 = Process(target=_serve_recon)
+    process9 = Process(target=_serve_bus_line_staging)
+    process10 = Process(target=_serve_profit_report)
 
     process1.start()
     time.sleep(1)
@@ -206,6 +209,8 @@ def deploy_to_remote_server():
     process8.start()
     time.sleep(1)
     process9.start()
+    time.sleep(1)
+    process10.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -232,6 +237,7 @@ def deploy_to_remote_server():
             process7,
             process8,
             process9,
+            process10,
         ]:
             p.terminate()
             p.join()
