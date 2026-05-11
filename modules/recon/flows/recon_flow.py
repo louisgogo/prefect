@@ -108,8 +108,6 @@ def recon_flow(target_date: Optional[str] = None) -> None:
     # Step 6: 加载映射配置表
     (
         df_params,
-        df_unit_map,
-        df_yebao_unit_map,
         df_diff_wanglai,
         df_diff_xiaoshou,
         df_diff_xianjinliu,

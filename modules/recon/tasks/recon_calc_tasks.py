@@ -31,15 +31,12 @@ def _get_mapping_path() -> str:
 
 
 @task(name="load_mapping_config", log_prints=True)
-def load_mapping_config_task() -> Tuple[
-    pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame
-]:
+def load_mapping_config_task() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     从共享盘加载映射配置表.xlsx 中的各配置子表。
 
     Returns:
-        (df_params, df_unit_map, df_yebao_unit_map,
-         df_diff_wanglai, df_diff_xiaoshou, df_diff_xianjinliu)
+        (df_params, df_diff_wanglai, df_diff_xiaoshou, df_diff_xianjinliu)
     """
     mapping_excel = _get_mapping_path()
     print(f"--> 加载映射配置表: {mapping_excel}")
@@ -49,14 +46,6 @@ def load_mapping_config_task() -> Tuple[
             how="all"
         )
         df_params["统一名称"] = df_params["统一名称"].fillna("")
-
-        df_units = pd.read_excel(
-            mapping_excel, sheet_name="单位简称", usecols=["单位编号", "单位全称", "单位简称", "合并名称", "业报合并名称"]
-        ).dropna(how="all")
-        df_unit_map = df_units[["合并名称", "单位简称"]].rename(columns={"单位简称": "本单位"}).drop_duplicates()
-        df_yebao_unit_map = (
-            df_units[["业报合并名称", "单位简称"]].rename(columns={"单位简称": "本单位"}).drop_duplicates()
-        )
 
         # 往来差异说明
         try:
@@ -123,8 +112,6 @@ def load_mapping_config_task() -> Tuple[
         )
         return (
             df_params,
-            df_unit_map,
-            df_yebao_unit_map,
             df_diff_wanglai,
             df_diff_xiaoshou,
             df_diff_xianjinliu,
@@ -133,8 +120,6 @@ def load_mapping_config_task() -> Tuple[
     except Exception as e:
         print(f"[ERROR] 加载映射配置表失败: {e}，使用空表占位")
         empty_params = pd.DataFrame(columns=["项目", "统一名称"])
-        empty_unit = pd.DataFrame(columns=["合并名称", "本单位"])
-        empty_yebao = pd.DataFrame(columns=["业报合并名称", "本单位"])
         empty_wanglai = pd.DataFrame(
             columns=["唯一名称", "金额", "往来核对-应付.唯一名称", "往来核对-应付.金额", "差异", "统一日期", "差异原因"]
         )
@@ -156,8 +141,6 @@ def load_mapping_config_task() -> Tuple[
         )
         return (
             empty_params,
-            empty_unit,
-            empty_yebao,
             empty_wanglai,
             empty_xiaoshou,
             empty_xianjinliu,
