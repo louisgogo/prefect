@@ -8,14 +8,8 @@ import pandas as pd
 from prefect import task
 
 # 添加根目录到路径（prefect目录）
-sys.path.append(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
-from mypackage.utilities import (
-    connect_to_db,
-    delete_data_add_data_by_DateRange,
-    val_dist,
-)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from mypackage.utilities import connect_to_db, delete_data_add_data_by_DateRange, val_dist
 
 
 @task(name="load_receivable_data", log_prints=True)
@@ -35,9 +29,7 @@ def load_receivable_data_task(date_range: pd.DatetimeIndex) -> pd.DataFrame:
             "SELECT * FROM fact_receivable WHERE unique_lvl NOT LIKE %s AND acct_period >= %s AND acct_period <= %s",
             ("%无归属%", date_range.min(), date_range.max()),
         )
-        df_ar = pd.DataFrame(
-            cur.fetchall(), columns=[desc[0] for desc in cur.description]
-        )
+        df_ar = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
 
         # 按照日期筛选数据范围
         df_ar["acct_period"] = pd.to_datetime(df_ar["acct_period"])
@@ -136,7 +128,7 @@ def process_receivable_task(
         df_ar_bus_auto = df_ar_bus_auto.reindex(columns=all_columns)
 
         df_ar_bus_all = pd.concat([df_ar_bus_hand, df_ar_bus_auto], ignore_index=True)
-        df_ar_bus_all = df_ar_bus_all.drop(columns=["id"], axis=1, errors="ignore")
+        df_ar_bus_all = df_ar_bus_all.drop(columns=["id"], errors="ignore")
 
         print(f"处理应收数据完成，共 {len(df_ar_bus_all)} 条记录")
         return df_ar_bus_all
@@ -175,14 +167,10 @@ def save_receivable_detail_task(df: pd.DataFrame, date_range: pd.DatetimeIndex) 
     try:
         table_name = "fact_bus_receivable"
         date_column = "acct_period"
-        df = df.rename(
-            columns={"unique_lvl": "sec_dist_lvl", "source_lvl": "unique_lvl"}
-        )
+        df = df.rename(columns={"unique_lvl": "sec_dist_lvl", "source_lvl": "unique_lvl"})
         df_date_column = "acct_period"
 
-        delete_data_add_data_by_DateRange(
-            table_name, date_column, df, df_date_column, date_range
-        )
+        delete_data_add_data_by_DateRange(table_name, date_column, df, df_date_column, date_range)
         print(f"保存应收明细到数据库完成，共 {len(df)} 条记录")
     except Exception as e:
         print(f"保存应收明细到数据库时发生错误: {str(e)}")
@@ -206,9 +194,7 @@ def load_inventory_data_task(date_range: pd.DatetimeIndex) -> pd.DataFrame:
             "SELECT * FROM fact_inventory WHERE unique_lvl NOT LIKE %s AND acct_period >= %s AND acct_period <= %s",
             ("%无归属%", date_range.min(), date_range.max()),
         )
-        df_inv = pd.DataFrame(
-            cur.fetchall(), columns=[desc[0] for desc in cur.description]
-        )
+        df_inv = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
 
         # 按照日期筛选数据范围
         df_inv["acct_period"] = pd.to_datetime(df_inv["acct_period"])
@@ -296,10 +282,8 @@ def process_inventory_task(
         df_inv_bus_hand = df_inv_bus_hand.reindex(columns=all_columns)
         df_inv_bus_auto = df_inv_bus_auto.reindex(columns=all_columns)
 
-        df_inv_bus_all = pd.concat(
-            [df_inv_bus_hand, df_inv_bus_auto], ignore_index=True
-        )
-        df_inv_bus_all = df_inv_bus_all.drop(columns=["id"], axis=1, errors="ignore")
+        df_inv_bus_all = pd.concat([df_inv_bus_hand, df_inv_bus_auto], ignore_index=True)
+        df_inv_bus_all = df_inv_bus_all.drop(columns=["id"], errors="ignore")
 
         print(f"处理存货数据完成，共 {len(df_inv_bus_all)} 条记录")
         return df_inv_bus_all
@@ -338,14 +322,10 @@ def save_inventory_detail_task(df: pd.DataFrame, date_range: pd.DatetimeIndex) -
     try:
         table_name = "fact_bus_inventory"
         date_column = "acct_period"
-        df = df.rename(
-            columns={"unique_lvl": "sec_dist_lvl", "source_lvl": "unique_lvl"}
-        )
+        df = df.rename(columns={"unique_lvl": "sec_dist_lvl", "source_lvl": "unique_lvl"})
         df_date_column = "acct_period"
 
-        delete_data_add_data_by_DateRange(
-            table_name, date_column, df, df_date_column, date_range
-        )
+        delete_data_add_data_by_DateRange(table_name, date_column, df, df_date_column, date_range)
         print(f"保存存货明细到数据库完成，共 {len(df)} 条记录")
     except Exception as e:
         print(f"保存存货明细到数据库时发生错误: {str(e)}")
@@ -369,9 +349,7 @@ def load_inventory_on_way_data_task(date_range: pd.DatetimeIndex) -> pd.DataFram
             "SELECT * FROM fact_inventory_on_way WHERE unique_lvl NOT LIKE %s AND acct_period >= %s AND acct_period <= %s",
             ("%无归属%", date_range.min(), date_range.max()),
         )
-        df_inv_on = pd.DataFrame(
-            cur.fetchall(), columns=[desc[0] for desc in cur.description]
-        )
+        df_inv_on = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
 
         # 按照日期筛选数据范围
         df_inv_on["acct_period"] = pd.to_datetime(df_inv_on["acct_period"])
@@ -406,9 +384,7 @@ def process_inventory_on_way_task(
         df_inv_on_bus_list = df_inv_on_bus["source_no"].tolist()
 
         # 手工分拆的部分
-        df_inv_on_bus_hand = df_inv_on[
-            df_inv_on["source_no"].isin(df_inv_on_bus_list)
-        ].merge(
+        df_inv_on_bus_hand = df_inv_on[df_inv_on["source_no"].isin(df_inv_on_bus_list)].merge(
             df_inv_on_bus[["source_no", "bus_line", "unique_lvl", "category", "rate"]],
             on=["source_no"],
             how="left",
@@ -426,9 +402,7 @@ def process_inventory_on_way_task(
         for col in inv_num_columns:
             if col in df_inv_on_bus_hand.columns:
                 df_inv_on_bus_hand[col] = df_inv_on_bus_hand[col].astype(float)
-                df_inv_on_bus_hand[col] = (
-                    df_inv_on_bus_hand[col] * df_inv_on_bus_hand["rate"]
-                )
+                df_inv_on_bus_hand[col] = df_inv_on_bus_hand[col] * df_inv_on_bus_hand["rate"]
 
         df_inv_on_bus_hand = df_inv_on_bus_hand.drop(["id"], axis=1, errors="ignore")
         df_inv_on_bus_hand = df_inv_on_bus_hand.rename(
@@ -438,9 +412,9 @@ def process_inventory_on_way_task(
         df_inv_on_bus_hand = df_inv_on_bus_hand.dropna(axis=1, how="all")
 
         # 自动归属的部分
-        df_inv_on_bus_auto = df_inv_on[
-            ~df_inv_on["source_no"].isin(df_inv_on_bus_list)
-        ].merge(df_org[["unique_lvl", "bus_line"]], on=["unique_lvl"], how="left")
+        df_inv_on_bus_auto = df_inv_on[~df_inv_on["source_no"].isin(df_inv_on_bus_list)].merge(
+            df_org[["unique_lvl", "bus_line"]], on=["unique_lvl"], how="left"
+        )
         df_inv_on_bus_auto["source_lvl"] = df_inv_on_bus_auto["unique_lvl"]
         df_inv_on_bus_auto["rate"] = 1
         df_inv_on_bus_auto["category"] = df_inv_on_bus_auto["bus_line"].apply(
@@ -450,18 +424,12 @@ def process_inventory_on_way_task(
         df_inv_on_bus_auto = df_inv_on_bus_auto.dropna(axis=1, how="all")
 
         # 确保两个 DataFrame 有相同的列，缺失的列用 NaN 填充
-        all_columns = list(
-            set(df_inv_on_bus_hand.columns) | set(df_inv_on_bus_auto.columns)
-        )
+        all_columns = list(set(df_inv_on_bus_hand.columns) | set(df_inv_on_bus_auto.columns))
         df_inv_on_bus_hand = df_inv_on_bus_hand.reindex(columns=all_columns)
         df_inv_on_bus_auto = df_inv_on_bus_auto.reindex(columns=all_columns)
 
-        df_inv_on_bus_all = pd.concat(
-            [df_inv_on_bus_hand, df_inv_on_bus_auto], ignore_index=True
-        )
-        df_inv_on_bus_all = df_inv_on_bus_all.drop(
-            columns=["id"], axis=1, errors="ignore"
-        )
+        df_inv_on_bus_all = pd.concat([df_inv_on_bus_hand, df_inv_on_bus_auto], ignore_index=True)
+        df_inv_on_bus_all = df_inv_on_bus_all.drop(columns=["id"], axis=1, errors="ignore")
 
         print(f"处理在途存货数据完成，共 {len(df_inv_on_bus_all)} 条记录")
         return df_inv_on_bus_all
@@ -489,9 +457,7 @@ def validate_inventory_on_way_rate_task(df: pd.DataFrame) -> None:
 
 
 @task(name="save_inventory_on_way_detail", log_prints=True)
-def save_inventory_on_way_detail_task(
-    df: pd.DataFrame, date_range: pd.DatetimeIndex
-) -> None:
+def save_inventory_on_way_detail_task(df: pd.DataFrame, date_range: pd.DatetimeIndex) -> None:
     """
     保存在途存货明细到数据库
 
@@ -502,14 +468,10 @@ def save_inventory_on_way_detail_task(
     try:
         table_name = "fact_bus_inventory_on_way"
         date_column = "acct_period"
-        df = df.rename(
-            columns={"unique_lvl": "sec_dist_lvl", "source_lvl": "unique_lvl"}
-        )
+        df = df.rename(columns={"unique_lvl": "sec_dist_lvl", "source_lvl": "unique_lvl"})
         df_date_column = "acct_period"
 
-        delete_data_add_data_by_DateRange(
-            table_name, date_column, df, df_date_column, date_range
-        )
+        delete_data_add_data_by_DateRange(table_name, date_column, df, df_date_column, date_range)
         print(f"保存在途存货明细到数据库完成，共 {len(df)} 条记录")
     except Exception as e:
         print(f"保存在途存货明细到数据库时发生错误: {str(e)}")
