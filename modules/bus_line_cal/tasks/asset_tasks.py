@@ -429,7 +429,7 @@ def process_inventory_on_way_task(
         df_inv_on_bus_auto = df_inv_on_bus_auto.reindex(columns=all_columns)
 
         df_inv_on_bus_all = pd.concat([df_inv_on_bus_hand, df_inv_on_bus_auto], ignore_index=True)
-        df_inv_on_bus_all = df_inv_on_bus_all.drop(columns=["id"], axis=1, errors="ignore")
+        df_inv_on_bus_all = df_inv_on_bus_all.drop(columns=["id"], errors="ignore")
 
         print(f"处理在途存货数据完成，共 {len(df_inv_on_bus_all)} 条记录")
         return df_inv_on_bus_all
