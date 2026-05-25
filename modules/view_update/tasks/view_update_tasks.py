@@ -63,16 +63,12 @@ def update_map_translate_task() -> Dict[str, Any]:
         {"success": bool, "count": int, "message": str}
     """
     field_mapping = {**combined_column_mapping, **combined_table_mapping}
-    print(
-        f"[map_translate] 准备写入映射数据，column_mapping={len(combined_column_mapping)}条, table_mapping={len(combined_table_mapping)}条, 总计={len(field_mapping)}条"
-    )
 
     conn = None
     cur = None
     try:
         conn, cur = connect_to_db()
 
-        # 确保表存在（兼容不同数据库方言）
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS map_translate (
@@ -81,11 +77,8 @@ def update_map_translate_task() -> Dict[str, Any]:
             )
             """
         )
-
-        # 清空旧数据
         cur.execute("DELETE FROM map_translate")
 
-        # 插入映射数据
         inserted = 0
         for name_ch, name_en in field_mapping.items():
             cur.execute(
@@ -95,10 +88,11 @@ def update_map_translate_task() -> Dict[str, Any]:
             inserted += 1
 
         conn.commit()
-        print(
-            f"[map_translate] 完成: 写入 {inserted} 条映射 ({len(combined_column_mapping)}列+{len(combined_table_mapping)}表)"
-        )
-        return {"success": True, "count": inserted, "message": f"写入 {inserted} 条映射"}
+        return {
+            "success": True,
+            "count": inserted,
+            "message": f"写入 {inserted} 条映射 ({len(combined_column_mapping)}列+{len(combined_table_mapping)}表)",
+        }
 
     except Exception as e:
         print(f"[map_translate] ERROR: 更新 map_translate 失败: {e}")
@@ -193,6 +187,7 @@ def refresh_views_task() -> Dict[str, Any]:
             if table_chinese is None:
                 skipped += 1
                 skipped_tables.append(table_name)
+                print(f"[refresh_views] SKIP: {table_name} 无中文映射")
                 continue
 
             # ---------- 4. 获取列并映射 ----------
@@ -224,21 +219,12 @@ def refresh_views_task() -> Dict[str, Any]:
             try:
                 cur.execute(view_sql)
                 created += 1
-                log_msg = (
-                    f"[{idx}/{len(tables)}] OK: {table_name} -> {table_chinese} ({len(columns)}列"
-                )
                 if missing_cols:
-                    log_msg += f", {len(missing_cols)}列无映射: {','.join(missing_cols[:3])}"
-                    if len(missing_cols) > 3:
-                        log_msg += f"...等"
-                    log_msg += ")"
-                else:
-                    log_msg += ")"
-                print(f"[refresh_views] {log_msg}")
+                    print(
+                        f"[refresh_views] WARN: {table_name} -> {table_chinese} 有 {len(missing_cols)} 列无映射: {', '.join(missing_cols[:5])}"
+                    )
             except Exception as inner_e:
-                print(
-                    f"[refresh_views] [{idx}/{len(tables)}] ERROR: {table_name} -> {table_chinese} 失败: {inner_e}"
-                )
+                print(f"[refresh_views] ERROR: {table_name} -> {table_chinese} 失败: {inner_e}")
                 print(f"[refresh_views] ERROR SQL: {view_sql}")
                 raise
 
@@ -266,10 +252,8 @@ def refresh_views_task() -> Dict[str, Any]:
     finally:
         if cur:
             cur.close()
-            print("[refresh_views] cursor 已关闭")
         if conn:
             conn.close()
-            print("[refresh_views] 数据库连接已关闭")
 
 
 @task(name="grant_fone_permissions", log_prints=True)
@@ -285,7 +269,6 @@ def grant_fone_permissions_task() -> Dict[str, Any]:
     try:
         conn, cur = connect_to_db()
         conn.autocommit = True
-        print("[fone_grant] 数据库连接成功，autocommit=True")
 
         cur.execute(
             """
@@ -296,7 +279,6 @@ def grant_fone_permissions_task() -> Dict[str, Any]:
         )
         views = cur.fetchall()
         view_names = [v[0] for v in views]
-        print(f"[fone_grant] 发现 {len(view_names)} 个 FONE 视图: {', '.join(view_names)}")
 
         granted = 0
         failed_views: List[str] = []
@@ -305,15 +287,11 @@ def grant_fone_permissions_task() -> Dict[str, Any]:
             try:
                 cur.execute(grant_sql)
                 granted += 1
-            except Exception as grant_e:
+            except Exception:
                 failed_views.append(view_name)
 
         if failed_views:
-            print(
-                f"[fone_grant] 完成: 授权 {granted}/{len(view_names)} 个, 失败 {len(failed_views)} 个: {', '.join(failed_views)}"
-            )
-        else:
-            print(f"[fone_grant] 完成: 授权 {granted}/{len(view_names)} 个")
+            print(f"[fone_grant] 授权 {granted}/{len(view_names)} 个, 失败: {', '.join(failed_views)}")
         return {"success": True, "granted": granted, "views": view_names, "failed": failed_views}
 
     except Exception as e:
@@ -326,4 +304,3 @@ def grant_fone_permissions_task() -> Dict[str, Any]:
     finally:
         if conn:
             conn.close()
-            print("[fone_grant] 数据库连接已关闭")
