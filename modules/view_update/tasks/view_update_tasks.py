@@ -131,10 +131,8 @@ def refresh_views_task() -> Dict[str, Any]:
     cur = None
     try:
         conn, cur = connect_to_db()
-        print(f"[refresh_views] 数据库连接成功")
 
         # ---------- 1. 删除现有视图 ----------
-        print("[refresh_views] 阶段1: 查询现有视图...")
         cur.execute(
             """
             SELECT table_name
@@ -143,24 +141,18 @@ def refresh_views_task() -> Dict[str, Any]:
             """
         )
         views = cur.fetchall()
-        print(f"[refresh_views] 发现 {len(views)} 个现有视图")
         dropped = 0
         protected = 0
         for view in views:
             view_name = view[0]
             if "业报" not in view_name and "FONE" not in view_name and "ai" not in view_name:
-                drop_sql = f'DROP VIEW IF EXISTS "{view_name}" CASCADE'
-                cur.execute(drop_sql)
+                cur.execute(f'DROP VIEW IF EXISTS "{view_name}" CASCADE')
                 dropped += 1
-                print(f"[refresh_views] 已删除视图: {view_name}")
             else:
                 protected += 1
-                print(f"[refresh_views] 保留视图: {view_name}")
         conn.commit()
-        print(f"[refresh_views] 阶段1完成: 删除 {dropped} 个, 保留 {protected} 个")
 
         # ---------- 2. 获取所有 base table ----------
-        print("[refresh_views] 阶段2: 查询 base table 列表...")
         cur.execute(
             """
             SELECT table_name
@@ -171,11 +163,7 @@ def refresh_views_task() -> Dict[str, Any]:
         all_tables = [t[0] for t in cur.fetchall()]
         tables = [t for t in all_tables if t not in EXCLUDE_TABLES]
         excluded = [t for t in all_tables if t in EXCLUDE_TABLES]
-        print(
-            f"[refresh_views] 发现 {len(all_tables)} 个表, 排除 {len(excluded)} 个系统表, 待处理 {len(tables)} 个"
-        )
-        if excluded:
-            print(f"[refresh_views] 排除的系统表: {', '.join(excluded)}")
+        print(f"[refresh_views] 待处理 {len(tables)} 个表, 排除 {len(excluded)} 个系统表, 清理 {dropped} 个旧视图")
 
         created = 0
         skipped = 0
