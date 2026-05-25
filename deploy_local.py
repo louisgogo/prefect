@@ -13,6 +13,7 @@ from modules import (
     calculate_shared_rate_flow,
     data_import_flow,
     fetch_budget_shared_rate_flow,
+    fone_recon_flow,
     profit_refresh_flow,
     profit_report_flow,
     recon_flow,
@@ -152,6 +153,24 @@ def deploy_budget_update_flow():
     )
 
 
+def deploy_fone_recon_flow():
+    """部署 FONE 往来对账流程"""
+    print("=" * 60)
+    print("FONE 往来对账流程 - 本地测试部署")
+    print("=" * 60)
+
+    print("说明：请在 UI 中手动输入参数（或使用默认值）")
+    print("提示：")
+    print("  - year: 目标年份，不填则使用上个自然年")
+    print("  - month: 目标月份（1-12），不填则使用上个自然月")
+
+    fone_recon_flow.serve(
+        name="FONE往来对账流程-本地测试",
+        tags=["本地测试", "往来对账", "FONE", "月度任务"],
+        description="本地测试用：调用 FONE API 执行 0501 脚本，获取 ERP 科目余额表并推送 BI 内部关联方数据。",
+    )
+
+
 def deploy_recon_flow():
     """部署内部往来对账流程"""
     print("=" * 60)
@@ -240,6 +259,7 @@ if __name__ == "__main__":
     process8 = Process(target=deploy_bus_line_staging_flow)
     process9 = Process(target=deploy_fetch_budget_shared_rate_flow)
     process10 = Process(target=deploy_profit_report_flow)
+    process11 = Process(target=deploy_fone_recon_flow)
 
     process1.start()
     time.sleep(1)
@@ -260,6 +280,8 @@ if __name__ == "__main__":
     process9.start()
     time.sleep(1)
     process10.start()
+    time.sleep(1)
+    process11.start()
 
     # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
@@ -283,6 +305,7 @@ if __name__ == "__main__":
             process8,
             process9,
             process10,
+            process11,
         ]:
             p.terminate()
             p.join()

@@ -14,6 +14,7 @@ from .data_import.flows.data_import_flow import data_import_flow
 from .profit_refresh.flows.profit_refresh_flow import profit_refresh_flow
 
 # 往来对账流程
+from .recon.flows.fone_recon_flow import fone_recon_flow
 from .recon.flows.recon_flow import recon_flow
 
 # 报表数据收集流程
@@ -32,6 +33,7 @@ __all__ = [
     "data_import_flow",
     "budget_update_flow",
     "profit_refresh_flow",
+    "fone_recon_flow",
     "recon_flow",
     "report_collection_flow",
     "profit_report_flow",

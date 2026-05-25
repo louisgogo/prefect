@@ -13,6 +13,7 @@ from modules import (
     calculate_shared_rate_flow,
     data_import_flow,
     fetch_budget_shared_rate_flow,
+    fone_recon_flow,
     profit_refresh_flow,
     profit_report_flow,
     recon_flow,
@@ -117,6 +118,15 @@ def _serve_recon():
     )
 
 
+def _serve_fone_recon():
+    """模块级函数，供 Process 调用"""
+    fone_recon_flow.serve(
+        name="子流程-FONE往来对账",
+        tags=["往来对账", "FONE", "月度任务", "手动触发"],
+        description="调用 FONE API 执行 0501 脚本，获取 ERP 科目余额表并推送 BI 内部关联方数据。",
+    )
+
+
 def _serve_bus_line_staging():
     """模块级函数，供 Process 调用"""
     bus_line_staging_flow.serve(
@@ -189,8 +199,9 @@ def deploy_to_remote_server():
     process6 = Process(target=_serve_fetch_budget_shared_rate)
     process7 = Process(target=_serve_profit_refresh)
     process8 = Process(target=_serve_recon)
-    process9 = Process(target=_serve_bus_line_staging)
-    process10 = Process(target=_serve_profit_report)
+    process9 = Process(target=_serve_fone_recon)
+    process10 = Process(target=_serve_bus_line_staging)
+    process11 = Process(target=_serve_profit_report)
 
     process1.start()
     time.sleep(1)
@@ -211,6 +222,8 @@ def deploy_to_remote_server():
     process9.start()
     time.sleep(1)
     process10.start()
+    time.sleep(1)
+    process11.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -238,6 +251,7 @@ def deploy_to_remote_server():
             process8,
             process9,
             process10,
+            process11,
         ]:
             p.terminate()
             p.join()
