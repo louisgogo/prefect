@@ -30,6 +30,7 @@ from ..tasks.recon_fetch_tasks import (
     insert_recon_data_task,
     sync_data_source_task,
 )
+from .fone_recon_flow import fone_recon_flow
 
 
 @flow(name="recon_flow", log_prints=True)
@@ -64,6 +65,16 @@ def recon_flow(target_date: Optional[str] = None) -> None:
     print("=" * 60)
     print(f"往来对账流程启动，目标月份: {target_date or '上个自然月（自动计算）'}")
     print("=" * 60)
+
+    # ──── 前置阶段：FONE 数据获取 ─────────────────────────────
+    print("\n【前置阶段】触发 FONE 往来对账脚本，获取 ERP 科目余额表...")
+    if target_date:
+        year = int(target_date.split("-")[0])
+        month = int(target_date.split("-")[1])
+        fone_recon_flow(year=year, month=month)
+    else:
+        fone_recon_flow()
+    print("【前置阶段】FONE 数据获取完成，继续执行对账流程...")
 
     # ──── 阶段0：同步数据源 ───────────────────────────────────
     print("\n【阶段0】同步数据源（同步目标月份到当前月份之间的文件）...")
