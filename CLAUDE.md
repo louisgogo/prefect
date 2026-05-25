@@ -331,6 +331,63 @@ for name, code in m_codes.items():
 - Budget update has special date logic: Nov-Feb → annual budget, Apr-Jul → mid-year budget
 - Memory management: Always use `months` parameter for multi-month processing to avoid memory issues
 
+## Known Pitfalls & Lessons (踩坑记录)
+
+### 1. Prefect Server SQLite 日志限制导致 UI 看不到 Task 日志
+
+**现象**：Flow 在 UI 里只显示 runner 日志（`submitting flow run` / `exited cleanly`），Task Runs 标签页有记录但 Logs 标签页看不到任何 task 日志。
+
+**根因**：Prefect Server 默认使用 SQLite 存储日志，SQLite 有 `SQLITE_MAX_VARIABLE_NUMBER` 限制（默认 **999 个 SQL 变量**）。当 task 中 `print()` 语句过多时，Prefect 会批量提交日志到 `/api/logs/`，一次插入就可能超出限制，导致 `500 Internal Server Error`（`sqlite3.OperationalError: too many SQL variables`）。日志写入失败，所以 UI 看不到。
+
+**触发场景**：在循环中逐行 `print`（如遍历 100+ 个表，每个表打印 4-5 行），或删除大量视图时每个视图都打印。
+
+**正确做法**：
+- 正常流程保持静默，**只打印异常和阶段汇总**
+- 大数据量循环中禁止逐行 `print`
+- 如需详细日志，通过 `journalctl -u prefect-workers` 查看 workers 的 stdout（不受 SQLite 限制）
+
+**错误示例**（会导致 UI 无日志）：
+```python
+for table in tables:
+    print(f"处理表: {table}")           # 100+ 行 print
+    print(f"  -> 发现 {n} 个列")       # 100+ 行 print
+    print(f"  -> 创建视图成功")         # 100+ 行 print
+```
+
+**正确示例**：
+```python
+for table in tables:
+    ... # 正常处理，不打印
+    if missing_cols:
+        print(f"WARN: {table} 有 {len(missing_cols)} 列无映射")  # 只打异常
+print(f"完成: 新建 {created} 个, 跳过 {skipped} 个")             # 只打汇总
+```
+
+### 2. 修改代码后必须完整执行"提交 → Push → 重启"
+
+**现象**：代码改了但运行时行为没变，或 UI 里看不到新 flow。
+
+**检查清单**：
+1. **提交 Git**：`git add` + `git commit`（注意 pre-commit 可能自动格式化，失败后需重新 add）
+2. **Push 到远程**：`git push origin <branch>`（workers 启动时会 `git pull`，不 push 服务器拉不到新代码）
+3. **重启 Workers**：`sudo systemctl restart prefect-workers`（workers 有代码缓存，必须重启）
+4. **验证部署**：`prefect deployment ls | grep <flow_name>` 确认 flow 已注册
+
+**常见遗漏**：
+- 只 commit 没 push → 服务器拉不到
+- 只 push 没重启 → workers 运行的是旧代码缓存
+- 新增 flow 但没改 `deploy_local.py` / `deploy_to_server.py` → UI 里看不到
+
+### 3. 不要假设"部署成功 = 运行正常"
+
+**现象**：`prefect deployment ls` 能看到 flow，但运行后结果不符合预期。
+
+**必须做的验证**：
+- 实际触发一次 flow run
+- 检查 UI 中的 Logs 和 Task Runs 是否正常显示
+- 检查 `journalctl -u prefect-workers` 有无异常
+- 检查数据库结果是否符合预期
+
 ---
 
 ## Database Schema Reference
