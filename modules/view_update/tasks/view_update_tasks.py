@@ -71,7 +71,6 @@ def update_map_translate_task() -> Dict[str, Any]:
     cur = None
     try:
         conn, cur = connect_to_db()
-        print(f"[map_translate] 数据库连接成功: {conn.dsn if hasattr(conn, 'dsn') else 'connected'}")
 
         # 确保表存在（兼容不同数据库方言）
         cur.execute(
@@ -82,11 +81,9 @@ def update_map_translate_task() -> Dict[str, Any]:
             )
             """
         )
-        print("[map_translate] 确保表存在: CREATE TABLE IF NOT EXISTS map_translate")
 
         # 清空旧数据
         cur.execute("DELETE FROM map_translate")
-        print("[map_translate] 已清空旧数据")
 
         # 插入映射数据
         inserted = 0
@@ -98,7 +95,9 @@ def update_map_translate_task() -> Dict[str, Any]:
             inserted += 1
 
         conn.commit()
-        print(f"[map_translate] 事务已提交，成功插入 {inserted} 条映射")
+        print(
+            f"[map_translate] 完成: 写入 {inserted} 条映射 ({len(combined_column_mapping)}列+{len(combined_table_mapping)}表)"
+        )
         return {"success": True, "count": inserted, "message": f"写入 {inserted} 条映射"}
 
     except Exception as e:
@@ -108,16 +107,13 @@ def update_map_translate_task() -> Dict[str, Any]:
         traceback.print_exc()
         if conn:
             conn.rollback()
-            print("[map_translate] 事务已回滚")
         raise
 
     finally:
         if cur:
             cur.close()
-            print("[map_translate] cursor 已关闭")
         if conn:
             conn.close()
-            print("[map_translate] 数据库连接已关闭")
 
 
 @task(name="refresh_views", log_prints=True)
@@ -192,18 +188,12 @@ def refresh_views_task() -> Dict[str, Any]:
         skipped_tables: List[str] = []
 
         for idx, table_name in enumerate(tables, 1):
-            print(f"[refresh_views] 处理第 {idx}/{len(tables)} 个表: {table_name}")
-
             # ---------- 3. 表中文映射检查 ----------
             table_chinese = reverse_combined_table_mapping.get(table_name)
             if table_chinese is None:
-                print(
-                    f"[refresh_views]   -> SKIP: 表 {table_name} 在 reverse_combined_table_mapping 中无中文映射"
-                )
                 skipped += 1
                 skipped_tables.append(table_name)
                 continue
-            print(f"[refresh_views]   -> 表中文名: {table_chinese}")
 
             # ---------- 4. 获取列并映射 ----------
             cur.execute(
@@ -216,7 +206,6 @@ def refresh_views_task() -> Dict[str, Any]:
                 (table_name,),
             )
             columns = cur.fetchall()
-            print(f"[refresh_views]   -> 发现 {len(columns)} 个列")
 
             column_parts: List[str] = []
             missing_cols: List[str] = []
@@ -229,24 +218,28 @@ def refresh_views_task() -> Dict[str, Any]:
                     missing_cols.append(english_name)
                     column_parts.append(english_name)
 
-            if missing_cols:
-                print(
-                    f"[refresh_views]   -> WARN: 以下 {len(missing_cols)} 个列无中文映射，保留英文名: {', '.join(missing_cols)}"
-                )
-            else:
-                print(f"[refresh_views]   -> 所有 {len(columns)} 个列均已映射中文名")
-
             column_str = ", ".join(column_parts)
             view_sql = f'CREATE OR REPLACE VIEW "{table_chinese}" AS SELECT {column_str} FROM "{table_name}";'
-            print(f"[refresh_views]   -> 执行SQL: {view_sql[:200]}...")
 
             try:
                 cur.execute(view_sql)
                 created += 1
-                print(f"[refresh_views]   -> SUCCESS: 视图 {table_chinese} 创建成功 ({len(columns)} 列)")
+                log_msg = (
+                    f"[{idx}/{len(tables)}] OK: {table_name} -> {table_chinese} ({len(columns)}列"
+                )
+                if missing_cols:
+                    log_msg += f", {len(missing_cols)}列无映射: {','.join(missing_cols[:3])}"
+                    if len(missing_cols) > 3:
+                        log_msg += f"...等"
+                    log_msg += ")"
+                else:
+                    log_msg += ")"
+                print(f"[refresh_views] {log_msg}")
             except Exception as inner_e:
-                print(f"[refresh_views]   -> ERROR: 视图 {table_chinese} 创建失败: {inner_e}")
-                print(f"[refresh_views]   -> ERROR SQL: {view_sql}")
+                print(
+                    f"[refresh_views] [{idx}/{len(tables)}] ERROR: {table_name} -> {table_chinese} 失败: {inner_e}"
+                )
+                print(f"[refresh_views] ERROR SQL: {view_sql}")
                 raise
 
         conn.commit()
@@ -312,14 +305,15 @@ def grant_fone_permissions_task() -> Dict[str, Any]:
             try:
                 cur.execute(grant_sql)
                 granted += 1
-                print(f"[fone_grant] 授权成功: {view_name}")
             except Exception as grant_e:
                 failed_views.append(view_name)
-                print(f"[fone_grant] 授权失败: {view_name}, 错误: {grant_e}")
 
-        print(f"[fone_grant] 阶段完成: 成功授权 {granted} 个, 失败 {len(failed_views)} 个")
         if failed_views:
-            print(f"[fone_grant] 失败列表: {', '.join(failed_views)}")
+            print(
+                f"[fone_grant] 完成: 授权 {granted}/{len(view_names)} 个, 失败 {len(failed_views)} 个: {', '.join(failed_views)}"
+            )
+        else:
+            print(f"[fone_grant] 完成: 授权 {granted}/{len(view_names)} 个")
         return {"success": True, "granted": granted, "views": view_names, "failed": failed_views}
 
     except Exception as e:
