@@ -17,6 +17,7 @@ from modules import (
     profit_refresh_flow,
     profit_report_flow,
     recon_flow,
+    view_update_flow,
 )
 from modules.bus_line_staging import bus_line_staging_flow
 
@@ -242,6 +243,23 @@ def deploy_profit_report_flow():
     )
 
 
+def deploy_view_update_flow():
+    """部署数据库视图更新流程"""
+    print("=" * 60)
+    print("数据库视图更新流程 - 本地测试部署")
+    print("=" * 60)
+
+    print("说明：请在 UI 中手动输入参数（或使用默认值）")
+    print("提示：")
+    print("  - skip_fone_grant: 是否跳过 FONE 视图授权，默认 False")
+
+    view_update_flow.serve(
+        name="数据库视图更新流程-本地测试",
+        tags=["本地测试", "视图更新", "数据库"],
+        description="本地测试用：更新映射表、刷新中文视图（无映射表自动跳过）、FONE 视图授权。",
+    )
+
+
 if __name__ == "__main__":
     print("开始部署流程...")
     print("确保已启动 Prefect Server：prefect server start")
@@ -260,6 +278,7 @@ if __name__ == "__main__":
     process9 = Process(target=deploy_fetch_budget_shared_rate_flow)
     process10 = Process(target=deploy_profit_report_flow)
     process11 = Process(target=deploy_fone_recon_flow)
+    process12 = Process(target=deploy_view_update_flow)
 
     process1.start()
     time.sleep(1)
@@ -282,6 +301,8 @@ if __name__ == "__main__":
     process10.start()
     time.sleep(1)
     process11.start()
+    time.sleep(1)
+    process12.start()
 
     # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
@@ -306,6 +327,7 @@ if __name__ == "__main__":
             process9,
             process10,
             process11,
+            process12,
         ]:
             p.terminate()
             p.join()

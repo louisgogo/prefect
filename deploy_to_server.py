@@ -17,6 +17,7 @@ from modules import (
     profit_refresh_flow,
     profit_report_flow,
     recon_flow,
+    view_update_flow,
 )
 from modules.bus_line_staging import bus_line_staging_flow
 
@@ -145,6 +146,15 @@ def _serve_profit_report():
     )
 
 
+def _serve_view_update():
+    """模块级函数，供 Process 调用"""
+    view_update_flow.serve(
+        name="主流程-数据库视图更新",
+        tags=["视图更新", "数据库", "手动触发"],
+        description="更新映射表、刷新中文视图（无映射表自动跳过）、FONE 视图授权。",
+    )
+
+
 def deploy_to_remote_server():
     """
     从本地推送流程到远程 Prefect Server
@@ -202,6 +212,7 @@ def deploy_to_remote_server():
     process9 = Process(target=_serve_fone_recon)
     process10 = Process(target=_serve_bus_line_staging)
     process11 = Process(target=_serve_profit_report)
+    process12 = Process(target=_serve_view_update)
 
     process1.start()
     time.sleep(1)
@@ -224,6 +235,8 @@ def deploy_to_remote_server():
     process10.start()
     time.sleep(1)
     process11.start()
+    time.sleep(1)
+    process12.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -252,6 +265,7 @@ def deploy_to_remote_server():
             process9,
             process10,
             process11,
+            process12,
         ]:
             p.terminate()
             p.join()

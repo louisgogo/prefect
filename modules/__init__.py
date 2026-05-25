@@ -25,6 +25,9 @@ from .shared_rate.flows.fetch_budget_shared_rate_flow import fetch_budget_shared
 # 综合比例计算流程（独立流程）
 from .shared_rate.flows.shared_rate_flow import calculate_shared_rate_flow
 
+# 视图更新流程
+from .view_update.flows.view_update_flow import view_update_flow
+
 __all__ = [
     "ai_data_etl_flow",
     "business_line_profit_flow",
@@ -37,4 +40,5 @@ __all__ = [
     "recon_flow",
     "report_collection_flow",
     "profit_report_flow",
+    "view_update_flow",
 ]
