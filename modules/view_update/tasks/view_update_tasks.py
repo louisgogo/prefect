@@ -216,8 +216,140 @@ def refresh_views_task() -> Dict[str, Any]:
                 print(f"[refresh_views] ERROR SQL: {view_sql}")
                 raise
 
+        # ---------- 3. 创建自定义业务视图 ----------
+        custom_views = [
+            (
+                "业报预测表",
+                """CREATE OR REPLACE VIEW "业报预测表" AS
+SELECT
+    row_number() OVER () AS id,
+    "预测层级",
+    "日期",
+    "一级科目",
+    "金额"
+FROM (
+    WITH CombinedResults AS (
+        SELECT
+            "一级组织" || '-' || "二级组织" AS "预测层级",
+            "日期",
+            "一级科目",
+            SUM("预测数") AS "金额"
+        FROM
+            "3-8预测数"
+        WHERE
+            "一级科目" NOT IN ('营业利润', '利润总额', '净利润') AND "填报日期" >= (SELECT MAX("日期") FROM "业报利润表")  AND "填报日期" = (SELECT MAX("填报日期") FROM "3-8预测数")
+        group by "预测层级","日期","一级科目","一级组织","二级组织"
+    ),
+    ProfitCalculation AS (
+        SELECT
+            "预测层级",
+            "日期",
+            SUM(CASE WHEN "一级科目" = '营业收入' THEN "金额" ELSE 0 END) AS Total_Revenue,
+            SUM(CASE WHEN "一级科目" IN ('营业成本', '税金及附加', '管理费用', '销售费用', '财务费用', '研发费用') THEN "金额" ELSE 0 END) AS Total_Cost,
+            SUM(CASE WHEN "一级科目" IN ('其他收益', '公允价值变动收益', '投资收益', '资产减值损失', '资产处置收益', '资产处置损失', '信用减值损失') THEN "金额" ELSE 0 END) AS Total_Others,
+            SUM(CASE WHEN "一级科目" IN ('营业外收入') THEN "金额" ELSE 0 END) AS Non_Income,
+            SUM(CASE WHEN "一级科目" IN ('营业外支出') THEN "金额" ELSE 0 END) AS Non_Expense,
+            SUM(CASE WHEN "一级科目" = '所得税费用' THEN "金额" ELSE 0 END) AS Total_tax
+        FROM
+            CombinedResults
+        GROUP BY
+            "预测层级", "日期"
+    )
+    SELECT
+        "预测层级",
+        "日期",
+        '营业利润' AS "一级科目",
+        Total_Revenue - Total_Cost + Total_Others AS "金额"
+    FROM
+        ProfitCalculation
+
+    UNION ALL
+
+    SELECT
+        "预测层级",
+        "日期",
+        '利润总额' AS "一级科目",
+        Total_Revenue - Total_Cost + Total_Others + Non_Income - Non_Expense AS "金额"
+    FROM
+        ProfitCalculation
+
+    UNION ALL
+
+    SELECT
+        "预测层级",
+        "日期",
+        '净利润' AS "一级科目",
+        Total_Revenue - Total_Cost + Total_Others + Non_Income - Non_Expense - Total_tax AS "金额"
+    FROM
+        ProfitCalculation
+
+    UNION ALL
+
+    SELECT
+        "预测层级",
+        "日期",
+        "一级科目",
+        "金额"
+    FROM
+        CombinedResults
+
+    UNION ALL
+
+    SELECT
+        b."一级组织映射" || '-' || b."映射关系" AS "预测层级",
+        a."日期",
+        a."一级科目",
+        a."金额"
+    FROM
+        "业报利润表" a
+        JOIN "1-1组织架构" b ON a."唯一层级" = b."唯一层级"
+
+) AS FinalResults""",
+            ),
+            (
+                "业报预测表年度",
+                """CREATE OR REPLACE VIEW "业报预测表年度" AS
+SELECT
+    row_number() OVER () AS id,
+    "预测层级",
+    "显示层级",
+    "一级科目",
+    EXTRACT(YEAR FROM "日期") AS "年份",
+    SUM(CASE WHEN EXTRACT(MONTH FROM "日期") = 1 THEN "金额" ELSE 0 END) AS "1月",
+    SUM(CASE WHEN EXTRACT(MONTH FROM "日期") = 2 THEN "金额" ELSE 0 END) AS "2月",
+    SUM(CASE WHEN EXTRACT(MONTH FROM "日期") = 3 THEN "金额" ELSE 0 END) AS "3月",
+    SUM(CASE WHEN EXTRACT(MONTH FROM "日期") = 4 THEN "金额" ELSE 0 END) AS "4月",
+    SUM(CASE WHEN EXTRACT(MONTH FROM "日期") = 5 THEN "金额" ELSE 0 END) AS "5月",
+    SUM(CASE WHEN EXTRACT(MONTH FROM "日期") = 6 THEN "金额" ELSE 0 END) AS "6月",
+    SUM(CASE WHEN EXTRACT(MONTH FROM "日期") = 7 THEN "金额" ELSE 0 END) AS "7月",
+    SUM(CASE WHEN EXTRACT(MONTH FROM "日期") = 8 THEN "金额" ELSE 0 END) AS "8月",
+    SUM(CASE WHEN EXTRACT(MONTH FROM "日期") = 9 THEN "金额" ELSE 0 END) AS "9月",
+    SUM(CASE WHEN EXTRACT(MONTH FROM "日期") = 10 THEN "金额" ELSE 0 END) AS "10月",
+    SUM(CASE WHEN EXTRACT(MONTH FROM "日期") = 11 THEN "金额" ELSE 0 END) AS "11月",
+    SUM(CASE WHEN EXTRACT(MONTH FROM "日期") = 12 THEN "金额" ELSE 0 END) AS "12月"
+FROM (
+    SELECT a."预测层级",b."显示层级",a."一级科目",a."日期",a."金额"
+    FROM "业报预测表" a
+    JOIN "1-3一级科目" b
+    ON a."一级科目"=b."一级科目")
+GROUP BY "预测层级", EXTRACT(YEAR FROM "日期"),"一级科目","显示层级"
+ORDER BY "年份" DESC,"预测层级" ASC,"显示层级" ASC""",
+            ),
+        ]
+
+        custom_created = 0
+        for view_name, view_sql in custom_views:
+            try:
+                cur.execute(view_sql)
+                custom_created += 1
+            except Exception as inner_e:
+                print(f"[refresh_views] ERROR: 自定义视图 {view_name} 创建失败: {inner_e}")
+                raise
+
         conn.commit()
-        print(f"[refresh_views] 阶段2完成: 新建 {created} 个视图, 跳过 {skipped} 个无映射表")
+        print(
+            f"[refresh_views] 阶段2完成: 新建 {created} 个映射视图, 跳过 {skipped} 个无映射表, 新建 {custom_created} 个自定义视图"
+        )
         if skipped_tables:
             print(f"[refresh_views] 跳过的表列表: {', '.join(skipped_tables)}")
         return {
@@ -225,6 +357,7 @@ def refresh_views_task() -> Dict[str, Any]:
             "created": created,
             "skipped": skipped,
             "skipped_tables": skipped_tables,
+            "custom_created": custom_created,
         }
 
     except Exception as e:
