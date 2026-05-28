@@ -145,6 +145,11 @@ def load_human_cost_for_shared_rate_task(date_range: pd.DatetimeIndex) -> pd.Dat
         # 合并并计算比例
         df = df.merge(df_total, on=["date", "unique_lvl"], how="left")
         df["expense_ratio"] = df["total_expense"] / df["total_org_expense"]
+
+        # 归一化：确保每个 date+unique_lvl 下各业务线比例之和严格等于1
+        ratio_sums = df.groupby(["date", "unique_lvl"])["expense_ratio"].transform("sum")
+        df["expense_ratio"] = df["expense_ratio"] / ratio_sums
+
         df = df[["date", "unique_lvl", "bus_line", "expense_ratio"]]
 
         # 处理除零和空值
@@ -314,6 +319,10 @@ def calculate_comprehensive_rate_task(
             + df_all["net_profit_ratio"]
             + df_all["personnel_ratio"]
         ) / 4.0
+
+        # 归一化：确保每个日期下所有业务线的综合比例之和严格等于1
+        rate_sums = df_all.groupby("date")["rate"].transform("sum")
+        df_all["rate"] = df_all["rate"] / rate_sums
 
         # 输出详细的计算结果（方便在 Prefect UI 中查看）
         print("\n" + "=" * 80)

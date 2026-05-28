@@ -903,6 +903,9 @@ def update_manual_refresh_data_task(
     for table_name, table_date_column, df_date_column in tables_config:
         if table_name in dfs:
             df = dfs[table_name].copy()
+            # 对应收表的 sales_region 进行替换：俄联邦区 → ELB
+            if table_name == "fact_receivable" and "sales_region" in df.columns:
+                df.loc[df["sales_region"] == "俄联邦区", "sales_region"] = "ELB"
             # 先检查 DataFrame 是否为空
             if df.empty:
                 print(f"⊘ 跳过 {table_name}（DataFrame 为空，无数据需要更新）")

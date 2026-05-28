@@ -367,16 +367,41 @@ print(f"完成: 新建 {created} 个, 跳过 {skipped} 个")             # 只�
 
 **现象**：代码改了但运行时行为没变，或 UI 里看不到新 flow。
 
-**检查清单**：
-1. **提交 Git**：`git add` + `git commit`（注意 pre-commit 可能自动格式化，失败后需重新 add）
-2. **Push 到远程**：`git push origin <branch>`（workers 启动时会 `git pull`，不 push 服务器拉不到新代码）
-3. **重启 Workers**：`sudo systemctl restart prefect-workers`（workers 有代码缓存，必须重启）
-4. **验证部署**：`prefect deployment ls | grep <flow_name>` 确认 flow 已注册
+**每次修改代码后，Claude 必须自动帮用户走以下完整流程，不可省略**：
+
+```bash
+# 步骤1：确认修改范围
+git status
+git diff
+
+# 步骤2：提交（pre-commit 会自动运行，失败则修复后重新 add/commit）
+git add <修改的文件>
+git commit -m "<提交说明>"
+# 注意：若 pre-commit 自动格式化导致需要重新 add，则重新执行 git add + git commit
+
+# 步骤3：Push 到远程
+git push origin <当前分支>
+
+# 步骤4：重启 Workers（生产环境 10.18.8.191）
+sudo systemctl restart prefect-workers
+
+# 步骤5：验证服务状态
+sudo systemctl status prefect-workers
+```
+
+**为什么缺一不可**：
+- 只 commit 没 push → 服务器 `git pull` 拉不到新代码
+- 只 push 没重启 → workers 缓存旧代码，运行的是旧逻辑
+- 只重启没 commit/push → 服务器拉到的还是旧代码
+
+**新增/删除 flow 时额外注意**：
+- 必须同步修改 `deploy_local.py` / `deploy_to_server.py`
+- 否则 UI 里看不到新 flow，或已删除的 flow 仍在运行
 
 **常见遗漏**：
-- 只 commit 没 push → 服务器拉不到
-- 只 push 没重启 → workers 运行的是旧代码缓存
-- 新增 flow 但没改 `deploy_local.py` / `deploy_to_server.py` → UI 里看不到
+- pre-commit 格式化后未重新 `git add` → commit 的是旧文件
+- 未 push → 服务器拉不到
+- 未重启 workers → 运行的是旧代码缓存
 
 ### 3. 不要假设"部署成功 = 运行正常"
 
