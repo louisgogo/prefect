@@ -72,7 +72,7 @@ def run_revenue_other_split_task(date_range):
                 ]
             ]
             df_revenue[bus_lines] = np.nan
-            df_revenue["数据来源"] = "前台收入"
+            df_revenue["数据来源"] = df_revenue["唯一层级"]
 
         # 2. 其他项目数据（直接在SQL中过滤日期、层级和科目）
         print("正在获取其他项目数据...")
@@ -112,7 +112,7 @@ def run_revenue_other_split_task(date_range):
             df_profit[bus_lines] = np.nan
             df_profit = df_profit.dropna(subset=["本月金额"])
             df_profit = df_profit[df_profit["本月金额"] != 0]
-            df_profit["数据来源"] = "前台其他"
+            df_profit["数据来源"] = df_profit["唯一层级"]
         # 组织映射
         cur.execute(
             "SELECT distinct unique_lvl, prim_org, sec_org, short_name, category FROM dim_org_struc"

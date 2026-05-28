@@ -178,106 +178,20 @@ def run_unassigned_split_task(date_range):
             df_profit = df_profit.dropna(subset=["本月金额"])
             df_profit = df_profit[df_profit["本月金额"] != 0]
 
-        # === 3.4 获取无归属、公共层级的数据（兜底数据，SQL中过滤）===
-        print("正在获取无归属层级的收入数据...")
-        cur.execute(
-            f"""SELECT * FROM fact_revenue
-            WHERE unique_lvl LIKE '%无归属%'
-            AND acct_period IN ({date_list})"""
-        )
-        df_revenue_unassigned = pd.DataFrame(
-            cur.fetchall(),
-            columns=[
-                reverse_combined_column_mapping.get(desc[0], desc[0]) for desc in cur.description
-            ],
-        )
-        if not df_revenue_unassigned.empty:
-            df_revenue_unassigned = df_revenue_unassigned.drop(
-                ["一级组织", "二级组织", "三级组织"], axis=1, errors="ignore"
-            )
-            df_revenue_unassigned[["一级组织", "二级组织", "三级组织"]] = df_revenue_unassigned[
-                "唯一层级"
-            ].str.split("-", n=2, expand=True)
-            df_revenue_unassigned = df_revenue_unassigned[
-                [
-                    "来源编号",
-                    "唯一层级",
-                    "一级组织",
-                    "二级组织",
-                    "三级组织",
-                    "会计期间",
-                    "收入大类",
-                    "产品大类",
-                    "物料名称",
-                    "不含税金额本位币",
-                    "成本金额",
-                    "关税成本",
-                    "软件成本",
-                    "年份",
-                ]
-            ]
-            df_revenue_unassigned[bus_lines] = np.nan
-
-        print("正在获取无归属层级的费用数据...")
-        cur.execute(
-            f"""SELECT * FROM fact_expense
-            WHERE unique_lvl LIKE '%无归属%'
-            AND acct_period IN ({date_list})"""
-        )
-        df_expense_unassigned = pd.DataFrame(
-            cur.fetchall(),
-            columns=[
-                reverse_combined_column_mapping.get(desc[0], desc[0]) for desc in cur.description
-            ],
-        )
-        if not df_expense_unassigned.empty:
-            df_expense_unassigned = df_expense_unassigned.drop(
-                ["一级组织", "二级组织", "三级组织"], axis=1, errors="ignore"
-            )
-            df_expense_unassigned[["一级组织", "二级组织", "三级组织"]] = df_expense_unassigned[
-                "唯一层级"
-            ].str.split("-", n=2, expand=True)
-            df_expense_unassigned = df_expense_unassigned[
-                [
-                    "来源编号",
-                    "唯一层级",
-                    "一级组织",
-                    "二级组织",
-                    "三级组织",
-                    "单据编号",
-                    "报销人",
-                    "摘要",
-                    "会计期间",
-                    "费用性质",
-                    "费用大类",
-                    "核算项目-费控",
-                    "研发项目",
-                    "项目编码",
-                    "费用金额",
-                    "年份",
-                    "分摊业务线",
-                ]
-            ]
-            df_expense_unassigned = df_expense_unassigned.dropna(subset=["费用金额"])
-            df_expense_unassigned = df_expense_unassigned[df_expense_unassigned["费用金额"] != 0]
-            df_expense_unassigned[bus_lines] = np.nan
+        # === 3.4 不再获取无归属层级数据 ===
+        # 按用户要求，唯一层级包含"无归属"的数据不写入staging表
+        # 之前的逻辑已移除，只保留非业务线数据（不含无归属）
+        print("按用户要求，跳过无归属层级数据的获取...")
 
         # 组织映射数据用于 insert_to_staging_table
         cur.execute("SELECT distinct unique_lvl, short_name FROM dim_org_struc")
         df_org_mapping = pd.DataFrame(cur.fetchall(), columns=["unique_lvl", "short_name"])
 
-        # 合并收入数据（非业务线收入 + 无归属收入）→ staging_bus_revenue
-        revenue_list = []
+        # 写入收入数据（仅非业务线收入，不含无归属）
         if not df_revenue.empty:
-            df_revenue["数据来源"] = "非业务线收入"
-            revenue_list.append(df_revenue)
-        if not df_revenue_unassigned.empty:
-            df_revenue_unassigned["数据来源"] = "无归属收入"
-            revenue_list.append(df_revenue_unassigned)
-        if revenue_list:
-            df_revenue_all = pd.concat(revenue_list, ignore_index=True)
+            df_revenue["数据来源"] = df_revenue["唯一层级"]
             insert_to_staging_table(
-                df=df_revenue_all,
+                df=df_revenue,
                 df_org=df_org_mapping,
                 groups=[],
                 date_range=date_range,
@@ -288,18 +202,11 @@ def run_unassigned_split_task(date_range):
                 is_by_df=True,
             )
 
-        # 合并费用数据（非业务线费用 + 无归属费用）→ staging_bus_expense
-        expense_list = []
+        # 写入费用数据（仅非业务线费用，不含无归属）
         if not df_expense.empty:
-            df_expense["数据来源"] = "非业务线费用"
-            expense_list.append(df_expense)
-        if not df_expense_unassigned.empty:
-            df_expense_unassigned["数据来源"] = "无归属费用"
-            expense_list.append(df_expense_unassigned)
-        if expense_list:
-            df_expense_all = pd.concat(expense_list, ignore_index=True)
+            df_expense["数据来源"] = df_expense["唯一层级"]
             insert_to_staging_table(
-                df=df_expense_all,
+                df=df_expense,
                 df_org=df_org_mapping,
                 groups=[],
                 date_range=date_range,
@@ -310,15 +217,11 @@ def run_unassigned_split_task(date_range):
                 is_by_df=True,
             )
 
-        # 合并其他利润表数据（非业务线其他 + 无归属其他）→ staging_bus_profit_bd
-        profit_list = []
+        # 写入其他利润表数据（仅非业务线其他，不含无归属）
         if not df_profit.empty:
-            df_profit["数据来源"] = "非业务线其他"
-            profit_list.append(df_profit)
-        if profit_list:
-            df_profit_all = pd.concat(profit_list, ignore_index=True)
+            df_profit["数据来源"] = df_profit["唯一层级"]
             insert_to_staging_table(
-                df=df_profit_all,
+                df=df_profit,
                 df_org=df_org_mapping,
                 groups=[],
                 date_range=date_range,

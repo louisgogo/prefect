@@ -254,6 +254,7 @@ def run_expense_split_to_staging_task(date_range):
                 "费用金额",
                 "年份",
                 "sec_dist_lvl",
+                "数据来源",
                 "分摊业务线",
             ]
             value_vars = [col for col in df_labor_source.columns if col in bus_lines]
@@ -285,6 +286,7 @@ def run_expense_split_to_staging_task(date_range):
                     "费用金额",
                     "年份",
                     "sec_dist_lvl",
+                    "数据来源",
                     "分摊业务线",
                 ]
                 df_labor_backend = df_a.pivot(

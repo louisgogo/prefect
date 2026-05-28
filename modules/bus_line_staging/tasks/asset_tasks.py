@@ -103,7 +103,7 @@ def run_inv_ar_split_task(date_range):
             ]
             df_inv["年份"] = pd.to_datetime(df_inv["会计期间"]).dt.year
             df_inv[bus_lines] = np.nan
-            df_inv["数据来源"] = "存货数据"
+            df_inv["数据来源"] = df_inv["唯一层级"]
         else:
             df_inv = pd.DataFrame()
 
@@ -195,7 +195,7 @@ def run_inv_ar_split_task(date_range):
             ]
             df_ar["年份"] = pd.to_datetime(df_ar["会计期间"]).dt.year
             df_ar[bus_lines] = np.nan
-            df_ar["数据来源"] = "应收账款"
+            df_ar["数据来源"] = df_ar["唯一层级"]
         else:
             df_ar = pd.DataFrame()
 
@@ -273,7 +273,7 @@ def run_inv_ar_split_task(date_range):
             ]
             df_transit["年份"] = pd.to_datetime(df_transit["会计期间"]).dt.year
             df_transit[bus_lines] = np.nan
-            df_transit["数据来源"] = "在途存货"
+            df_transit["数据来源"] = df_transit["唯一层级"]
         else:
             df_transit = pd.DataFrame()
 
