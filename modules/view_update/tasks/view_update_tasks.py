@@ -46,7 +46,6 @@ EXCLUDE_TABLES = {
     "ai_bus_expense",
     "ai_bus_revenue",
     "ai_bus_profit",
-    "excel_account_recon",
     "fone_project",
 }
 
