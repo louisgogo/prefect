@@ -5,6 +5,7 @@ from prefect import flow, get_run_logger
 from ..config import get_date_range
 from ..tasks.asset_tasks import run_inv_ar_split_task
 from ..tasks.expense_tasks import run_expense_split_to_staging_task
+from ..tasks.ratio_fill_tasks import run_revenue_ratio_fill_task
 from ..tasks.revenue_tasks import run_revenue_other_split_task
 from ..tasks.unassigned_tasks import run_unassigned_split_task
 from ..utils import cleanup_staging_month
@@ -48,9 +49,13 @@ def bus_line_staging_flow(start_date: str | None = None, end_date: str | None = 
     run_unassigned_split_task(date_range)
     logger.info("第3步：无归属业务兜底数据入库已完成。")
 
-    # 4. 存货应收拆分
+    # 4. 收入比例自动填充
+    run_revenue_ratio_fill_task(date_range)
+    logger.info("第4步：收入比例自动填充已完成。")
+
+    # 5. 存货应收拆分
     run_inv_ar_split_task(date_range)
-    logger.info("第4步：特定存货及应收数据入库已完成。")
+    logger.info("第5步：特定存货及应收数据入库已完成。")
 
     logger.info("✅ 所有的业务线Staging数据拆分提取工作流已顺利完成！")
 
