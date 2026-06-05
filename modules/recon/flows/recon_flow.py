@@ -34,13 +34,15 @@ from .fone_recon_flow import fone_recon_flow
 
 
 @flow(name="recon_flow", log_prints=True)
-def recon_flow(target_date: Optional[str] = None) -> None:
+def recon_flow(target_date: Optional[str] = None, use_fone: bool = False) -> None:
     """
     内部往来对账完整流程（阶段0同步 + 阶段1采集 + 阶段2核对）
 
     Args:
         target_date: 目标月份，格式 YYYY-MM-DD（如 "2026-02-01"）。
                      不传则自动使用上个自然月（相对于运行日期）。
+        use_fone: 是否触发 FONE 往来对账子流程（fone_recon_flow）获取 ERP 科目余额表。
+                  默认 False（不触发），仅当需要重新拉取 FONE 数据时设为 True。
 
     流程说明：
         阶段0 - 数据源同步：
@@ -66,15 +68,18 @@ def recon_flow(target_date: Optional[str] = None) -> None:
     print(f"往来对账流程启动，目标月份: {target_date or '上个自然月（自动计算）'}")
     print("=" * 60)
 
-    # ──── 前置阶段：FONE 数据获取 ─────────────────────────────
-    print("\n【前置阶段】触发 FONE 往来对账脚本，获取 ERP 科目余额表...")
-    if target_date:
-        year = int(target_date.split("-")[0])
-        month = int(target_date.split("-")[1])
-        fone_recon_flow(year=year, month=month)
+    # ──── 前置阶段：FONE 数据获取（可选）─────────────────────────────
+    if use_fone:
+        print("\n【前置阶段】触发 FONE 往来对账脚本，获取 ERP 科目余额表...")
+        if target_date:
+            year = int(target_date.split("-")[0])
+            month = int(target_date.split("-")[1])
+            fone_recon_flow(year=year, month=month)
+        else:
+            fone_recon_flow()
+        print("【前置阶段】FONE 数据获取完成，继续执行对账流程...")
     else:
-        fone_recon_flow()
-    print("【前置阶段】FONE 数据获取完成，继续执行对账流程...")
+        print("\n【前置阶段】跳过 FONE 数据获取（use_fone=False），如需重新拉取请设为 True")
 
     # ──── 阶段0：同步数据源 ───────────────────────────────────
     print("\n【阶段0】同步数据源（同步目标月份到当前月份之间的文件）...")

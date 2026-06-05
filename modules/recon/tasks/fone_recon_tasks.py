@@ -101,9 +101,9 @@ def execute_fone_recon_script_task(ticket: str, start_date: str, end_date: str) 
     print(f"--> 脚本日期范围: {start_date} ~ {end_date}")
 
     try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=300)
+        resp = requests.post(url, json=payload, headers=headers, timeout=900)
     except requests.exceptions.Timeout:
-        raise RuntimeError("执行脚本请求超时 (300s)")
+        raise RuntimeError("执行脚本请求超时 (900s)")
     except Exception as e:
         raise RuntimeError(f"执行脚本请求异常: {e}")
 
