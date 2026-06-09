@@ -393,12 +393,22 @@ def _inherit_diff_reasons(
     # 老结果中只保留连接键和差异原因，避免列名冲突
     df_old_reason = df_old[join_keys + ["差异原因"]].copy()
 
-    # 为确保 NaN 能够正确匹配，将连接键中的 NaN 替换为特殊标记
+    # 统一转为字符串并处理 NaN/None，避免 float/string 类型不匹配及 NaN != NaN 问题
     for key in join_keys:
         if key in df_new.columns:
-            df_new[key] = df_new[key].fillna("__NULL_PLACEHOLDER__")
+            df_new[key] = (
+                df_new[key]
+                .astype(str)
+                .replace("nan", "__NULL_PLACEHOLDER__")
+                .replace("None", "__NULL_PLACEHOLDER__")
+            )
         if key in df_old_reason.columns:
-            df_old_reason[key] = df_old_reason[key].fillna("__NULL_PLACEHOLDER__")
+            df_old_reason[key] = (
+                df_old_reason[key]
+                .astype(str)
+                .replace("nan", "__NULL_PLACEHOLDER__")
+                .replace("None", "__NULL_PLACEHOLDER__")
+            )
 
     # 新结果左连接老结果
     df_merged = pd.merge(df_new, df_old_reason, on=join_keys, how="left", suffixes=("", "_old"))
@@ -473,23 +483,47 @@ def save_recon_results_task(
     year_month_prefix = f"{month_label[:4]}-{month_label[4:]}"  # e.g. "2026-02"
 
     # 定义每个结果表的配置：(表名, 数据, 连接键, 日期列名)
+    # 连接键包含金额列，避免同名不同额的记录匹配到错误的差异原因
     table_configs = [
         (
             "recon_result_wanglai",
             res_wanglai,
-            ["唯一名称", "往来核对-应付.唯一名称", "统一日期"],
+            [
+                "唯一名称",
+                "往来核对-应付.唯一名称",
+                "统一日期",
+                "金额",
+                "往来核对-应付.金额",
+                "差异",
+            ],
             "统一日期",
         ),
         (
             "recon_result_sales",
             res_transaction,
-            ["公司简称", "对方简称", "采购核对.公司简称", "采购核对.对方简称", "唯一日期"],
+            [
+                "公司简称",
+                "对方简称",
+                "采购核对.公司简称",
+                "采购核对.对方简称",
+                "唯一日期",
+                "金额",
+                "采购核对.金额",
+                "计算差异",
+            ],
             "唯一日期",
         ),
         (
             "recon_result_cashflow",
             res_cashflow,
-            ["唯一名称", "现金流量-支付.唯一名称", "唯一日期"],
+            [
+                "唯一名称",
+                "现金流量-支付.唯一名称",
+                "唯一日期",
+                "金额",
+                "现金流量-支付.金额",
+                "差额",
+            ],
             "唯一日期",
         ),
     ]
@@ -500,41 +534,35 @@ def save_recon_results_task(
             if "差异原因" not in df_new.columns:
                 df_new["差异原因"] = None
 
-            table_exists = False
             try:
-                df_existing = pd.read_sql(f"SELECT * FROM {table_name}", con=engine)
-                table_exists = True
+                # 只读取目标月份数据（用于继承差异原因）
+                query = (
+                    f"SELECT * FROM {table_name} "
+                    f"WHERE {date_col}::text LIKE '{year_month_prefix}%'"
+                )
+                df_existing_month = pd.read_sql(query, con=engine)
 
-                # 分离本月数据和非本月数据
-                df_existing_month = pd.DataFrame()
-                df_existing_other = pd.DataFrame()
-
-                if not df_existing.empty and date_col in df_existing.columns:
-                    df_existing[date_col] = df_existing[date_col].astype(str)
-                    month_mask = df_existing[date_col].str.startswith(year_month_prefix)
-                    df_existing_month = df_existing[month_mask].copy()
-                    df_existing_other = df_existing[~month_mask].copy()
-
-                # 新结果左连接老的本月数据，继承差异原因
                 if not df_existing_month.empty:
                     df_new = _inherit_diff_reasons(df_new, df_existing_month, join_keys)
 
-                # 合并非本月旧数据 + 新结果
-                df_write = pd.concat([df_existing_other, df_new], ignore_index=True)
-            except Exception:
-                # 表不存在，直接写新数据
-                df_write = df_new.copy()
-
-            if table_exists:
-                # 表存在：先清空再追加，避免 DROP TABLE 因视图依赖而失败
+                # 在事务中删除目标月份并插入新结果
                 with engine.begin() as conn:
-                    conn.execute(text(f"TRUNCATE TABLE {table_name}"))
-                df_write.to_sql(table_name, con=engine, if_exists="append", index=False)
-            else:
-                # 表不存在：直接创建
-                df_write.to_sql(table_name, con=engine, if_exists="replace", index=False)
+                    conn.execute(
+                        text(
+                            f"DELETE FROM {table_name} "
+                            f"WHERE {date_col}::text LIKE '{year_month_prefix}%'"
+                        )
+                    )
+                    df_new.to_sql(table_name, con=conn, if_exists="append", index=False)
 
-            print(f"--> 写入 {table_name} 完成（本月新数据 {len(df_new)} 条，合计 {len(df_write)} 条）")
+                print(f"--> 写入 {table_name} 完成（本月新数据 {len(df_new)} 条）")
+            except Exception as read_err:
+                err_msg = str(read_err).lower()
+                if "does not exist" in err_msg or "relation" in err_msg:
+                    df_new.to_sql(table_name, con=engine, if_exists="replace", index=False)
+                    print(f"--> 写入 {table_name} 完成（新建表，本月新数据 {len(df_new)} 条）")
+                else:
+                    raise
         except Exception as e:
             print(f"[WARN] 写入 {table_name} 失败: {e}，继续输出 Excel")
 
