@@ -545,7 +545,7 @@ def save_recon_results_task(
                 if not df_existing_month.empty:
                     df_new = _inherit_diff_reasons(df_new, df_existing_month, join_keys)
 
-                # 在事务中删除目标月份并插入新结果
+                # 删除目标月份数据（事务内）
                 with engine.begin() as conn:
                     conn.execute(
                         text(
@@ -553,7 +553,9 @@ def save_recon_results_task(
                             f"WHERE {date_col}::text LIKE '{year_month_prefix}%'"
                         )
                     )
-                    df_new.to_sql(table_name, con=conn, if_exists="append", index=False)
+
+                # 插入新结果（使用 engine，避免 pandas 3.0 + SQLAlchemy 2.0 connection 兼容性问题）
+                df_new.to_sql(table_name, con=engine, if_exists="append", index=False)
 
                 print(f"--> 写入 {table_name} 完成（本月新数据 {len(df_new)} 条）")
             except Exception as read_err:
