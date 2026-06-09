@@ -14,7 +14,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from ...common.tasks.notify_hermes_task import notify_hermes_task
 from ..tasks.org_sync_tasks import (
-    build_unique_lvl_mapping_task,
+    build_db_corr_rel_mapping_task,
     compare_org_task,
     fetch_fone_org_task,
     fetch_map_org_task,
@@ -69,8 +69,8 @@ def org_sync_flow(
         df_fone = fetch_fone_org_task()
         df_map, df_dim = fetch_map_org_task()
 
-        # 阶段2: 对比分析
-        print("\n--- 阶段2: 对比分析差异 ---")
+        # 阶段2: 对比分析（仅核对新增 ID）
+        print("\n--- 阶段2: 对比分析差异（仅新增） ---")
         diff_result = compare_org_task(
             df_fone=df_fone,
             df_map=df_map,
@@ -78,9 +78,9 @@ def org_sync_flow(
             only_last_stage=only_last_stage,
         )
 
-        # 阶段3: unique_lvl 映射分析（额外辅助信息）
-        print("\n--- 阶段3: unique_lvl 映射分析 ---")
-        mapping_df = build_unique_lvl_mapping_task(df_fone=df_fone, df_dim=df_dim)
+        # 阶段3: db_corr_rel 映射分析（基于 ParentID 还原的 1/2/3 级路径）
+        print("\n--- 阶段3: db_corr_rel 映射分析 ---")
+        mapping_df = build_db_corr_rel_mapping_task(df_fone=df_fone, df_map=df_map)
 
         # 阶段4: 结构化输出差异到日志（供 AI 直接读取）
         print("\n--- 阶段4: 差异详情输出到日志 ---")
@@ -93,12 +93,12 @@ def org_sync_flow(
                         "fone_id",
                         "fone_name",
                         "fone_path",
-                        "suggested_unique_lvl",
-                        "matched_unique_lvl",
-                        "PrimaryOrganization",
-                        "SecondaryOrganization",
-                        "TertiaryOrganization",
-                        "FourthOrganization",
+                        "lvl1",
+                        "lvl2",
+                        "lvl3",
+                        "suggested_db_corr_rel",
+                        "matched_db_corr_rel",
+                        "match_status",
                         "BusinessLine",
                         "LastStage",
                     ]
@@ -108,58 +108,18 @@ def org_sync_flow(
             ),
         )
         _print_df_to_logs(
-            "层级变更",
-            (
-                diff_result["modified"][
-                    [
-                        "identifier_id",
-                        "fone_name",
-                        "fone_path",
-                        "db_corr_rel",
-                        "unique_lvl",
-                        "PrimaryOrganization",
-                        "SecondaryOrganization",
-                        "TertiaryOrganization",
-                        "FourthOrganization",
-                        "BusinessLine",
-                        "LastStage",
-                    ]
-                ]
-                if len(diff_result["modified"]) > 0
-                else diff_result["modified"]
-            ),
-        )
-        _print_df_to_logs(
-            "停用或缺失",
-            (
-                diff_result["removed"][
-                    [
-                        "identifier_id",
-                        "unique_lvl",
-                        "prim_org",
-                        "sec_org",
-                        "third_org",
-                        "fourth_org",
-                        "db_corr_rel",
-                    ]
-                ]
-                if len(diff_result["removed"]) > 0
-                else diff_result["removed"]
-            ),
-        )
-        _print_df_to_logs(
-            "unique_lvl 映射建议（需关注）",
+            "db_corr_rel 映射建议（需关注）",
             (
                 mapping_df[mapping_df["match_status"].isin(["未匹配", "无建议", "多候选"])][
                     [
                         "fone_id",
                         "fone_name",
-                        "suggested_unique_lvl",
-                        "matched_unique_lvl",
+                        "lvl1",
+                        "lvl2",
+                        "lvl3",
+                        "suggested_db_corr_rel",
+                        "matched_db_corr_rel",
                         "match_status",
-                        "PrimaryOrganization",
-                        "SecondaryOrganization",
-                        "TertiaryOrganization",
                     ]
                 ]
                 if len(mapping_df) > 0
@@ -183,29 +143,25 @@ def org_sync_flow(
                 import pandas as pd
 
                 with pd.ExcelWriter(report_path, engine="openpyxl", mode="a") as writer:
-                    mapping_df.to_excel(writer, sheet_name="unique_lvl映射建议", index=False)
-                print(f"已追加 unique_lvl 映射建议到报告")
+                    mapping_df.to_excel(writer, sheet_name="db_corr_rel映射建议", index=False)
+                print(f"已追加 db_corr_rel 映射建议到报告")
 
         # 完成通知
         summary = diff_result["summary"]
         added = summary.loc[summary["差异类型"] == "新增", "数量"].values[0]
-        modified = summary.loc[summary["差异类型"] == "层级变更", "数量"].values[0]
-        removed = summary.loc[summary["差异类型"] == "停用/缺失", "数量"].values[0]
 
         notify_hermes_task(
             event="completed",
             flow_name="组织架构同步对比",
             payload={
                 "新增": int(added),
-                "层级变更": int(modified),
-                "停用或缺失": int(removed),
                 "报告路径": report_path or "",
             },
         )
 
         print("\n" + "=" * 60)
         print("组织架构同步对比流程完成")
-        print(f"新增: {added} | 层级变更: {modified} | 停用/缺失: {removed}")
+        print(f"新增: {added}")
         print("=" * 60)
 
         return report_path
