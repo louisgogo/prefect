@@ -14,7 +14,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from ...common.tasks.notify_hermes_task import notify_hermes_task
 from ..tasks.org_sync_tasks import (
-    build_db_corr_rel_mapping_task,
     compare_org_task,
     fetch_fone_org_task,
     fetch_map_org_task,
@@ -75,16 +74,12 @@ def org_sync_flow(
             only_last_stage=only_last_stage,
         )
 
-        # 阶段3: db_corr_rel 映射分析（基于 ParentID 还原的 1/2/3 级路径）
-        print("\n--- 阶段3: db_corr_rel 映射分析 ---")
-        mapping_df = build_db_corr_rel_mapping_task(df_fone=df_fone, df_map=df_map)
-
-        # 阶段4: 结构化输出差异到日志（供 AI 直接读取）
-        print("\n--- 阶段4: 差异详情输出到日志 ---")
+        # 阶段3: 输出新增组织到日志
+        print("\n--- 阶段3: 差异详情输出到日志 ---")
         _print_df_to_logs("差异汇总", diff_result["summary"])
-        _print_df_to_logs(
-            "新增组织",
-            (
+        if len(diff_result["added"]) > 0:
+            _print_df_to_logs(
+                "新增组织",
                 diff_result["added"][
                     [
                         "fone_id",
@@ -99,45 +94,19 @@ def org_sync_flow(
                         "BusinessLine",
                         "LastStage",
                     ]
-                ]
-                if len(diff_result["added"]) > 0
-                else diff_result["added"]
-            ),
-        )
-        _print_df_to_logs(
-            "db_corr_rel 映射建议（需关注）",
-            (
-                mapping_df[mapping_df["match_status"].isin(["未匹配", "无建议", "多候选"])][
-                    [
-                        "fone_id",
-                        "fone_name",
-                        "lvl1",
-                        "lvl2",
-                        "lvl3",
-                        "suggested_db_corr_rel",
-                        "matched_db_corr_rel",
-                        "match_status",
-                    ]
-                ]
-                if len(mapping_df) > 0
-                else mapping_df
-            ),
-        )
+                ],
+            )
+        else:
+            print("\n无新增组织")
 
-        # 阶段5: 保存结果
+        # 阶段4: 可选生成 Excel 报告
         report_path = None
         if generate_excel:
-            print("\n--- 阶段5b: 生成 Excel 报告 ---")
+            print("\n--- 阶段4: 生成 Excel 报告 ---")
             report_path = generate_org_diff_report_task(
                 diff_result=diff_result,
                 output_dir=output_dir,
             )
-            if report_path and len(mapping_df) > 0:
-                import pandas as pd
-
-                with pd.ExcelWriter(report_path, engine="openpyxl", mode="a") as writer:
-                    mapping_df.to_excel(writer, sheet_name="db_corr_rel映射建议", index=False)
-                print(f"已追加 db_corr_rel 映射建议到报告")
 
         # 完成通知
         summary = diff_result["summary"]
