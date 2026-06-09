@@ -14,6 +14,7 @@ from modules import (
     data_import_flow,
     fetch_budget_shared_rate_flow,
     fone_recon_flow,
+    org_sync_flow,
     profit_refresh_flow,
     profit_report_flow,
     recon_flow,
@@ -260,6 +261,25 @@ def deploy_view_update_flow():
     )
 
 
+def deploy_org_sync_flow():
+    """部署组织架构同步对比流程"""
+    print("=" * 60)
+    print("组织架构同步对比流程 - 本地测试部署")
+    print("=" * 60)
+
+    print("说明：请在 UI 中手动输入参数（或使用默认值）")
+    print("提示：")
+    print("  - only_last_stage: 默认 True，只对比 LastStage='是' 的组织")
+    print("  - save_to_db: 默认 True，将差异写入 org_diff_log")
+    print("  - generate_excel: 默认 True，生成 Excel 差异报告")
+
+    org_sync_flow.serve(
+        name="组织架构同步对比流程-本地测试",
+        tags=["本地测试", "组织架构", "映射维护"],
+        description="本地测试用：对比 FONE XGD_MRPT_ENTITY 和 mydb map_org 的差异，生成报告并写入 org_diff_log。",
+    )
+
+
 if __name__ == "__main__":
     print("开始部署流程...")
     print("确保已启动 Prefect Server：prefect server start")
@@ -279,6 +299,7 @@ if __name__ == "__main__":
     process10 = Process(target=deploy_profit_report_flow)
     process11 = Process(target=deploy_fone_recon_flow)
     process12 = Process(target=deploy_view_update_flow)
+    process13 = Process(target=deploy_org_sync_flow)
 
     process1.start()
     time.sleep(1)
@@ -303,6 +324,8 @@ if __name__ == "__main__":
     process11.start()
     time.sleep(1)
     process12.start()
+    time.sleep(1)
+    process13.start()
 
     # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
@@ -328,6 +351,7 @@ if __name__ == "__main__":
             process10,
             process11,
             process12,
+            process13,
         ]:
             p.terminate()
             p.join()

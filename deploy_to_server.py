@@ -14,6 +14,7 @@ from modules import (
     data_import_flow,
     fetch_budget_shared_rate_flow,
     fone_recon_flow,
+    org_sync_flow,
     profit_refresh_flow,
     profit_report_flow,
     recon_flow,
@@ -155,6 +156,15 @@ def _serve_view_update():
     )
 
 
+def _serve_org_sync():
+    """模块级函数，供 Process 调用"""
+    org_sync_flow.serve(
+        name="主流程-组织架构同步对比",
+        tags=["组织架构", "映射维护", "手动触发"],
+        description="对比 FONE XGD_MRPT_ENTITY 和 mydb map_org 的差异，生成报告并写入 org_diff_log。",
+    )
+
+
 def deploy_to_remote_server():
     """
     从本地推送流程到远程 Prefect Server
@@ -213,6 +223,7 @@ def deploy_to_remote_server():
     process10 = Process(target=_serve_bus_line_staging)
     process11 = Process(target=_serve_profit_report)
     process12 = Process(target=_serve_view_update)
+    process13 = Process(target=_serve_org_sync)
 
     process1.start()
     time.sleep(1)
@@ -237,6 +248,8 @@ def deploy_to_remote_server():
     process11.start()
     time.sleep(1)
     process12.start()
+    time.sleep(1)
+    process13.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -266,6 +279,7 @@ def deploy_to_remote_server():
             process10,
             process11,
             process12,
+            process13,
         ]:
             p.terminate()
             p.join()
