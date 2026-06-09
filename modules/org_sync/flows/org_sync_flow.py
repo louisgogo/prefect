@@ -42,7 +42,7 @@ def _print_df_to_logs(title: str, df, max_rows: int = 200) -> None:
 def org_sync_flow(
     only_last_stage: bool = True,
     output_dir: Optional[str] = None,
-    save_to_db: bool = True,
+    save_to_db: bool = False,
     generate_excel: bool = False,
 ) -> Optional[str]:
     """
@@ -51,7 +51,7 @@ def org_sync_flow(
     Args:
         only_last_stage: 是否只对比 LastStage='是' 的组织（默认 True）
         output_dir: Excel 报告输出目录，默认当前工作目录
-        save_to_db: 是否将差异写入 mydb.org_diff_log（默认 True）
+        save_to_db: 是否将差异写入 mydb.org_diff_log（默认 False）
         generate_excel: 是否生成 Excel 报告（默认 False）
 
     Returns:
