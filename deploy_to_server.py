@@ -122,7 +122,7 @@ def _serve_recon():
 def _serve_fone_recon():
     """模块级函数，供 Process 调用"""
     fone_recon_flow.serve(
-        name="子流程-FONE往来对账",
+        name="子流程-从FONE获取往来数据",
         tags=["往来对账", "FONE", "月度任务", "手动触发"],
         description="调用 FONE API 执行 0501 脚本，获取 ERP 科目余额表并推送 BI 内部关联方数据。",
     )

@@ -42,7 +42,7 @@ def recon_flow(target_date: Optional[str] = None, use_fone: bool = False) -> Non
     Args:
         target_date: 目标月份，格式 YYYY-MM-DD（如 "2026-02-01"）。
                      不传则自动使用上个自然月（相对于运行日期）。
-        use_fone: 是否触发 FONE 往来对账子流程（fone_recon_flow）获取 ERP 科目余额表。
+        use_fone: 是否触发从 FONE 获取往来数据子流程（fone_recon_flow）获取 ERP 科目余额表。
                   默认 False（不触发），仅当需要重新拉取 FONE 数据时设为 True。
 
     流程说明：
@@ -58,12 +58,12 @@ def recon_flow(target_date: Optional[str] = None, use_fone: bool = False) -> Non
 
         阶段2 - 对账核对与结果输出：
           5. 检测 recon_name 表，如无目标月数据则从上月复制，日期修改为目标月份
-          6. 加载共享盘 映射配置表.xlsx（参数表/差异说明）
+          6. 加载共享盘参数表（科目统一名称映射）
           7. 从 PostgreSQL 读取目标月原始数据
           8. 往来余额 三向核对（应收 vs 应付）
           9. 销售/采购 发生额核对
          10. 现金流量 收入 vs 支付核对
-         11. 写入结果表（PostgreSQL）+ 导出备份 Excel
+         11. 写入结果表（PostgreSQL）+ 导出备份 Excel，差异原因从旧结果增量继承
     """
     print("=" * 60)
     print(f"往来对账流程启动，目标月份: {target_date or '上个自然月（自动计算）'}")
@@ -75,7 +75,7 @@ def recon_flow(target_date: Optional[str] = None, use_fone: bool = False) -> Non
     try:
         # ──── 前置阶段：FONE 数据获取（可选）─────────────────────────────
         if use_fone:
-            print("\n【前置阶段】触发 FONE 往来对账脚本，获取 ERP 科目余额表...")
+            print("\n【前置阶段】触发从 FONE 获取往来数据脚本，获取 ERP 科目余额表...")
             if target_date:
                 year = int(target_date.split("-")[0])
                 month = int(target_date.split("-")[1])
@@ -126,13 +126,8 @@ def recon_flow(target_date: Optional[str] = None, use_fone: bool = False) -> Non
         else:
             print(f"[WARN] 自动填充检测异常: {auto_fill_result.get('message')}")
 
-        # Step 6: 加载映射配置表
-        (
-            df_params,
-            df_diff_wanglai,
-            df_diff_xiaoshou,
-            df_diff_xianjinliu,
-        ) = load_mapping_config_task()
+        # Step 6: 加载参数表（差异说明不再从 Excel 加载，改为数据库增量继承）
+        df_params = load_mapping_config_task()
 
         # Step 7: 读取原始数据
         df_raw = load_recon_raw_task(target_date=target_date)
@@ -141,20 +136,17 @@ def recon_flow(target_date: Optional[str] = None, use_fone: bool = False) -> Non
         res_wanglai = reconcile_wanglai_task(
             df_raw=df_raw,
             df_params=df_params,
-            df_diff_wanglai=df_diff_wanglai,
         )
 
         # Step 9: 销售/采购核对
         res_transaction = process_sales_purchases_task(
             df_raw=df_raw,
-            df_diff_xiaoshou=df_diff_xiaoshou,
         )
 
         # Step 10: 现金流核对
         res_cashflow = process_cashflow_task(
             df_raw=df_raw,
             df_params=df_params,
-            df_diff_xianjinliu=df_diff_xianjinliu,
         )
 
         # Step 11: 保存结果

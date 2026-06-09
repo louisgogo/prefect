@@ -7,7 +7,7 @@
 import os
 import platform
 import sys
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -31,120 +31,27 @@ def _get_mapping_path() -> str:
 
 
 @task(name="load_mapping_config", log_prints=True)
-def load_mapping_config_task() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def load_mapping_config_task() -> pd.DataFrame:
     """
-    从共享盘加载映射配置表.xlsx 中的各配置子表。
+    从共享盘加载映射配置表.xlsx 中的参数表（科目统一名称映射）。
+    差异说明不再从 Excel 加载，改为从数据库结果表增量继承。
 
     Returns:
-        (df_params, df_diff_wanglai, df_diff_xiaoshou, df_diff_xianjinliu)
+        df_params: 参数表 DataFrame
     """
     mapping_excel = _get_mapping_path()
-    print(f"--> 加载映射配置表: {mapping_excel}")
+    print(f"--> 加载参数表: {mapping_excel}")
 
     try:
         df_params = pd.read_excel(mapping_excel, sheet_name="参数表", usecols=["项目", "统一名称"]).dropna(
             how="all"
         )
         df_params["统一名称"] = df_params["统一名称"].fillna("")
-
-        # 往来差异说明
-        try:
-            df_diff_wanglai = pd.read_excel(mapping_excel, sheet_name="往来差异说明")
-            if not df_diff_wanglai.empty:
-                df_diff_wanglai["统一日期"] = pd.to_datetime(df_diff_wanglai["统一日期"], errors="coerce")
-                for col in ["金额", "往来核对-应付.金额", "差异"]:
-                    if col in df_diff_wanglai.columns:
-                        df_diff_wanglai[col] = pd.to_numeric(
-                            df_diff_wanglai[col], errors="coerce"
-                        ).round(2)
-        except Exception as e:
-            print(f"[WARN] 往来差异说明加载失败: {e}")
-            df_diff_wanglai = pd.DataFrame(
-                columns=["唯一名称", "金额", "往来核对-应付.唯一名称", "往来核对-应付.金额", "差异", "统一日期", "差异原因"]
-            )
-
-        # 销售差异说明
-        try:
-            df_diff_xiaoshou = pd.read_excel(mapping_excel, sheet_name="销售差异说明")
-            if not df_diff_xiaoshou.empty:
-                df_diff_xiaoshou["唯一日期"] = pd.to_datetime(df_diff_xiaoshou["唯一日期"], errors="coerce")
-                for col in ["金额", "采购核对.金额", "计算差异"]:
-                    if col in df_diff_xiaoshou.columns:
-                        df_diff_xiaoshou[col] = pd.to_numeric(
-                            df_diff_xiaoshou[col], errors="coerce"
-                        ).round(2)
-        except Exception as e:
-            print(f"[WARN] 销售差异说明加载失败: {e}")
-            df_diff_xiaoshou = pd.DataFrame(
-                columns=[
-                    "公司简称",
-                    "对方简称",
-                    "金额",
-                    "采购核对.公司简称",
-                    "采购核对.对方简称",
-                    "采购核对.金额",
-                    "计算差异",
-                    "唯一日期",
-                    "差异原因",
-                ]
-            )
-
-        # 现金流差异说明
-        try:
-            df_diff_xianjinliu = pd.read_excel(mapping_excel, sheet_name="现金流差异说明")
-            if not df_diff_xianjinliu.empty:
-                df_diff_xianjinliu["唯一日期"] = pd.to_datetime(
-                    df_diff_xianjinliu["唯一日期"], errors="coerce"
-                )
-                for col in ["金额", "现金流量-支付.金额", "差额"]:
-                    if col in df_diff_xianjinliu.columns:
-                        df_diff_xianjinliu[col] = pd.to_numeric(
-                            df_diff_xianjinliu[col], errors="coerce"
-                        ).round(2)
-        except Exception as e:
-            print(f"[WARN] 现金流差异说明加载失败: {e}")
-            df_diff_xianjinliu = pd.DataFrame(
-                columns=["唯一名称", "金额", "现金流量-支付.唯一名称", "现金流量-支付.金额", "差额", "唯一日期", "差异原因"]
-            )
-
-        print(
-            f"--> 映射配置表加载完成：参数表 {len(df_params)} 行，差异说明(往来{len(df_diff_wanglai)}/销售{len(df_diff_xiaoshou)}/现金流{len(df_diff_xianjinliu)})"
-        )
-        return (
-            df_params,
-            df_diff_wanglai,
-            df_diff_xiaoshou,
-            df_diff_xianjinliu,
-        )
-
+        print(f"--> 参数表加载完成：{len(df_params)} 行")
+        return df_params
     except Exception as e:
-        print(f"[ERROR] 加载映射配置表失败: {e}，使用空表占位")
-        empty_params = pd.DataFrame(columns=["项目", "统一名称"])
-        empty_wanglai = pd.DataFrame(
-            columns=["唯一名称", "金额", "往来核对-应付.唯一名称", "往来核对-应付.金额", "差异", "统一日期", "差异原因"]
-        )
-        empty_xiaoshou = pd.DataFrame(
-            columns=[
-                "公司简称",
-                "对方简称",
-                "金额",
-                "采购核对.公司简称",
-                "采购核对.对方简称",
-                "采购核对.金额",
-                "计算差异",
-                "唯一日期",
-                "差异原因",
-            ]
-        )
-        empty_xianjinliu = pd.DataFrame(
-            columns=["唯一名称", "金额", "现金流量-支付.唯一名称", "现金流量-支付.金额", "差额", "唯一日期", "差异原因"]
-        )
-        return (
-            empty_params,
-            empty_wanglai,
-            empty_xiaoshou,
-            empty_xianjinliu,
-        )
+        print(f"[ERROR] 加载参数表失败: {e}，使用空表占位")
+        return pd.DataFrame(columns=["项目", "统一名称"])
 
 
 # ──────────────────────────────────────────────
@@ -252,9 +159,8 @@ def load_recon_raw_task(target_date: Optional[str] = None) -> pd.DataFrame:
 def reconcile_wanglai_task(
     df_raw: pd.DataFrame,
     df_params: pd.DataFrame,
-    df_diff_wanglai: pd.DataFrame,
 ) -> pd.DataFrame:
-    """往来余额三向核对（应收 vs 应付），输出差异明细并匹配差异原因。"""
+    """往来余额三向核对（应收 vs 应付），输出差异明细。"""
     df_wanglai = df_raw[df_raw["大类"] == "往来余额"].copy()
 
     # 应付
@@ -293,18 +199,7 @@ def reconcile_wanglai_task(
     out_cols = ["唯一名称", "金额", "往来核对-应付.唯一名称", "往来核对-应付.金额", "差异", "统一日期"]
     df_result = df_result[out_cols].copy()
 
-    # 匹配差异原因
-    if not df_diff_wanglai.empty:
-        df_result["差异"] = df_result["差异"].round(2)
-        join_cols = [c for c in out_cols if c in df_diff_wanglai.columns]
-        for col in ["唯一名称", "往来核对-应付.唯一名称"]:
-            if col in join_cols:
-                df_result[col] = df_result[col].fillna("").astype(str).str.strip()
-                df_diff_wanglai[col] = df_diff_wanglai[col].fillna("").astype(str).str.strip()
-        df_final = pd.merge(df_result, df_diff_wanglai, on=join_cols, how="left")
-    else:
-        df_final = df_result
-        df_final["差异原因"] = None
+    df_final = df_result.copy()
 
     if not df_final.empty:
         # 清除完全空的行或者没有唯一名称及差异的空行
@@ -327,9 +222,8 @@ def reconcile_wanglai_task(
 @task(name="reconcile_sales_purchases", log_prints=True)
 def process_sales_purchases_task(
     df_raw: pd.DataFrame,
-    df_diff_xiaoshou: pd.DataFrame,
 ) -> pd.DataFrame:
-    """销售 vs 采购发生额核对，输出差异明细并匹配差异原因。"""
+    """销售 vs 采购发生额核对，输出差异明细。"""
     df_sales = df_raw[df_raw["大类"] == "销售发生额"].copy()
     df_sales_grouped = (
         df_sales.groupby(["公司简称", "对方简称", "日期"], dropna=False)["金额"].sum().reset_index()
@@ -368,17 +262,7 @@ def process_sales_purchases_task(
             df_result[c] = None
     df_result = df_result[out_cols].copy()
 
-    if not df_diff_xiaoshou.empty:
-        df_result["计算差异"] = df_result["计算差异"].round(2)
-        join_cols = [c for c in out_cols if c in df_diff_xiaoshou.columns]
-        for col in ["公司简称", "对方简称", "采购核对.公司简称", "采购核对.对方简称"]:
-            if col in join_cols:
-                df_result[col] = df_result[col].fillna("").astype(str).str.strip()
-                df_diff_xiaoshou[col] = df_diff_xiaoshou[col].fillna("").astype(str).str.strip()
-        df_final = pd.merge(df_result, df_diff_xiaoshou, on=join_cols, how="left")
-    else:
-        df_final = df_result
-        df_final["差异原因"] = None
+    df_final = df_result.copy()
 
     if not df_final.empty:
         # 清除公司简称和对方简称全空的无效合并行
@@ -404,9 +288,8 @@ def process_sales_purchases_task(
 def process_cashflow_task(
     df_raw: pd.DataFrame,
     df_params: pd.DataFrame,
-    df_diff_xianjinliu: pd.DataFrame,
 ) -> pd.DataFrame:
-    """现金流量收入 vs 支付核对，输出差异明细并匹配差异原因。"""
+    """现金流量收入 vs 支付核对，输出差异明细。"""
     df_cash = df_raw[df_raw["大类"] == "现金流量"].copy()
 
     pay_subjects = [
@@ -465,17 +348,7 @@ def process_cashflow_task(
     out_cols = ["唯一名称", "金额", "现金流量-支付.唯一名称", "现金流量-支付.金额", "差额", "唯一日期"]
     df_result = df_result[out_cols].copy()
 
-    if not df_diff_xianjinliu.empty:
-        df_result["差额"] = df_result["差额"].round(2)
-        join_cols = [c for c in out_cols if c in df_diff_xianjinliu.columns]
-        for col in ["唯一名称", "现金流量-支付.唯一名称"]:
-            if col in join_cols:
-                df_result[col] = df_result[col].fillna("").astype(str).str.strip()
-                df_diff_xianjinliu[col] = df_diff_xianjinliu[col].fillna("").astype(str).str.strip()
-        df_final = pd.merge(df_result, df_diff_xianjinliu, on=join_cols, how="left")
-    else:
-        df_final = df_result
-        df_final["差异原因"] = None
+    df_final = df_result.copy()
 
     if not df_final.empty:
         # 清除名字完全为空的行
@@ -503,6 +376,50 @@ def _format_dates(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _inherit_diff_reasons(
+    df_new: pd.DataFrame,
+    df_old: pd.DataFrame,
+    join_keys: list,
+) -> pd.DataFrame:
+    """
+    将新结果左连接老结果，继承差异原因。
+    对于新结果中存在的记录，如果在老结果中也存在，保留老结果中的差异原因。
+    """
+    if df_old.empty or "差异原因" not in df_old.columns:
+        if "差异原因" not in df_new.columns:
+            df_new["差异原因"] = None
+        return df_new
+
+    # 老结果中只保留连接键和差异原因，避免列名冲突
+    df_old_reason = df_old[join_keys + ["差异原因"]].copy()
+
+    # 为确保 NaN 能够正确匹配，将连接键中的 NaN 替换为特殊标记
+    for key in join_keys:
+        if key in df_new.columns:
+            df_new[key] = df_new[key].fillna("__NULL_PLACEHOLDER__")
+        if key in df_old_reason.columns:
+            df_old_reason[key] = df_old_reason[key].fillna("__NULL_PLACEHOLDER__")
+
+    # 新结果左连接老结果
+    df_merged = pd.merge(df_new, df_old_reason, on=join_keys, how="left", suffixes=("", "_old"))
+
+    # 恢复 NaN
+    for key in join_keys:
+        if key in df_merged.columns:
+            df_merged[key] = df_merged[key].replace("__NULL_PLACEHOLDER__", pd.NA)
+
+    # 使用旧的差异原因（如果存在）
+    if "差异原因_old" in df_merged.columns:
+        df_merged["差异原因"] = df_merged["差异原因_old"]
+        df_merged = df_merged.drop(columns=["差异原因_old"])
+
+    # 确保有差异原因列
+    if "差异原因" not in df_merged.columns:
+        df_merged["差异原因"] = None
+
+    return df_merged
+
+
 @task(name="save_recon_results", log_prints=True)
 def save_recon_results_task(
     res_wanglai: pd.DataFrame,
@@ -512,6 +429,7 @@ def save_recon_results_task(
 ) -> str:
     """
     将三类对账结果写入 PostgreSQL（三张结果表）并同时导出备份 Excel。
+    差异原因采用增量更新：新结果左连接老结果，保留已有的差异原因。
 
     目标表：
       - recon_result_wanglai   往来差异
@@ -551,32 +469,58 @@ def save_recon_results_task(
         last = today.replace(day=1) - timedelta(days=1)
         month_label = last.strftime("%Y%m")
 
-    # 写入 PostgreSQL（读取旧表 → 剔除目标月 → 合并新结果 → 整体回写）
     engine = engine_to_db()
     year_month_prefix = f"{month_label[:4]}-{month_label[4:]}"  # e.g. "2026-02"
 
-    result_tables = [
-        ("recon_result_wanglai", res_wanglai),
-        ("recon_result_sales", res_transaction),
-        ("recon_result_cashflow", res_cashflow),
+    # 定义每个结果表的配置：(表名, 数据, 连接键, 日期列名)
+    table_configs = [
+        (
+            "recon_result_wanglai",
+            res_wanglai,
+            ["唯一名称", "往来核对-应付.唯一名称", "统一日期"],
+            "统一日期",
+        ),
+        (
+            "recon_result_sales",
+            res_transaction,
+            ["公司简称", "对方简称", "采购核对.公司简称", "采购核对.对方简称", "唯一日期"],
+            "唯一日期",
+        ),
+        (
+            "recon_result_cashflow",
+            res_cashflow,
+            ["唯一名称", "现金流量-支付.唯一名称", "唯一日期"],
+            "唯一日期",
+        ),
     ]
-    for table_name, df_new in result_tables:
+
+    for table_name, df_new, join_keys, date_col in table_configs:
         try:
-            # 找日期列（用于过滤旧数据）
-            date_cols = [c for c in df_new.columns if "日期" in c]
+            # 确保新结果有差异原因列
+            if "差异原因" not in df_new.columns:
+                df_new["差异原因"] = None
 
             table_exists = False
-            # 尝试读取已有数据（表不存在则直接跳过）
             try:
                 df_existing = pd.read_sql(f"SELECT * FROM {table_name}", con=engine)
                 table_exists = True
-                # 剔除本月旧数据
-                if date_cols and not df_existing.empty:
-                    dc = date_cols[0]
-                    df_existing[dc] = df_existing[dc].astype(str)
-                    df_existing = df_existing[~df_existing[dc].str.startswith(year_month_prefix)]
-                # 合并旧数据（其他月份）+ 本月新数据
-                df_write = pd.concat([df_existing, df_new], ignore_index=True)
+
+                # 分离本月数据和非本月数据
+                df_existing_month = pd.DataFrame()
+                df_existing_other = pd.DataFrame()
+
+                if not df_existing.empty and date_col in df_existing.columns:
+                    df_existing[date_col] = df_existing[date_col].astype(str)
+                    month_mask = df_existing[date_col].str.startswith(year_month_prefix)
+                    df_existing_month = df_existing[month_mask].copy()
+                    df_existing_other = df_existing[~month_mask].copy()
+
+                # 新结果左连接老的本月数据，继承差异原因
+                if not df_existing_month.empty:
+                    df_new = _inherit_diff_reasons(df_new, df_existing_month, join_keys)
+
+                # 合并非本月旧数据 + 新结果
+                df_write = pd.concat([df_existing_other, df_new], ignore_index=True)
             except Exception:
                 # 表不存在，直接写新数据
                 df_write = df_new.copy()
@@ -589,6 +533,7 @@ def save_recon_results_task(
             else:
                 # 表不存在：直接创建
                 df_write.to_sql(table_name, con=engine, if_exists="replace", index=False)
+
             print(f"--> 写入 {table_name} 完成（本月新数据 {len(df_new)} 条，合计 {len(df_write)} 条）")
         except Exception as e:
             print(f"[WARN] 写入 {table_name} 失败: {e}，继续输出 Excel")

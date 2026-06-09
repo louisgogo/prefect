@@ -1,4 +1,4 @@
-"""FONE 往来对账子流程
+"""从 FONE 获取往来数据子流程
 
 通过 FONE API 触发 ERP 科目余额表获取及 BI 内部关联方数据推送脚本。
 默认处理"上个自然月"数据，也可通过 year/month 参数指定。
@@ -37,7 +37,7 @@ def fone_recon_flow(
     month: Optional[int] = None,
 ) -> None:
     """
-    FONE 往来对账流程：调用 FONE API 执行 0501 脚本。
+    从 FONE 获取往来数据流程：调用 FONE API 执行 0501 脚本。
 
     Args:
         year: 目标年份，不填则使用上个自然年（若上个月为12月）或当前年。
@@ -50,7 +50,7 @@ def fone_recon_flow(
       4. 校验脚本执行结果，失败则抛出异常
     """
     print("=" * 60)
-    print("FONE 往来对账流程启动")
+    print("从 FONE 获取往来数据流程启动")
     print("=" * 60)
 
     # 计算默认年月
@@ -71,7 +71,7 @@ def fone_recon_flow(
     ticket = login_result["ticket"]
 
     # Step 2: 执行脚本
-    print("\n【步骤2】执行 FONE 往来对账脚本...")
+    print("\n【步骤2】执行从 FONE 获取往来数据脚本...")
     result = execute_fone_recon_script_task(
         ticket=ticket,
         start_date=start_date,
@@ -79,7 +79,7 @@ def fone_recon_flow(
     )
 
     print("\n" + "=" * 60)
-    print("FONE 往来对账流程完成！")
+    print("从 FONE 获取往来数据流程完成！")
     print(f"  脚本状态: {result['script_status']}")
     print(f"  控制台日志: {len(result['console_logs'])} 条")
     print("=" * 60)

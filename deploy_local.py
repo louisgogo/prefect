@@ -155,9 +155,9 @@ def deploy_budget_update_flow():
 
 
 def deploy_fone_recon_flow():
-    """部署 FONE 往来对账流程"""
+    """部署从 FONE 获取往来数据流程"""
     print("=" * 60)
-    print("FONE 往来对账流程 - 本地测试部署")
+    print("从 FONE 获取往来数据流程 - 本地测试部署")
     print("=" * 60)
 
     print("说明：请在 UI 中手动输入参数（或使用默认值）")
@@ -166,7 +166,7 @@ def deploy_fone_recon_flow():
     print("  - month: 目标月份（1-12），不填则使用上个自然月")
 
     fone_recon_flow.serve(
-        name="FONE往来对账流程-本地测试",
+        name="从FONE获取往来数据流程-本地测试",
         tags=["本地测试", "往来对账", "FONE", "月度任务"],
         description="本地测试用：调用 FONE API 执行 0501 脚本，获取 ERP 科目余额表并推送 BI 内部关联方数据。",
     )
