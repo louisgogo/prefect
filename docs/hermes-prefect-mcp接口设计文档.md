@@ -1,446 +1,166 @@
-# Hermes-Prefect MCP 接口设计文档
+# Hermes-Prefect 对接文档（Webhook 推送模式）
 
 ## 1. 概述
 
 本文档定义 Hermes（AI Agent 系统）与 Prefect 工作流编排平台的对接规范。
 
-- **Prefect Server 地址**: `http://10.18.8.191:4200`
-- **Prefect API 地址**: `http://10.18.8.191:4200/api`
-- **通信协议**: HTTP REST + SSE（Server-Sent Events）
+**当前主推方案：Webhook 推送模式**
+- Prefect flow 执行完成后，主动通过 HTTP POST 将结果和日志推送到 Hermes
+- Hermes 只需提供一个接收端点，无需轮询 Prefect API
+- 用户触发流程后，Hermes 可**秒级回复**"已启动"，结果异步送达
+
+**环境信息**:
+- **Prefect Server**: `http://10.18.8.191:4200`
+- **Prefect API**: `http://10.18.8.191:4200/api`
 - **数据格式**: JSON
 
 ---
 
-## 2. 认证方式
+## 2. Hermes 需要做什么
 
-Prefect 2.x 开源版默认**无认证**（若启用 Basic Auth 则按实际配置）。
+### 2.1 提供 Webhook 接收端点
+
+Hermes 需要暴露一个 HTTP POST 接口，供 Prefect 调用：
 
 ```
-# 默认请求头
+POST https://hermes.your-domain.com/api/callbacks/prefect
+```
+
+**请求头**:
+```
 Content-Type: application/json
+Authorization: Bearer <HERMES_WEBHOOK_SECRET>   # 若配置了密钥
 ```
 
-若后续启用 API Key：
-```
-Authorization: Bearer <PREFECT_API_KEY>
-```
-
----
-
-## 3. 核心接口清单
-
-### 3.1 列出所有 Deployments
-
-**用途**: Hermes 向用户展示当前可用的流程列表。
-
-```http
-GET /api/deployments/filter
-```
-
-**请求体**:
+**请求体示例（completed 事件）**:
 ```json
 {
-  "sort": "CREATED_DESC",
-  "limit": 100,
-  "offset": 0
-}
-```
-
-**响应**:
-```json
-[
-  {
-    "id": "uuid",
-    "name": "主流程-业务线损益计算",
-    "flow_id": "uuid",
-    "tags": ["业务线核算", "月度任务"],
-    "parameters": {"year": 2025, "months": [1,2,3]},
-    "description": "业务线损益计算流程...",
-    "is_schedule_active": true,
-    "created": "2025-01-01T00:00:00Z"
-  }
-]
-```
-
-**关键字段说明**:
-| 字段 | 说明 |
-|------|------|
-| `id` | Deployment UUID，触发流程时需要 |
-| `name` | 展示名称 |
-| `parameters` | 默认参数，触发时可覆盖 |
-| `tags` | 分类标签 |
-
----
-
-### 3.2 获取单个 Deployment 详情
-
-**用途**: 查看某个流程的详细参数定义。
-
-```http
-POST /api/deployments/{deployment_id}
-```
-
-**响应**: 同 3.1 的单条数据结构，额外包含 `parameter_openapi_schema`（参数校验 schema）。
-
----
-
-### 3.3 触发 Flow Run（同步等待/异步触发）
-
-**用途**: Hermes 代表用户执行某个流程。
-
-```http
-POST /api/deployments/{deployment_id}/create_flow_run
-```
-
-**请求体**:
-```json
-{
-  "name": "hermes-triggered-20250609",
-  "parameters": {
-    "year": 2025,
-    "month": 5
-  },
-  "tags": ["hermes", "user-request"],
-  "idempotency_key": "unique-key-from-hermes"
-}
-```
-
-**响应**:
-```json
-{
-  "id": "da4bad4b-f3f3-48f3-b912-abb145f6930e",
-  "flow_id": "uuid",
+  "event": "completed",
+  "flow_run_id": "da4bad4b-f3f3-48f3-b912-abb145f6930e",
+  "flow_run_name": "主流程-往来对账",
   "deployment_id": "uuid",
-  "name": "hermes-triggered-20250609",
-  "state": {
-    "id": "uuid",
-    "type": "SCHEDULED",
-    "name": "Scheduled",
-    "message": null
+  "flow_name": "往来对账",
+  "timestamp": "2026-06-09T09:38:46Z",
+  "payload": {
+    "target_date": "2026-05-01",
+    "output_path": "/mnt/xgd_share/10-内部往来对账/5-对账结果/核对结果_202605.xlsx",
+    "wanglai_count": 42,
+    "transaction_count": 0,
+    "cashflow_count": 3,
+    "summary": "往来差异 42 条，销售/采购差异 0 条，现金流差异 3 条"
   },
-  "parameters": {"year": 2025, "month": 5},
-  "tags": ["hermes", "user-request"],
-  "created": "2026-06-09T09:30:00Z"
+  "logs": [
+    {"timestamp": "2026-06-09T09:30:43Z", "level": "INFO", "message": "往来对账流程启动，目标月份: 2026-05-01"},
+    {"timestamp": "2026-06-09T09:38:45Z", "level": "INFO", "message": "【阶段2】完成对账核对..."},
+    {"timestamp": "2026-06-09T09:38:46Z", "level": "WARN", "message": "[WARN] 写入 recon_result_wanglai 失败: ..."},
+    {"timestamp": "2026-06-09T09:38:46Z", "level": "INFO", "message": "--> Excel 已导出至: /mnt/xgd_share/..."}
+  ]
 }
 ```
 
-**必须保存的字段**: `id`（flow_run_id，后续查询状态和回调都需要）。
-
----
-
-### 3.4 查询 Flow Run 状态
-
-**用途**: 轮询或回调后确认流程当前状态。
-
-```http
-GET /api/flow_runs/{flow_run_id}
-```
-
-**响应**:
+**请求体示例（failed 事件）**:
 ```json
 {
-  "id": "da4bad4b-f3f3-48f3-b912-abb145f6930e",
-  "name": "hermes-triggered-20250609",
-  "state": {
-    "type": "COMPLETED",
-    "name": "Completed",
-    "message": "Finished in state Completed()",
-    "timestamp": "2026-06-09T09:38:46Z"
+  "event": "failed",
+  "flow_run_id": "da4bad4b-f3f3-48f3-b912-abb145f6930e",
+  "flow_run_name": "主流程-往来对账",
+  "deployment_id": "uuid",
+  "flow_name": "往来对账",
+  "timestamp": "2026-06-09T09:30:00Z",
+  "payload": {
+    "target_date": "2026-05-01",
+    "error": "阶段1失败，写库错误: connection timeout",
+    "error_type": "RuntimeError"
   },
-  "flow_version": "1.0",
-  "start_time": "2026-06-09T09:30:43Z",
-  "end_time": "2026-06-09T09:38:46Z",
-  "total_run_time": 483.0,
-  "estimated_run_time": 483.0
+  "logs": [
+    {"timestamp": "2026-06-09T09:30:43Z", "level": "INFO", "message": "往来对账流程启动..."},
+    {"timestamp": "2026-06-09T09:31:05Z", "level": "ERROR", "message": "insert_recon_data_task 失败: connection timeout"}
+  ]
 }
 ```
 
-**状态机**:
-```
-SCHEDULED -> RUNNING -> COMPLETED
-                      -> FAILED
-                      -> CANCELLED
-                      -> CRASHED
-```
-
----
-
-### 3.5 获取 Flow Run 日志
-
-**用途**: 向用户展示执行详情或排查问题。
-
-```http
-POST /api/logs/filter
-```
-
-**请求体**:
+**请求体示例（started 事件）**:
 ```json
 {
-  "logs": {
-    "flow_run_id": {
-      "any_": ["da4bad4b-f3f3-48f3-b912-abb145f6930e"]
-    }
-  },
-  "sort": "TIMESTAMP_ASC",
-  "limit": 500
+  "event": "started",
+  "flow_run_id": "da4bad4b-f3f3-48f3-b912-abb145f6930e",
+  "flow_run_name": "主流程-往来对账",
+  "deployment_id": "uuid",
+  "flow_name": "往来对账",
+  "timestamp": "2026-06-09T09:30:00Z",
+  "payload": {},
+  "logs": []
 }
 ```
 
-**响应**:
-```json
-[
-  {
-    "id": "uuid",
-    "created": "2026-06-09T09:38:46Z",
-    "updated": "2026-06-09T09:38:46Z",
-    "name": "save_recon_results",
-    "level": 20,
-    "message": "--> Excel 已导出至: /mnt/xgd_share/...",
-    "timestamp": "2026-06-09T09:38:46Z",
-    "flow_run_id": "da4bad4b-f3f3-48f3-b912-abb145f6930e",
-    "task_run_id": "6eb...",
-    "logger_name": "prefect.task_runs"
-  }
-]
-```
-
-**日志级别说明**: `10=DEBUG, 20=INFO, 30=WARNING, 40=ERROR, 50=CRITICAL`
-
----
-
-### 3.6 获取 Task Runs 列表
-
-**用途**: 查看流程中各任务的执行状态。
-
-```http
-POST /api/task_runs/filter
-```
-
-**请求体**:
-```json
-{
-  "task_runs": {
-    "flow_run_id": {
-      "any_": ["da4bad4b-f3f3-48f3-b912-abb145f6930e"]
-    }
-  },
-  "sort": "EXPECTED_START_TIME_ASC"
-}
-```
-
-**响应**:
-```json
-[
-  {
-    "id": "uuid",
-    "name": "save_recon_results-6eb",
-    "state": {"type": "COMPLETED", "name": "Completed"},
-    "expected_start_time": "2026-06-09T09:30:46Z",
-    "start_time": "2026-06-09T09:30:46Z",
-    "end_time": "2026-06-09T09:38:46Z",
-    "total_run_time": 480.0
-  }
-]
-```
-
----
-
-### 3.7 取消 Flow Run
-
-**用途**: 用户要求停止正在执行的流程。
-
-```http
-POST /api/flow_runs/{flow_run_id}/set_state
-```
-
-**请求体**:
-```json
-{
-  "state": {
-    "type": "CANCELLED",
-    "name": "Cancelled",
-    "message": "Cancelled by Hermes user request"
-  },
-  "force": true
-}
-```
-
----
-
-### 3.8 列出最近执行的 Flow Runs
-
-**用途**: 查看历史执行记录。
-
-```http
-POST /api/flow_runs/filter
-```
-
-**请求体**:
-```json
-{
-  "flow_runs": {},
-  "sort": "START_TIME_DESC",
-  "limit": 20
-}
-```
-
-可按 deployment 过滤：
-```json
-{
-  "flow_runs": {
-    "deployment_id": {"any_": ["deployment-uuid"]}
-  },
-  "sort": "START_TIME_DESC",
-  "limit": 10
-}
-```
-
----
-
-## 4. 回调方案设计（Prefect -> Hermes）
-
-Prefect 开源版没有内置 Webhook 通知机制，因此采用以下方案：
-
-### 方案 A：轮询 + SSE 推送（推荐）
-
-**架构**:
-```
-Hermes 触发 Flow -> 保存 flow_run_id -> 后台轮询 Prefect API
-                              |
-                     状态变更时通过 SSE 推送给前端/用户
-```
-
-**实现步骤**:
-1. Hermes 调用 `POST /api/deployments/{id}/create_flow_run`
-2. 保存返回的 `flow_run_id`
-3. Hermes 后台任务每 5-10 秒调用 `GET /api/flow_runs/{flow_run_id}`
-4. 检测到状态变为 `COMPLETED` / `FAILED` / `CRASHED` / `CANCELLED` 时停止轮询
-5. 若完成，再调用 `POST /api/logs/filter` 获取关键日志反馈给用户
-
-**轮询终止条件**:
-- 状态为终态（`COMPLETED`, `FAILED`, `CRASHED`, `CANCELLED`）
-- 轮询超过最大超时（如 30 分钟）
-
-**伪代码**:
-```python
-async def poll_flow_run(flow_run_id: str, callback_fn):
-    while True:
-        run = await get_flow_run(flow_run_id)
-        state = run["state"]["type"]
-
-        if state in ("COMPLETED", "FAILED", "CRASHED", "CANCELLED"):
-            logs = await get_flow_logs(flow_run_id)
-            callback_fn(state=state, logs=logs, run=run)
-            break
-
-        await asyncio.sleep(5)
-```
-
----
-
-### 方案 B：Flow 内嵌 Webhook Task（侵入式）
-
-在 Prefect flow 代码中，于开始和结束位置添加回调 Task：
+### 2.2 Hermes 端处理逻辑建议
 
 ```python
-import httpx
-from prefect import task
+@app.post("/api/callbacks/prefect")
+async def handle_prefect_webhook(request: Request):
+    body = await request.json()
+    event = body["event"]
+    flow_run_id = body["flow_run_id"]
+    flow_name = body["flow_name"]
+    payload = body.get("payload", {})
+    logs = body.get("logs", [])
 
-@task
-async def notify_hermes(event: str, payload: dict):
-    """通知 Hermes 系统"""
-    async with httpx.AsyncClient() as client:
-        await client.post(
-            "https://hermes.example.com/api/callbacks/prefect",
-            json={
-                "event": event,          # "started" | "completed" | "failed"
-                "flow_run_id": payload["flow_run_id"],
-                "deployment_name": payload["deployment_name"],
-                "result": payload.get("result"),
-                "logs_summary": payload.get("logs_summary")
-            },
-            headers={"Authorization": "Bearer <HERMES_CALLBACK_SECRET>"},
-            timeout=30.0
-        )
+    if event == "started":
+        # 可选：记录"正在执行中"状态
+        update_task_status(flow_run_id, status="running")
+
+    elif event == "completed":
+        summary = payload.get("summary", "流程执行完成")
+        output_path = payload.get("output_path")
+        # 提取关键日志中的 WARN/ERROR 提示用户
+        warnings = [log for log in logs if log["level"] in ("WARN", "ERROR")]
+        message = f"{flow_name} 执行完成\n{summary}"
+        if output_path:
+            message += f"\n导出文件: {output_path}"
+        if warnings:
+            message += f"\n注意: 执行过程中有 {len(warnings)} 条警告"
+        push_to_user(flow_run_id, message)
+        update_task_status(flow_run_id, status="completed", result=payload)
+
+    elif event == "failed":
+        error = payload.get("error", "未知错误")
+        # 从日志中提取 ERROR 级别的最后一条
+        error_logs = [log for log in logs if log["level"] == "ERROR"]
+        last_error = error_logs[-1]["message"] if error_logs else error
+        message = f"{flow_name} 执行失败\n错误: {error}\n最后异常: {last_error}"
+        push_to_user(flow_run_id, message)
+        update_task_status(flow_run_id, status="failed", error=error)
+
+    return {"status": "ok"}
 ```
 
-**优点**: 实时性好，无需轮询。
-**缺点**: 需要修改每个 flow 的代码；若 Hermes 不可达，回调丢失。
+### 2.3 配置对接
 
-**适用场景**: 对实时性要求极高的场景，且能接受维护 flow 代码中的回调逻辑。
+将以下信息提供给 Prefect 维护方：
 
----
+| 配置项 | 说明 | 示例 |
+|--------|------|------|
+| `HERMES_WEBHOOK_URL` | Hermes 接收端点 | `https://hermes.internal/api/callbacks/prefect` |
+| `HERMES_WEBHOOK_SECRET` | 认证密钥（可选） | `prefect-secret-2026` |
 
-### 方案 C：数据库事件表（可靠但延迟）
-
-Hermes 在触发 flow 时，在共享数据库中写入一条"执行请求"记录：
-
-```sql
-CREATE TABLE hermes_flow_requests (
-    id SERIAL PRIMARY KEY,
-    flow_run_id UUID,
-    deployment_name VARCHAR,
-    status VARCHAR DEFAULT 'pending',
-    callback_url VARCHAR,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-然后在 Prefect flow 的最后一步，更新此表状态，Hermes 通过监听数据库变更（或轮询）获取结果。
-
-**优点**: 可靠性高，不依赖网络回调可达性。
-**缺点**: 需要 Prefect 和 Hermes 共用数据库或数据库可互相访问。
+Prefect 维护方将在服务器环境变量中配置，重启后生效。
 
 ---
 
-## 5. 错误处理规范
+## 3. 已接入 Webhook 的流程清单
 
-### 5.1 Prefect API 错误码
+| Deployment Name | 功能 | 典型 payload 字段 | webhook 状态 |
+|----------------|------|------------------|-------------|
+| `主流程-往来对账` | 内部往来对账 | `output_path`, `wanglai_count`, `transaction_count`, `cashflow_count`, `summary` | **已接入** |
+| 其他流程 | ... | ... | 暂未接入 |
 
-| HTTP 状态 | 场景 | Hermes 处理建议 |
-|-----------|------|----------------|
-| 404 | Deployment 不存在 | 提示用户流程名称可能已变更，建议刷新列表 |
-| 409 | Idempotency Key 冲突 | 直接返回已存在的 flow_run_id |
-| 422 | 参数校验失败 | 提取 `detail` 中的字段错误，提示用户修正参数 |
-| 500 | Prefect Server 内部错误 | 重试一次，仍失败则通知管理员 |
-| 503 | Prefect Server 未启动 | 提示用户服务暂时不可用 |
-
-### 5.2 Flow Run 失败处理
-
-当 `state.type` 为 `FAILED` 或 `CRASHED`：
-1. 调用 `POST /api/logs/filter` 获取 ERROR/WARNING 级别日志
-2. 提取最后 20 条日志作为错误摘要
-3. 向用户展示摘要，并提供"重新执行"选项
+> 当前仅 `recon_flow`（往来对账）作为试点接入了 webhook。其他流程如需接入，请联系 Prefect 维护方。
 
 ---
 
-## 6. 当前可用 Deployment 清单（参考）
+## 4. 完整交互流程示例
 
-基于 `deploy_to_server.py`，当前注册的 deployments 如下：
-
-| Deployment Name | 功能 | 典型参数 | 执行时长 |
-|----------------|------|---------|---------|
-| `主流程-业务线损益计算` | 核心损益计算 | `year`, `months` | ~10-30 min |
-| `主流程-综合比例年底重算` | 综合比例计算 | `year`, `month` | ~5-10 min |
-| `主流程-数据导入` | Excel 数据导入 | `year`, `month`, `replace_existing` | ~5 min |
-| `主流程-AI数据ETL` | AI 平台数据视图 | `type` | ~5 min |
-| `主流程-预算更新` | FONE 预算拉取 | `report_date`, `version` | ~5 min |
-| `主流程-往来对账` | 内部往来对账 | （自动取上月） | ~5-10 min |
-| `主流程-业务线Staging抽取` | EAV 格式抽取 | （自动取上月） | ~5 min |
-| `主流程-数据库视图更新` | 中文视图刷新 | `skip_fone_grant` | ~2 min |
-| `子流程-利润表刷新` | 利润表重算 | （无参，处理所有月） | ~10 min |
-| `子流程-拉取预算综合比例` | 预算比例同步 | （自动日期） | ~2 min |
-| `子流程-FONE往来对账` | FONE API 对账 | `year`, `month` | ~5 min |
-| `子流程-利润表收集汇总` | 报表收集 | （默认上月） | ~5 min |
-
-**注意**: 实际部署名称以 Prefect UI 或 API 返回为准。
-
----
-
-## 7. 示例：完整交互流程
-
-### 7.1 用户说"帮我执行上个月的往来对账"
+### 4.1 用户说"帮我执行上个月的往来对账"
 
 ```
 1. Hermes 调用 POST /api/deployments/filter
@@ -450,42 +170,136 @@ CREATE TABLE hermes_flow_requests (
    -> 参数可留空（flow 会自动取上月）
    -> 获得 flow_run_id = "abc-123"
 
-3. Hermes 回复用户：
-   "已启动往来对账流程（Run ID: abc-123），预计 5-10 分钟完成。"
+3. Hermes **秒级回复用户**：
+   "已启动往来对账流程（Run ID: abc-123），完成后会通知您。"
 
-4. Hermes 后台轮询 GET /api/flow_runs/abc-123
-
-5. 状态变为 COMPLETED 后：
-   -> 调用 POST /api/logs/filter 获取关键日志
-   -> 提取 "--> Excel 已导出至: ..." 等摘要
-   -> 回复用户："往来对账完成，结果已导出至 /mnt/xgd_share/..."
+4. [5-10 分钟后]
+   Prefect 执行 completed -> POST Hermes webhook
+   -> Hermes 收到 payload + logs
+   -> Hermes 主动推送给用户：
+   "往来对账执行完成\n往来差异 42 条...\n导出文件: /mnt/xgd_share/..."
 ```
 
-### 7.2 用户说"查看最近的业务线损益计算结果"
+### 4.2 用户说"往来对账执行得怎么样了？"
+
+若 webhook 未收到（或用户中途询问）：
 
 ```
-1. Hermes 调用 POST /api/flow_runs/filter
-   -> 按 deployment_name 过滤 "主流程-业务线损益计算"
-   -> 取最近 3 条记录
-
-2. Hermes 展示：
-   - 2026-06-09 09:00: COMPLETED（耗时 15 分钟）
-   - 2026-06-08 09:00: FAILED（参数错误，year 缺失）
-   - 2026-06-07 09:00: COMPLETED（耗时 12 分钟）
-
-3. 用户可进一步选择某条查看详细日志
+1. Hermes 查询本地记录的 flow_run_id（如 "abc-123"）
+2. 若本地无记录，可调用 GET /api/flow_runs/abc-123 查询 Prefect
+3. 回复用户："当前状态: RUNNING，已运行 3 分钟"
 ```
 
 ---
 
-## 8. 附录：OpenAPI 文档获取
+## 5. Prefect API 参考（辅助查询）
 
-Prefect 自带完整的 OpenAPI/Swagger 文档：
+Webhook 是主通道，但以下 API 仍可供 Hermes 在需要时调用：
+
+### 5.1 列出 Deployments
+
+```http
+POST /api/deployments/filter
+```
+
+用于向用户展示"当前可以执行哪些流程"。
+
+### 5.2 触发 Flow Run
+
+```http
+POST /api/deployments/{deployment_id}/create_flow_run
+```
+
+```json
+{
+  "name": "hermes-triggered-20250609",
+  "parameters": {"year": 2025, "month": 5},
+  "tags": ["hermes", "user-request"]
+}
+```
+
+**响应中的 `id` 字段必须保存**，即 `flow_run_id`。
+
+### 5.3 查询 Flow Run 状态（兜底查询）
+
+```http
+GET /api/flow_runs/{flow_run_id}
+```
+
+状态值：`SCHEDULED` / `RUNNING` / `COMPLETED` / `FAILED` / `CANCELLED` / `CRASHED`
+
+### 5.4 取消 Flow Run
+
+```http
+POST /api/flow_runs/{flow_run_id}/set_state
+```
+
+```json
+{
+  "state": {"type": "CANCELLED", "name": "Cancelled"},
+  "force": true
+}
+```
+
+### 5.5 获取日志（如 webhook 中日志不够详细）
+
+```http
+POST /api/logs/filter
+```
+
+```json
+{
+  "logs": {"flow_run_id": {"any_": ["abc-123"]}},
+  "sort": "TIMESTAMP_ASC",
+  "limit": 500
+}
+```
+
+---
+
+## 6. 错误处理
+
+### 6.1 Prefect API 错误
+
+| HTTP 状态 | 场景 | Hermes 处理 |
+|-----------|------|------------|
+| 404 | Deployment 不存在 | 提示用户流程名称可能已变更 |
+| 422 | 参数校验失败 | 提取字段错误，提示用户修正 |
+| 500 | Prefect Server 错误 | 重试一次，仍失败则通知管理员 |
+
+### 6.2 Webhook 未到达
+
+若 Prefect 执行完成后 Hermes 未收到 webhook：
+1. 检查 Hermes 端点是否可达（Prefect 日志中会记录通知失败）
+2. 使用 `GET /api/flow_runs/{flow_run_id}` 手动查询状态兜底
+3. 检查 `HERMES_WEBHOOK_URL` 环境变量是否配置正确
+
+### 6.3 Flow 执行失败
+
+当收到 `event: failed`：
+1. 从 `payload.error` 获取错误类型
+2. 从 `logs` 中筛选 `level: ERROR` 的日志作为详情
+3. 向用户展示错误摘要，提供"重新执行"选项
+
+---
+
+## 7. 附录
+
+### 7.1 Prefect OpenAPI 文档
 
 ```
 http://10.18.8.191:4200/docs    # Swagger UI
-http://10.18.8.191:4200/redoc   # ReDoc
-http://10.18.8.191:4200/openapi.json  # OpenAPI JSON
+http://10.18.8.191:4200/openapi.json  # OpenAPI JSON（可自动生成客户端）
 ```
 
-可通过 `openapi.json` 自动生成客户端 SDK。
+### 7.2 日志级别对照
+
+| 数值 | 字符串 | 含义 |
+|------|--------|------|
+| 10 | DEBUG | 调试信息 |
+| 20 | INFO | 普通信息 |
+| 30 | WARN | 警告（不影响流程，但需关注） |
+| 40 | ERROR | 错误（可能导致结果不完整） |
+| 50 | CRITICAL | 严重错误 |
+
+Webhook 中附带的是 INFO 及以上级别（>=20）的日志，按时间正序排列。
