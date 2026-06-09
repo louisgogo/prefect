@@ -564,7 +564,10 @@ def save_recon_results_task(
                 else:
                     raise
         except Exception as e:
+            import traceback
+
             print(f"[WARN] 写入 {table_name} 失败: {e}，继续输出 Excel")
+            traceback.print_exc()
 
     # 导出 Excel 备份
     if platform.system() == "Windows":
