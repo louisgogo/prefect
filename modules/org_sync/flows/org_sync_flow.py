@@ -3,6 +3,7 @@
 对比 FONE (XGD_MRPT_ENTITY) 和 mydb (map_org) 的组织架构差异，
 生成差异报告并写入 org_diff_log，帮助维护 map_org 与 dim_org_struc 的一致性。
 """
+
 import os
 import sys
 from typing import Optional
@@ -22,12 +23,27 @@ from ..tasks.org_sync_tasks import (
 )
 
 
+def _print_df_to_logs(title: str, df, max_rows: int = 200) -> None:
+    """将 DataFrame 以文本表格形式打印到日志（供 AI 读取）"""
+    print(f"\n{'='*60}")
+    print(f"【{title}】 共 {len(df)} 条")
+    print("=" * 60)
+    if len(df) == 0:
+        print("(无数据)")
+        return
+    # 限制输出行数，避免日志过大
+    df_out = df.head(max_rows)
+    print(df_out.to_string(index=False))
+    if len(df) > max_rows:
+        print(f"... 省略 {len(df) - max_rows} 条，共 {len(df)} 条")
+
+
 @flow(name="org_sync_flow", log_prints=True)
 def org_sync_flow(
     only_last_stage: bool = True,
     output_dir: Optional[str] = None,
     save_to_db: bool = True,
-    generate_excel: bool = True,
+    generate_excel: bool = False,
 ) -> Optional[str]:
     """
     组织架构同步对比流程
@@ -36,7 +52,7 @@ def org_sync_flow(
         only_last_stage: 是否只对比 LastStage='是' 的组织（默认 True）
         output_dir: Excel 报告输出目录，默认当前工作目录
         save_to_db: 是否将差异写入 mydb.org_diff_log（默认 True）
-        generate_excel: 是否生成 Excel 报告（默认 True）
+        generate_excel: 是否生成 Excel 报告（默认 False）
 
     Returns:
         Excel 报告路径（如果生成），否则 None
@@ -66,19 +82,103 @@ def org_sync_flow(
         print("\n--- 阶段3: unique_lvl 映射分析 ---")
         mapping_df = build_unique_lvl_mapping_task(df_fone=df_fone, df_dim=df_dim)
 
-        # 阶段4: 保存结果
+        # 阶段4: 结构化输出差异到日志（供 AI 直接读取）
+        print("\n--- 阶段4: 差异详情输出到日志 ---")
+        _print_df_to_logs("差异汇总", diff_result["summary"])
+        _print_df_to_logs(
+            "新增组织",
+            (
+                diff_result["added"][
+                    [
+                        "fone_id",
+                        "fone_name",
+                        "fone_path",
+                        "suggested_unique_lvl",
+                        "matched_unique_lvl",
+                        "PrimaryOrganization",
+                        "SecondaryOrganization",
+                        "TertiaryOrganization",
+                        "FourthOrganization",
+                        "BusinessLine",
+                        "LastStage",
+                    ]
+                ]
+                if len(diff_result["added"]) > 0
+                else diff_result["added"]
+            ),
+        )
+        _print_df_to_logs(
+            "层级变更",
+            (
+                diff_result["modified"][
+                    [
+                        "identifier_id",
+                        "fone_name",
+                        "fone_path",
+                        "db_corr_rel",
+                        "unique_lvl",
+                        "PrimaryOrganization",
+                        "SecondaryOrganization",
+                        "TertiaryOrganization",
+                        "FourthOrganization",
+                        "BusinessLine",
+                        "LastStage",
+                    ]
+                ]
+                if len(diff_result["modified"]) > 0
+                else diff_result["modified"]
+            ),
+        )
+        _print_df_to_logs(
+            "停用或缺失",
+            (
+                diff_result["removed"][
+                    [
+                        "identifier_id",
+                        "unique_lvl",
+                        "prim_org",
+                        "sec_org",
+                        "third_org",
+                        "fourth_org",
+                        "db_corr_rel",
+                    ]
+                ]
+                if len(diff_result["removed"]) > 0
+                else diff_result["removed"]
+            ),
+        )
+        _print_df_to_logs(
+            "unique_lvl 映射建议（需关注）",
+            (
+                mapping_df[mapping_df["match_status"].isin(["未匹配", "无建议", "多候选"])][
+                    [
+                        "fone_id",
+                        "fone_name",
+                        "suggested_unique_lvl",
+                        "matched_unique_lvl",
+                        "match_status",
+                        "PrimaryOrganization",
+                        "SecondaryOrganization",
+                        "TertiaryOrganization",
+                    ]
+                ]
+                if len(mapping_df) > 0
+                else mapping_df
+            ),
+        )
+
+        # 阶段5: 保存结果
         report_path = None
         if save_to_db:
-            print("\n--- 阶段4a: 写入数据库 ---")
+            print("\n--- 阶段5a: 写入数据库 ---")
             save_org_diff_to_db_task(diff_result=diff_result)
 
         if generate_excel:
-            print("\n--- 阶段4b: 生成 Excel 报告 ---")
+            print("\n--- 阶段5b: 生成 Excel 报告 ---")
             report_path = generate_org_diff_report_task(
                 diff_result=diff_result,
                 output_dir=output_dir,
             )
-            # 将映射分析也追加到 Excel 的单独 sheet
             if report_path and len(mapping_df) > 0:
                 import pandas as pd
 
