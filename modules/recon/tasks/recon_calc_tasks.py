@@ -11,6 +11,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+from sqlalchemy import text
 
 from prefect import task
 
@@ -107,7 +108,7 @@ def load_recon_raw_task(target_date: Optional[str] = None) -> pd.DataFrame:
 
     try:
         engine = engine_to_db()
-        df_db = pd.read_sql("SELECT * FROM public.excel_account_recon", con=engine)
+        df_db = pd.read_sql(text("SELECT * FROM public.excel_account_recon"), con=engine)
         print(f"--> 从 PostgreSQL 读取 excel_account_recon 共 {len(df_db)} 条")
     except Exception as e:
         print(f"[ERROR] 读取 excel_account_recon 失败: {e}")
@@ -456,7 +457,6 @@ def save_recon_results_task(
     import datetime
 
     from mypackage.utilities import engine_to_db
-    from sqlalchemy import text
 
     # 日期格式化
     res_wanglai = _format_dates(res_wanglai.copy())
@@ -538,7 +538,7 @@ def save_recon_results_task(
                     f"SELECT * FROM {table_name} "
                     f"WHERE {date_col}::text LIKE '{year_month_prefix}%'"
                 )
-                df_existing_month = pd.read_sql(query, con=engine)
+                df_existing_month = pd.read_sql(text(query), con=engine)
 
                 if not df_existing_month.empty:
                     df_new = _inherit_diff_reasons(df_new, df_existing_month, join_keys)
