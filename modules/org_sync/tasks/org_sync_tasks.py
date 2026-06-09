@@ -196,6 +196,10 @@ def compare_org_task(
     df_map["identifier_id"] = df_map["identifier_id"].astype(str).str.strip()
     df_map["db_corr_rel"] = df_map["db_corr_rel"].fillna("").astype(str).str.strip()
 
+    # 排除系统级虚拟组织
+    exclude_ids = {"DEFAULT", "ENONE"}
+    df_fone_active = df_fone_active[~df_fone_active["fone_id"].astype(str).isin(exclude_ids)].copy()
+
     # 构建集合
     fone_ids = set(df_fone_active["fone_id"].astype(str).str.strip())
     map_ids = set(df_map["identifier_id"])
@@ -289,76 +293,6 @@ def generate_org_diff_report_task(
 
     print(f"差异报告已生成: {output_path}")
     return output_path
-
-
-@task(name="save_org_diff_to_db", log_prints=True)
-def save_org_diff_to_db_task(diff_result: Dict[str, Any]) -> None:
-    """将差异写入 mydb.org_diff_log（如果不存在则创建）"""
-    from mypackage.utilities import engine_to_db
-    from sqlalchemy import text
-
-    engine = engine_to_db()
-
-    # 建表（如果不存在）
-    create_sql = """
-    CREATE TABLE IF NOT EXISTS org_diff_log (
-        id SERIAL PRIMARY KEY,
-        diff_type VARCHAR(20) NOT NULL,
-        identifier_id TEXT,
-        fone_name TEXT,
-        fone_path TEXT,
-        db_corr_rel TEXT,
-        matched_db_corr_rel TEXT,
-        match_status TEXT,
-        primary_org TEXT,
-        secondary_org TEXT,
-        tertiary_org TEXT,
-        business_line TEXT,
-        fone_level TEXT,
-        last_stage TEXT,
-        fone_syn_time TIMESTAMP,
-        checked BOOLEAN DEFAULT FALSE,
-        checked_by TEXT,
-        checked_at TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """
-    with engine.begin() as conn:
-        conn.execute(text(create_sql))
-        # 清空当天的旧记录（可选：只保留最新一次运行的结果）
-        conn.execute(text("DELETE FROM org_diff_log WHERE created_at::date = CURRENT_DATE"))
-
-    # 组装写入数据
-    rows = []
-    now = pd.Timestamp.now()
-
-    for _, r in diff_result["added"].iterrows():
-        rows.append(
-            {
-                "diff_type": "新增",
-                "identifier_id": str(r.get("fone_id", "")),
-                "fone_name": str(r.get("fone_name", "")),
-                "fone_path": str(r.get("fone_path", "")),
-                "db_corr_rel": str(r.get("suggested_db_corr_rel", "")),
-                "matched_db_corr_rel": str(r.get("matched_db_corr_rel", "")),
-                "match_status": str(r.get("match_status", "")),
-                "primary_org": str(r.get("lvl1", "")),
-                "secondary_org": str(r.get("lvl2", "")),
-                "tertiary_org": str(r.get("lvl3", "")),
-                "business_line": str(r.get("BusinessLine", "")),
-                "fone_level": str(r.get("Level", "")),
-                "last_stage": str(r.get("LastStage", "")),
-                "fone_syn_time": r.get("FONE_SYN_Time"),
-                "created_at": now,
-            }
-        )
-
-    if rows:
-        df_write = pd.DataFrame(rows)
-        df_write.to_sql("org_diff_log", con=engine, if_exists="append", index=False)
-        print(f"已写入 org_diff_log {len(rows)} 条差异记录")
-    else:
-        print("今日无差异，未写入数据")
 
 
 @task(name="build_db_corr_rel_mapping", log_prints=True)

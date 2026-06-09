@@ -19,7 +19,6 @@ from ..tasks.org_sync_tasks import (
     fetch_fone_org_task,
     fetch_map_org_task,
     generate_org_diff_report_task,
-    save_org_diff_to_db_task,
 )
 
 
@@ -42,7 +41,6 @@ def _print_df_to_logs(title: str, df, max_rows: int = 200) -> None:
 def org_sync_flow(
     only_last_stage: bool = True,
     output_dir: Optional[str] = None,
-    save_to_db: bool = False,
     generate_excel: bool = False,
 ) -> Optional[str]:
     """
@@ -51,7 +49,6 @@ def org_sync_flow(
     Args:
         only_last_stage: 是否只对比 LastStage='是' 的组织（默认 True）
         output_dir: Excel 报告输出目录，默认当前工作目录
-        save_to_db: 是否将差异写入 mydb.org_diff_log（默认 False）
         generate_excel: 是否生成 Excel 报告（默认 False）
 
     Returns:
@@ -129,10 +126,6 @@ def org_sync_flow(
 
         # 阶段5: 保存结果
         report_path = None
-        if save_to_db:
-            print("\n--- 阶段5a: 写入数据库 ---")
-            save_org_diff_to_db_task(diff_result=diff_result)
-
         if generate_excel:
             print("\n--- 阶段5b: 生成 Excel 报告 ---")
             report_path = generate_org_diff_report_task(
