@@ -565,9 +565,11 @@ def save_recon_results_task(
             # 找日期列（用于过滤旧数据）
             date_cols = [c for c in df_new.columns if "日期" in c]
 
+            table_exists = False
             # 尝试读取已有数据（表不存在则直接跳过）
             try:
                 df_existing = pd.read_sql(f"SELECT * FROM {table_name}", con=engine)
+                table_exists = True
                 # 剔除本月旧数据
                 if date_cols and not df_existing.empty:
                     dc = date_cols[0]
@@ -579,7 +581,14 @@ def save_recon_results_task(
                 # 表不存在，直接写新数据
                 df_write = df_new.copy()
 
-            df_write.to_sql(table_name, con=engine, if_exists="replace", index=False)
+            if table_exists:
+                # 表存在：先清空再追加，避免 DROP TABLE 因视图依赖而失败
+                with engine.begin() as conn:
+                    conn.execute(text(f"TRUNCATE TABLE {table_name}"))
+                df_write.to_sql(table_name, con=engine, if_exists="append", index=False)
+            else:
+                # 表不存在：直接创建
+                df_write.to_sql(table_name, con=engine, if_exists="replace", index=False)
             print(f"--> 写入 {table_name} 完成（本月新数据 {len(df_new)} 条，合计 {len(df_write)} 条）")
         except Exception as e:
             print(f"[WARN] 写入 {table_name} 失败: {e}，继续输出 Excel")
