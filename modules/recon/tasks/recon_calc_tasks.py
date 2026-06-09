@@ -393,11 +393,14 @@ def _inherit_diff_reasons(
     # 老结果中只保留连接键和差异原因，避免列名冲突
     df_old_reason = df_old[join_keys + ["差异原因"]].copy()
 
+    # 创建用于 merge 的临时副本，不污染原始 df_new 的列类型
+    df_new_copy = df_new[join_keys].copy()
+
     # 统一转为字符串并处理 NaN/None，避免 float/string 类型不匹配及 NaN != NaN 问题
     for key in join_keys:
-        if key in df_new.columns:
-            df_new[key] = (
-                df_new[key]
+        if key in df_new_copy.columns:
+            df_new_copy[key] = (
+                df_new_copy[key]
                 .astype(str)
                 .replace("nan", "__NULL_PLACEHOLDER__")
                 .replace("None", "__NULL_PLACEHOLDER__")
@@ -411,23 +414,18 @@ def _inherit_diff_reasons(
             )
 
     # 新结果左连接老结果
-    df_merged = pd.merge(df_new, df_old_reason, on=join_keys, how="left", suffixes=("", "_old"))
+    df_merged = pd.merge(
+        df_new_copy, df_old_reason, on=join_keys, how="left", suffixes=("", "_old")
+    )
 
-    # 恢复 NaN
-    for key in join_keys:
-        if key in df_merged.columns:
-            df_merged[key] = df_merged[key].replace("__NULL_PLACEHOLDER__", pd.NA)
-
-    # 使用旧的差异原因（如果存在）
+    # 把差异原因带回原始 df_new
+    df_new = df_new.copy()
     if "差异原因_old" in df_merged.columns:
-        df_merged["差异原因"] = df_merged["差异原因_old"]
-        df_merged = df_merged.drop(columns=["差异原因_old"])
+        df_new["差异原因"] = df_merged["差异原因_old"].values
+    elif "差异原因" not in df_new.columns:
+        df_new["差异原因"] = None
 
-    # 确保有差异原因列
-    if "差异原因" not in df_merged.columns:
-        df_merged["差异原因"] = None
-
-    return df_merged
+    return df_new
 
 
 @task(name="save_recon_results", log_prints=True)
