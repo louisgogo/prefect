@@ -397,22 +397,28 @@ def _inherit_diff_reasons(
     # 创建用于 merge 的临时副本，不污染原始 df_new 的列类型
     df_new_copy = df_new[join_keys].copy()
 
-    # 统一转为字符串并处理 NaN/None，避免 float/string 类型不匹配及 NaN != NaN 问题
+    # 统一转为字符串并处理 NaN/None，避免 float/string/Decimal 类型不匹配及 NaN != NaN 问题
+    # 金额/差异类数值列：先统一转为 float 并保留两位小数，再转字符串，防止 Decimal('100.00') != float('100.0')
+    numeric_key_hints = ("金额", "差异", "差额")
     for key in join_keys:
-        if key in df_new_copy.columns:
-            df_new_copy[key] = (
-                df_new_copy[key]
-                .astype(str)
-                .replace("nan", "__NULL_PLACEHOLDER__")
-                .replace("None", "__NULL_PLACEHOLDER__")
-            )
-        if key in df_old_reason.columns:
-            df_old_reason[key] = (
-                df_old_reason[key]
-                .astype(str)
-                .replace("nan", "__NULL_PLACEHOLDER__")
-                .replace("None", "__NULL_PLACEHOLDER__")
-            )
+        for df_target in (df_new_copy, df_old_reason):
+            if key not in df_target.columns:
+                continue
+            if any(h in key for h in numeric_key_hints):
+                df_target[key] = (
+                    pd.to_numeric(df_target[key], errors="coerce")
+                    .round(2)
+                    .astype(str)
+                    .replace("nan", "__NULL_PLACEHOLDER__")
+                    .replace("None", "__NULL_PLACEHOLDER__")
+                )
+            else:
+                df_target[key] = (
+                    df_target[key]
+                    .astype(str)
+                    .replace("nan", "__NULL_PLACEHOLDER__")
+                    .replace("None", "__NULL_PLACEHOLDER__")
+                )
 
     # 新结果左连接老结果
     df_merged = pd.merge(
@@ -539,6 +545,7 @@ def save_recon_results_task(
                     f"WHERE {date_col}::text LIKE '{year_month_prefix}%'"
                 )
                 df_existing_month = pd.read_sql(text(query), con=engine)
+                df_existing_month = _format_dates(df_existing_month)
 
                 if not df_existing_month.empty:
                     df_new = _inherit_diff_reasons(df_new, df_existing_month, join_keys)
