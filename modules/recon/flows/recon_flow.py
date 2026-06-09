@@ -14,6 +14,7 @@ from prefect import flow
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from ...common.tasks.notify_hermes_task import notify_hermes_task
 from ..tasks.recon_auto_fill_tasks import check_and_fill_recon_data_task
 from ..tasks.recon_calc_tasks import (
     load_mapping_config_task,
@@ -68,112 +69,143 @@ def recon_flow(target_date: Optional[str] = None, use_fone: bool = False) -> Non
     print(f"往来对账流程启动，目标月份: {target_date or '上个自然月（自动计算）'}")
     print("=" * 60)
 
-    # ──── 前置阶段：FONE 数据获取（可选）─────────────────────────────
-    if use_fone:
-        print("\n【前置阶段】触发 FONE 往来对账脚本，获取 ERP 科目余额表...")
-        if target_date:
-            year = int(target_date.split("-")[0])
-            month = int(target_date.split("-")[1])
-            fone_recon_flow(year=year, month=month)
+    # 启动通知 Hermes
+    notify_hermes_task(event="started", flow_name="往来对账")
+
+    try:
+        # ──── 前置阶段：FONE 数据获取（可选）─────────────────────────────
+        if use_fone:
+            print("\n【前置阶段】触发 FONE 往来对账脚本，获取 ERP 科目余额表...")
+            if target_date:
+                year = int(target_date.split("-")[0])
+                month = int(target_date.split("-")[1])
+                fone_recon_flow(year=year, month=month)
+            else:
+                fone_recon_flow()
+            print("【前置阶段】FONE 数据获取完成，继续执行对账流程...")
         else:
-            fone_recon_flow()
-        print("【前置阶段】FONE 数据获取完成，继续执行对账流程...")
-    else:
-        print("\n【前置阶段】跳过 FONE 数据获取（use_fone=False），如需重新拉取请设为 True")
+            print("\n【前置阶段】跳过 FONE 数据获取（use_fone=False），如需重新拉取请设为 True")
 
-    # ──── 阶段0：同步数据源 ───────────────────────────────────
-    print("\n【阶段0】同步数据源（同步目标月份到当前月份之间的文件）...")
-    sync_result = sync_data_source_task(target_date=target_date)
-    if not sync_result.get("success"):
-        print(f"[WARN] 数据源同步异常: {sync_result.get('message')}，继续执行")
-    else:
-        print(f"【阶段0】完成，{sync_result.get('message')}")
+        # ──── 阶段0：同步数据源 ───────────────────────────────────
+        print("\n【阶段0】同步数据源（同步目标月份到当前月份之间的文件）...")
+        sync_result = sync_data_source_task(target_date=target_date)
+        if not sync_result.get("success"):
+            print(f"[WARN] 数据源同步异常: {sync_result.get('message')}，继续执行")
+        else:
+            print(f"【阶段0】完成，{sync_result.get('message')}")
 
-    # ──── 阶段1：数据采集 ────────────────────────────────────
-    print("\n【阶段1】开始数据采集...")
+        # ──── 阶段1：数据采集 ────────────────────────────────────
+        print("\n【阶段1】开始数据采集...")
 
-    # Step 1: 从 MySQL 读取
-    df_mysql = fetch_recon_from_mysql_task(target_date=target_date)
+        # Step 1: 从 MySQL 读取
+        df_mysql = fetch_recon_from_mysql_task(target_date=target_date)
 
-    # Step 2: 从 Excel 扫描（失败不中断）
-    df_excel = collect_recon_from_excel_task(target_date=target_date)
+        # Step 2: 从 Excel 扫描（失败不中断）
+        df_excel = collect_recon_from_excel_task(target_date=target_date)
 
-    # Step 3: 删除旧数据
-    del_result = delete_old_recon_data_task(target_date=target_date)
-    if not del_result.get("success"):
-        print(f"[WARN] 删除旧数据返回异常: {del_result.get('error')}，继续写入")
+        # Step 3: 删除旧数据
+        del_result = delete_old_recon_data_task(target_date=target_date)
+        if not del_result.get("success"):
+            print(f"[WARN] 删除旧数据返回异常: {del_result.get('error')}，继续写入")
 
-    # Step 4: 写入新数据
-    insert_result = insert_recon_data_task(df_mysql=df_mysql, df_excel=df_excel)
-    if not insert_result.get("success"):
-        raise RuntimeError(f"阶段1失败，写库错误: {insert_result.get('error')}")
-    print(f"【阶段1】完成，共写入 {insert_result.get('count', 0)} 条记录")
+        # Step 4: 写入新数据
+        insert_result = insert_recon_data_task(df_mysql=df_mysql, df_excel=df_excel)
+        if not insert_result.get("success"):
+            raise RuntimeError(f"阶段1失败，写库错误: {insert_result.get('error')}")
+        print(f"【阶段1】完成，共写入 {insert_result.get('count', 0)} 条记录")
 
-    # ──── 阶段2：对账核对 ────────────────────────────────────
-    print("\n【阶段2】开始对账核对...")
+        # ──── 阶段2：对账核对 ────────────────────────────────────
+        print("\n【阶段2】开始对账核对...")
 
-    # Step 5: 检测 recon_name 表数据并自动填充
-    auto_fill_result = check_and_fill_recon_data_task(target_date=target_date)
-    if auto_fill_result.get("action") == "filled":
-        print(f"【自动填充】{auto_fill_result.get('message')}")
-    elif auto_fill_result.get("action") == "skipped":
-        print(f"【自动填充】{auto_fill_result.get('message')}")
-    else:
-        print(f"[WARN] 自动填充检测异常: {auto_fill_result.get('message')}")
+        # Step 5: 检测 recon_name 表数据并自动填充
+        auto_fill_result = check_and_fill_recon_data_task(target_date=target_date)
+        if auto_fill_result.get("action") == "filled":
+            print(f"【自动填充】{auto_fill_result.get('message')}")
+        elif auto_fill_result.get("action") == "skipped":
+            print(f"【自动填充】{auto_fill_result.get('message')}")
+        else:
+            print(f"[WARN] 自动填充检测异常: {auto_fill_result.get('message')}")
 
-    # Step 6: 加载映射配置表
-    (
-        df_params,
-        df_diff_wanglai,
-        df_diff_xiaoshou,
-        df_diff_xianjinliu,
-    ) = load_mapping_config_task()
+        # Step 6: 加载映射配置表
+        (
+            df_params,
+            df_diff_wanglai,
+            df_diff_xiaoshou,
+            df_diff_xianjinliu,
+        ) = load_mapping_config_task()
 
-    # Step 7: 读取原始数据
-    df_raw = load_recon_raw_task(target_date=target_date)
+        # Step 7: 读取原始数据
+        df_raw = load_recon_raw_task(target_date=target_date)
 
-    # Step 8: 往来核对
-    res_wanglai = reconcile_wanglai_task(
-        df_raw=df_raw,
-        df_params=df_params,
-        df_diff_wanglai=df_diff_wanglai,
-    )
+        # Step 8: 往来核对
+        res_wanglai = reconcile_wanglai_task(
+            df_raw=df_raw,
+            df_params=df_params,
+            df_diff_wanglai=df_diff_wanglai,
+        )
 
-    # Step 9: 销售/采购核对
-    res_transaction = process_sales_purchases_task(
-        df_raw=df_raw,
-        df_diff_xiaoshou=df_diff_xiaoshou,
-    )
+        # Step 9: 销售/采购核对
+        res_transaction = process_sales_purchases_task(
+            df_raw=df_raw,
+            df_diff_xiaoshou=df_diff_xiaoshou,
+        )
 
-    # Step 10: 现金流核对
-    res_cashflow = process_cashflow_task(
-        df_raw=df_raw,
-        df_params=df_params,
-        df_diff_xianjinliu=df_diff_xianjinliu,
-    )
+        # Step 10: 现金流核对
+        res_cashflow = process_cashflow_task(
+            df_raw=df_raw,
+            df_params=df_params,
+            df_diff_xianjinliu=df_diff_xianjinliu,
+        )
 
-    # Step 11: 保存结果
-    output_path = save_recon_results_task(
-        res_wanglai=res_wanglai,
-        res_transaction=res_transaction,
-        res_cashflow=res_cashflow,
-        target_date=target_date,
-    )
+        # Step 11: 保存结果
+        output_path = save_recon_results_task(
+            res_wanglai=res_wanglai,
+            res_transaction=res_transaction,
+            res_cashflow=res_cashflow,
+            target_date=target_date,
+        )
 
-    print("\n" + "=" * 60)
-    print("【AI 对账结果分析专用数据源】")
-    print("--- 往来差异 (recon_result_wanglai) ---")
-    print(res_wanglai.to_string(index=False) if not res_wanglai.empty else "无差异")
-    print("\n--- 销售/采购差异 (recon_result_sales) ---")
-    print(res_transaction.to_string(index=False) if not res_transaction.empty else "无差异")
-    print("\n--- 现金流差异 (recon_result_cashflow) ---")
-    print(res_cashflow.to_string(index=False) if not res_cashflow.empty else "无差异")
-    print("=" * 60)
+        print("\n" + "=" * 60)
+        print("【AI 对账结果分析专用数据源】")
+        print("--- 往来差异 (recon_result_wanglai) ---")
+        print(res_wanglai.to_string(index=False) if not res_wanglai.empty else "无差异")
+        print("\n--- 销售/采购差异 (recon_result_sales) ---")
+        print(res_transaction.to_string(index=False) if not res_transaction.empty else "无差异")
+        print("\n--- 现金流差异 (recon_result_cashflow) ---")
+        print(res_cashflow.to_string(index=False) if not res_cashflow.empty else "无差异")
+        print("=" * 60)
 
-    print("\n" + "=" * 60)
-    print(f"往来对账流程全部完成！")
-    print(f"  往来差异:     {len(res_wanglai)} 条")
-    print(f"  销售/采购差异: {len(res_transaction)} 条")
-    print(f"  现金流差异:   {len(res_cashflow)} 条")
-    print(f"  备份 Excel:   {output_path}")
-    print("=" * 60)
+        print("\n" + "=" * 60)
+        print(f"往来对账流程全部完成！")
+        print(f"  往来差异:     {len(res_wanglai)} 条")
+        print(f"  销售/采购差异: {len(res_transaction)} 条")
+        print(f"  现金流差异:   {len(res_cashflow)} 条")
+        print(f"  备份 Excel:   {output_path}")
+        print("=" * 60)
+
+        # 完成通知 Hermes（附带日志摘要）
+        notify_hermes_task(
+            event="completed",
+            flow_name="往来对账",
+            payload={
+                "target_date": target_date,
+                "output_path": output_path,
+                "wanglai_count": len(res_wanglai),
+                "transaction_count": len(res_transaction),
+                "cashflow_count": len(res_cashflow),
+                "summary": f"往来差异 {len(res_wanglai)} 条，销售/采购差异 {len(res_transaction)} 条，现金流差异 {len(res_cashflow)} 条",
+            },
+        )
+
+    except Exception as e:
+        # 失败通知 Hermes（附带错误信息和日志摘要）
+        notify_hermes_task(
+            event="failed",
+            flow_name="往来对账",
+            payload={
+                "target_date": target_date,
+                "error": str(e),
+                "error_type": type(e).__name__,
+            },
+        )
+        raise
