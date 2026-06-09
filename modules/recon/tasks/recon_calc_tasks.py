@@ -426,9 +426,10 @@ def _inherit_diff_reasons(
     )
 
     # 把差异原因带回原始 df_new
+    # 注意：suffixes 只在列名冲突时生效；df_new_copy 不含 差异原因，merge 后列名仍是 差异原因
     df_new = df_new.copy()
-    if "差异原因_old" in df_merged.columns:
-        df_new["差异原因"] = df_merged["差异原因_old"].values
+    if "差异原因" in df_merged.columns:
+        df_new["差异原因"] = df_merged["差异原因"].values
     elif "差异原因" not in df_new.columns:
         df_new["差异原因"] = None
 
