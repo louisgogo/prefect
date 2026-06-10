@@ -53,10 +53,10 @@ def run_revenue_ratio_fill_task(date_range):
                 print(f"  {acct_period}: 两中心收入总和为0，跳过该月。")
                 continue
 
-            intl_rate = float(row["国际业务收入"]) / float(total)
-            domestic_rate = float(row["国内市场收入"]) / float(total)
+            intl_rate = round(float(row["国际业务收入"]) / float(total), 3)
+            domestic_rate = round(float(row["国内市场收入"]) / float(total), 3)
 
-            print(f"  {acct_period}: 国际业务={intl_rate:.4f}, 国内硬件={domestic_rate:.4f}")
+            print(f"  {acct_period}: 国际业务={intl_rate:.3f}, 国内硬件={domestic_rate:.3f}")
 
             # 2. 更新 staging_bus_revenue 中对应组织的业务线比例
             cur.execute(
