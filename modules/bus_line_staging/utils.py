@@ -383,10 +383,12 @@ def insert_to_staging_table(
             existing_cols = [col for col in table_columns if col in final_df.columns]
             final_df = final_df[existing_cols]
 
-            # 对业务线比例列和浮点数金额列四舍五入到3位小数
+            # 业务线比例列四舍五入到2位小数，金额列四舍五入到3位小数
             for col in existing_cols:
-                if col in bus_lines or pd.api.types.is_float_dtype(final_df[col]):
-                    final_df[col] = pd.to_numeric(final_df[col], errors="coerce").round(3)
+                if col in bus_lines:
+                    final_df[col] = pd.to_numeric(final_df[col], errors="coerce").round(2)
+                elif pd.api.types.is_float_dtype(final_df[col]):
+                    final_df[col] = final_df[col].round(3)
 
             # 使用COPY导入数据
             copy_data_to_postgres(final_df, table_name, existing_cols, conn, cur)
