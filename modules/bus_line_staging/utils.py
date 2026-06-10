@@ -384,11 +384,25 @@ def insert_to_staging_table(
             final_df = final_df[existing_cols]
 
             # 业务线比例列四舍五入到2位小数，金额列四舍五入到3位小数
+            bus_line_cols = [col for col in existing_cols if col in bus_lines]
             for col in existing_cols:
                 if col in bus_lines:
                     final_df[col] = pd.to_numeric(final_df[col], errors="coerce").round(2)
                 elif pd.api.types.is_float_dtype(final_df[col]):
                     final_df[col] = final_df[col].round(3)
+
+            # 归一化补偿：确保每行非空业务线比例之和严格等于1
+            if bus_line_cols:
+                row_sums = final_df[bus_line_cols].sum(axis=1, skipna=True)
+                has_bus_line = final_df[bus_line_cols].notna().any(axis=1)
+                diffs = (1.0 - row_sums).round(2)
+                mask = has_bus_line & (diffs != 0)
+                if mask.any():
+                    max_cols = final_df.loc[mask, bus_line_cols].idxmax(axis=1)
+                    for idx in final_df[mask].index:
+                        col = max_cols.loc[idx]
+                        if pd.notna(col):
+                            final_df.at[idx, col] = round(final_df.at[idx, col] + diffs.loc[idx], 2)
 
             # 使用COPY导入数据
             copy_data_to_postgres(final_df, table_name, existing_cols, conn, cur)

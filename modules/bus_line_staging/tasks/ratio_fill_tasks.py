@@ -54,7 +54,7 @@ def run_revenue_ratio_fill_task(date_range):
                 continue
 
             intl_rate = round(float(row["国际业务收入"]) / float(total), 2)
-            domestic_rate = round(float(row["国内市场收入"]) / float(total), 2)
+            domestic_rate = round(1.0 - intl_rate, 2)
 
             print(f"  {acct_period}: 国际业务={intl_rate:.2f}, 国内硬件={domestic_rate:.2f}")
 
