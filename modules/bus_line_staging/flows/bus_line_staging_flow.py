@@ -13,6 +13,12 @@ from ..utils import cleanup_staging_month
 
 @flow(name="业务线数据中间库抽取流程(Staging)", description="将业务线拆分1-4步骤数据以EAV格式打平并存入PostgreSQL系统待填报")
 def bus_line_staging_flow(start_date: str | None = None, end_date: str | None = None):
+    """
+    业务线Staging抽取流程。
+
+    前置依赖：运行前请确保 fact_bus_wage_rate 表已更新目标月份的预算工资比例，
+    否则后台人力及行政/人力中心分摊费用（含房租）将因缺少比例数据而中断报错。
+    """
     logger = get_run_logger()
     logger.info("开始执行业务线数据打平入库(Staging)全流程...")
 
