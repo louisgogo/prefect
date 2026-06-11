@@ -3,7 +3,7 @@
 整合三个阶段：
   阶段1 - 更新映射表：将 mypackage 中的列/表映射写入 map_translate
   阶段2 - 刷新中文视图：遍历所有 base table，生成中文列名视图（无映射则跳过）
-  阶段3 - FONE 授权：对 9- 开头视图授予 fone_group SELECT 权限（可选）
+  阶段3 - FONE 授权：对 9-/7-/4-/1- 开头视图授予 fone_group SELECT 权限（可选）
 """
 import os
 import sys

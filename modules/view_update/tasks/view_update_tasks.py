@@ -379,11 +379,13 @@ ORDER BY "年份" DESC,"预测层级" ASC,"显示层级" ASC""",
 @task(name="grant_fone_permissions", log_prints=True)
 def grant_fone_permissions_task() -> Dict[str, Any]:
     """
-    对 FONE 相关视图（名称以 9- 开头）授予 fone_group SELECT 权限
+    对 FONE 相关视图（名称以 9-/7-/4-/1- 开头）授予 fone_group SELECT 权限
 
     Returns:
         {"success": bool, "granted": int, "views": List[str]}
     """
+    from psycopg2 import sql
+
     conn = None
     cur = None
     try:
@@ -394,7 +396,11 @@ def grant_fone_permissions_task() -> Dict[str, Any]:
             """
             SELECT table_name
             FROM information_schema.views
-            WHERE table_schema = 'public' AND table_name LIKE '9-%%'
+            WHERE table_schema = 'public'
+              AND (table_name LIKE '9-%%'
+                   OR table_name LIKE '7-%%'
+                   OR table_name LIKE '4-%%'
+                   OR table_name LIKE '1-%%')
             """
         )
         views = cur.fetchall()
@@ -403,7 +409,9 @@ def grant_fone_permissions_task() -> Dict[str, Any]:
         granted = 0
         failed_views: List[str] = []
         for view_name in view_names:
-            grant_sql = f'GRANT SELECT ON "{view_name}" TO fone_group;'
+            grant_sql = sql.SQL("GRANT SELECT ON {} TO fone_group;").format(
+                sql.Identifier(view_name)
+            )
             try:
                 cur.execute(grant_sql)
                 granted += 1
