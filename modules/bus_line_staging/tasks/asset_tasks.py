@@ -238,11 +238,9 @@ def run_inv_ar_split_task(date_range):
             df_transit_matched[["一级组织", "二级组织", "三级组织"]] = df_transit_matched["唯一层级"].str.split(
                 "-", n=2, expand=True
             )
-            # 计算在途订单金额
+            # 计算在途订单金额：未入库数量 * 单价 * 汇率
             df_transit_matched["在途订单金额"] = (
-                df_transit_matched["订单金额"]
-                / df_transit_matched["订单数量"]
-                * df_transit_matched["未入库数量"]
+                df_transit_matched["未入库数量"] * df_transit_matched["单价"] * df_transit_matched["汇率"]
             )
             # 选择特定列，参考示例文件中的列选择
             df_transit = df_transit_matched[
