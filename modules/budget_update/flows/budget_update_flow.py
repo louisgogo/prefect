@@ -100,14 +100,15 @@ def budget_update_flow(
         version: 填报日期（字符串），本批数据的版本标签。不填则按当前月份规则推导
         budget_type: 预算类型，'年初预算' 或 '年中预算'。不填则按当前月份规则推导
         report_date: 报告日期（字符串），写库时按此日期定位要替换的那一批。不填则按当前月份规则推导
-        output_dir: 未映射数据 CSV 导出目录，默认当前工作目录
+        output_dir: 未映射数据 CSV/JSON 导出目录，默认 `/root/prefect/check/budget_unmapped`
 
     易混点（version 与 report_date）：
         - report_date：决定「替换哪一批历史数」。库里 report_date 等于该日期的行会被删掉，再插入本批。
         - version：决定「本批新增数打什么标签」。插入的每一行会带 填报日期=version。
     """
     if output_dir is None:
-        output_dir = os.getcwd()
+        output_dir = "/root/prefect/check/budget_unmapped"
+    os.makedirs(output_dir, exist_ok=True)
 
     # 未填写的参数按当前日期补默认值（预算版本/填报日期等随月份动态调整）
     defaults = _get_budget_defaults_by_date()

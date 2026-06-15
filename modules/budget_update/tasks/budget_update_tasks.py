@@ -1,6 +1,8 @@
 """预算更新相关 Tasks：FONE 取数、严格映射检查、清洗、写库"""
+import json
 import os
 import sys
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 import pandas as pd
@@ -66,8 +68,26 @@ def _check_mapping_strict(
     prod_col: Optional[str] = None,
 ) -> pd.DataFrame:
     """
-    严格映射检查：任一维度存在未映射则先导出 CSV 再 raise，中断执行。
+    严格映射检查：汇总所有维度的未映射值，导出 CSV + JSON 后统一 raise。
     """
+    unmapped_info: Dict[str, Dict[str, Any]] = {}
+    os.makedirs(output_dir, exist_ok=True)
+    summary_path = os.path.join(output_dir, "unmapped_summary.json")
+
+    def _record_unmapped(name: str, key_col: str, unmapped_df: pd.DataFrame) -> None:
+        if unmapped_df.empty:
+            return
+        path = os.path.join(output_dir, f"未映射的{name}.csv")
+        unmapped_df.to_csv(path, encoding="utf-8-sig", index=False)
+        unique_vals = unmapped_df[key_col].dropna().astype(str).unique().tolist()
+        unmapped_info[name] = {
+            "count": int(len(unmapped_df)),
+            "unique_count": int(len(unique_vals)),
+            "unique_values": unique_vals[:100],
+            "csv_path": os.path.abspath(path),
+            "key_column": key_col,
+        }
+
     if cust_col:
         map_cust = _read_data("map_cust", "PSQL")
         df = df.merge(
@@ -76,11 +96,7 @@ def _check_mapping_strict(
             left_on=cust_col,
             right_on="标识",
         )
-        unmapped = df[df["标识"].isna()]
-        if not unmapped.empty:
-            path = os.path.join(output_dir, "未映射的客户编码.csv")
-            unmapped.to_csv(path, encoding="utf-8-sig")
-            raise ValueError(f"存在未映射的客户编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。")
+        _record_unmapped("客户编码", cust_col, df[df["标识"].isna()])
         df = df.drop(["标识"], axis=1)
 
     if dev_col:
@@ -92,11 +108,7 @@ def _check_mapping_strict(
             left_on=dev_col,
             right_on="编码",
         )
-        unmapped = df[df["编码"].isna()]
-        if not unmapped.empty:
-            path = os.path.join(output_dir, "未映射的研发项目编码.csv")
-            unmapped.to_csv(path, encoding="utf-8-sig")
-            raise ValueError(f"存在未映射的研发项目编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。")
+        _record_unmapped("研发项目编码", dev_col, df[df["编码"].isna()])
         df = df.drop(["编码"], axis=1)
 
     if exp_col:
@@ -115,11 +127,7 @@ def _check_mapping_strict(
             left_on=exp_col,
             right_on="唯一费用标识",
         )
-        unmapped = df[df["唯一费用标识"].isna()]
-        if not unmapped.empty:
-            path = os.path.join(output_dir, "未映射的预算费用项目编码.csv")
-            unmapped.to_csv(path, encoding="utf-8-sig")
-            raise ValueError(f"存在未映射的预算费用项目编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。")
+        _record_unmapped("预算费用项目编码", exp_col, df[df["唯一费用标识"].isna()])
         df = df.drop(["唯一费用标识"], axis=1)
 
     if ind_col:
@@ -130,11 +138,7 @@ def _check_mapping_strict(
             left_on=ind_col,
             right_on="标识(ID)",
         )
-        unmapped = df[df["标识(ID)"].isna()]
-        if not unmapped.empty:
-            path = os.path.join(output_dir, "未映射的指标编码.csv")
-            unmapped.to_csv(path, encoding="utf-8-sig")
-            raise ValueError(f"存在未映射的指标编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。")
+        _record_unmapped("指标编码", ind_col, df[df["标识(ID)"].isna()])
         df = df.drop(["标识(ID)"], axis=1)
 
     if org_col:
@@ -145,11 +149,7 @@ def _check_mapping_strict(
             left_on=org_col,
             right_on="标识(ID)",
         )
-        unmapped = df[df["数据库对照关系"].isna()]
-        if not unmapped.empty:
-            path = os.path.join(output_dir, "未映射的组织编码.csv")
-            unmapped.to_csv(path, encoding="utf-8-sig")
-            raise ValueError(f"存在未映射的组织编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。")
+        _record_unmapped("组织编码", org_col, df[df["数据库对照关系"].isna()])
         df = df.drop(["标识(ID)"], axis=1)
 
     if prod_col:
@@ -160,12 +160,28 @@ def _check_mapping_strict(
             left_on=prod_col,
             right_on="标识",
         )
-        unmapped = df[df["标识"].isna()]
-        if not unmapped.empty:
-            path = os.path.join(output_dir, "未映射的产品编码.csv")
-            unmapped.to_csv(path, encoding="utf-8-sig")
-            raise ValueError(f"存在未映射的产品编码，已导出至: {os.path.abspath(path)}，请维护映射后重试。")
+        _record_unmapped("产品编码", prod_col, df[df["标识"].isna()])
         df = df.drop(["标识"], axis=1)
+
+    if unmapped_info:
+        summary = {
+            "has_unmapped": True,
+            "generated_at": datetime.now().isoformat(),
+            "output_dir": os.path.abspath(output_dir),
+            "unmapped": unmapped_info,
+        }
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+        print("[UNMAPPED_SUMMARY]")
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        print("[/UNMAPPED_SUMMARY]")
+        detail = "\n".join(
+            f"  - {k}: {v['count']} 条（唯一值 {v['unique_count']} 个），CSV: {v['csv_path']}"
+            for k, v in unmapped_info.items()
+        )
+        raise ValueError(
+            f"存在未映射值，已导出 CSV 并生成汇总：{os.path.abspath(summary_path)}\n" f"未映射维度：\n{detail}\n请维护映射后重试。"
+        )
 
     return df
 
@@ -415,7 +431,7 @@ def process_cash_budget_task(
     output_dir: str = ".",
 ) -> pd.DataFrame:
     """
-    流水预算：清洗 + 产品名称 map_amo 映射；若存在未映射产品（产品类型 NaN）则导出 CSV 并 raise。
+    流水预算：清洗 + 产品名称 map_amo 映射；若存在未映射产品（产品类型 NaN）则导出 CSV + JSON 并 raise。
     """
     try:
         if map_amo is None:
@@ -425,9 +441,34 @@ def process_cash_budget_task(
             fone_amo["产品类型"] = fone_amo["产品名称"].map(map_amo)
         unmapped = fone_amo[fone_amo["产品类型"].isna()]
         if not unmapped.empty:
+            os.makedirs(output_dir, exist_ok=True)
             path = os.path.join(output_dir, "未映射的流水产品名称.csv")
-            unmapped.to_csv(path, encoding="utf-8-sig")
-            raise ValueError(f"流水预算存在未映射的产品名称，已导出至: {os.path.abspath(path)}，请维护 map_amo 后重试。")
+            unmapped.to_csv(path, encoding="utf-8-sig", index=False)
+            unique_vals = unmapped["产品名称"].dropna().astype(str).unique().tolist()
+            summary = {
+                "has_unmapped": True,
+                "generated_at": datetime.now().isoformat(),
+                "output_dir": os.path.abspath(output_dir),
+                "unmapped": {
+                    "流水产品名称": {
+                        "count": int(len(unmapped)),
+                        "unique_count": int(len(unique_vals)),
+                        "unique_values": unique_vals[:100],
+                        "csv_path": os.path.abspath(path),
+                        "key_column": "产品名称",
+                    }
+                },
+            }
+            summary_path = os.path.join(output_dir, "unmapped_summary.json")
+            with open(summary_path, "w", encoding="utf-8") as f:
+                json.dump(summary, f, ensure_ascii=False, indent=2)
+            print("[UNMAPPED_SUMMARY]")
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+            print("[/UNMAPPED_SUMMARY]")
+            raise ValueError(
+                f"流水预算存在未映射的产品名称，已导出至: {os.path.abspath(path)}，"
+                f"汇总：{os.path.abspath(summary_path)}，请维护 map_amo 后重试。"
+            )
         df = fone_amo[["组织名称", "产品名称", "预算编制说明", "预算数", "日期", "产品类型"]].copy()
         df = df.rename(
             columns={
