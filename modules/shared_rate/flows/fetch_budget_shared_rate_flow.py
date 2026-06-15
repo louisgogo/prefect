@@ -10,6 +10,8 @@ from datetime import datetime
 
 from dateutil.relativedelta import relativedelta
 
+from modules.common.tasks.notify_hermes_task import notify_hermes_task
+
 from ..tasks.fetch_budget_shared_rate_tasks import (
     fetch_latest_budget_rate_task,
     update_fact_bus_shared_rate_task,
@@ -40,20 +42,51 @@ def fetch_budget_shared_rate_flow(
     """
     print("开始获取预算综合比例流程")
 
-    # 解析日期
-    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-    end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+    notify_hermes_task(
+        event="started",
+        flow_name="拉取预算综合比例",
+        payload={"start_date": start_date, "end_date": end_date},
+    )
 
-    print(f"处理日期范围: {start_dt.strftime('%Y-%m-%d')} 至 {end_dt.strftime('%Y-%m-%d')}")
+    try:
+        # 解析日期
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
 
-    if start_dt > end_dt:
-        print(f"计算出的日期范围无效，可能在1月发生。暂不更新。")
-        return
+        print(f"处理日期范围: {start_dt.strftime('%Y-%m-%d')} 至 {end_dt.strftime('%Y-%m-%d')}")
 
-    # 1. 获取最新综合比例并填充
-    df_rates = fetch_latest_budget_rate_task(start_dt, end_dt)
+        if start_dt > end_dt:
+            print(f"计算出的日期范围无效，可能在1月发生。暂不更新。")
+            return
 
-    # 2. 更新写入数据库
-    update_fact_bus_shared_rate_task(df_rates, start_dt, end_dt)
+        # 1. 获取最新综合比例并填充
+        df_rates = fetch_latest_budget_rate_task(start_dt, end_dt)
 
-    print("预算综合比例获取并覆盖写入完成")
+        # 2. 更新写入数据库
+        update_fact_bus_shared_rate_task(df_rates, start_dt, end_dt)
+
+        print("预算综合比例获取并覆盖写入完成")
+
+        notify_hermes_task(
+            event="completed",
+            flow_name="拉取预算综合比例",
+            payload={
+                "start_date": start_date,
+                "end_date": end_date,
+                "summary": f"预算综合比例获取完成，范围: {start_date} 至 {end_date}",
+            },
+        )
+    except Exception as e:
+        error_msg = f"拉取预算综合比例流程失败: {str(e)}"
+        print(f"\n{error_msg}")
+        notify_hermes_task(
+            event="failed",
+            flow_name="拉取预算综合比例",
+            payload={
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "start_date": start_date,
+                "end_date": end_date,
+            },
+        )
+        raise Exception(error_msg) from e

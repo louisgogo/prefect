@@ -2,6 +2,7 @@ from mypackage.utilities import connect_to_db
 
 from prefect import flow, get_run_logger
 
+from ...common.tasks.notify_hermes_task import notify_hermes_task
 from ..config import get_date_range
 from ..tasks.asset_tasks import run_inv_ar_split_task
 from ..tasks.expense_tasks import run_expense_split_to_staging_task
@@ -22,48 +23,82 @@ def bus_line_staging_flow(start_date: str | None = None, end_date: str | None = 
     logger = get_run_logger()
     logger.info("开始执行业务线数据打平入库(Staging)全流程...")
 
-    # 获取日期范围
     date_range = get_date_range(start_date, end_date)
     if start_date and end_date:
         logger.info(f"使用自定义日期范围: {start_date} 到 {end_date}")
+        date_label = f"{start_date} 到 {end_date}"
     else:
         logger.info(f"使用默认日期范围 (上月): {date_range[0]} 到 {date_range[-1]}")
+        date_label = f"{date_range[0]} 到 {date_range[-1]}"
 
-    # 前置清理：删除目标月份在各 staging 表中的旧数据，避免 task 间互相覆盖
-    conn, cur = connect_to_db()
+    notify_hermes_task(
+        event="started",
+        flow_name="业务线Staging抽取",
+        payload={"start_date": start_date, "end_date": end_date, "date_range": date_label},
+    )
+
     try:
-        cleanup_staging_month(cur, "staging_bus_expense", "会计期间", date_range)
-        cleanup_staging_month(cur, "staging_bus_revenue", "会计期间", date_range)
-        cleanup_staging_month(cur, "staging_bus_profit_bd", "日期", date_range)
-        cleanup_staging_month(cur, "staging_bus_inventory", "会计期间", date_range)
-        cleanup_staging_month(cur, "staging_bus_receivable", "会计期间", date_range)
-        cleanup_staging_month(cur, "staging_bus_in_transit_inventory", "会计期间", date_range)
-        conn.commit()
-    finally:
-        cur.close()
-        conn.close()
+        # 前置清理：删除目标月份在各 staging 表中的旧数据，避免 task 间互相覆盖
+        conn, cur = connect_to_db()
+        try:
+            cleanup_staging_month(cur, "staging_bus_expense", "会计期间", date_range)
+            cleanup_staging_month(cur, "staging_bus_revenue", "会计期间", date_range)
+            cleanup_staging_month(cur, "staging_bus_profit_bd", "日期", date_range)
+            cleanup_staging_month(cur, "staging_bus_inventory", "会计期间", date_range)
+            cleanup_staging_month(cur, "staging_bus_receivable", "会计期间", date_range)
+            cleanup_staging_month(cur, "staging_bus_in_transit_inventory", "会计期间", date_range)
+            conn.commit()
+        finally:
+            cur.close()
+            conn.close()
 
-    # 1. 费用数据拆分
-    run_expense_split_to_staging_task(date_range)
-    logger.info("第1步：费用数据入库已完成。")
+        # 1. 费用数据拆分
+        run_expense_split_to_staging_task(date_range)
+        logger.info("第1步：费用数据入库已完成。")
 
-    # 2. 特定部门收入及其他拆分
-    run_revenue_other_split_task(date_range)
-    logger.info("第2步：特定收入及其他数据入库已完成。")
+        # 2. 特定部门收入及其他拆分
+        run_revenue_other_split_task(date_range)
+        logger.info("第2步：特定收入及其他数据入库已完成。")
 
-    # 3. 无归属业务线拆分
-    run_unassigned_split_task(date_range)
-    logger.info("第3步：无归属业务兜底数据入库已完成。")
+        # 3. 无归属业务线拆分
+        run_unassigned_split_task(date_range)
+        logger.info("第3步：无归属业务兜底数据入库已完成。")
 
-    # 4. 收入比例自动填充
-    run_revenue_ratio_fill_task(date_range)
-    logger.info("第4步：收入比例自动填充已完成。")
+        # 4. 收入比例自动填充
+        run_revenue_ratio_fill_task(date_range)
+        logger.info("第4步：收入比例自动填充已完成。")
 
-    # 5. 存货应收拆分
-    run_inv_ar_split_task(date_range)
-    logger.info("第5步：特定存货及应收数据入库已完成。")
+        # 5. 存货应收拆分
+        run_inv_ar_split_task(date_range)
+        logger.info("第5步：特定存货及应收数据入库已完成。")
 
-    logger.info("✅ 所有的业务线Staging数据拆分提取工作流已顺利完成！")
+        logger.info("✅ 所有的业务线Staging数据拆分提取工作流已顺利完成！")
+
+        notify_hermes_task(
+            event="completed",
+            flow_name="业务线Staging抽取",
+            payload={
+                "start_date": start_date,
+                "end_date": end_date,
+                "date_range": date_label,
+                "summary": f"业务线Staging抽取完成，范围: {date_label}",
+            },
+        )
+    except Exception as e:
+        error_msg = f"业务线Staging抽取流程失败: {str(e)}"
+        logger.error(f"\n{error_msg}")
+        notify_hermes_task(
+            event="failed",
+            flow_name="业务线Staging抽取",
+            payload={
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "start_date": start_date,
+                "end_date": end_date,
+                "date_range": date_label,
+            },
+        )
+        raise Exception(error_msg) from e
 
 
 if __name__ == "__main__":

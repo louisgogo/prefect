@@ -11,6 +11,9 @@ from prefect import flow
 sys.path.append(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 )
+
+from modules.common.tasks.notify_hermes_task import notify_hermes_task
+
 # 从 profit_refresh 模块导入
 from modules.profit_refresh.flows.profit_refresh_flow import profit_refresh_flow
 from modules.shared_rate.flows.fetch_budget_shared_rate_flow import fetch_budget_shared_rate_flow
@@ -47,75 +50,108 @@ def business_line_profit_flow(
     """
     print(f"开始执行业务线损益计算流程，年份: {year}")
 
-    # 确定要处理的月份列表
-    if months is not None:
-        # 批量处理多个月份（按月循环执行）
-        # 将月份数字列表转换为 (year, month) 元组列表
-        month_list = [(year, m) for m in months]
-        print(f"批量处理模式，月份数: {len(months)}，将按月循环执行以避免内存溢出")
-        print(f"处理月份: {', '.join([f'{year}年{m}月' for m in months])}")
-    elif month is not None:
-        # 只处理单个月份
-        print(f"处理模式：只处理 {year}年{month}月")
-        month_list = [(year, month)]
-    else:
-        raise ValueError("必须提供 month 或 months 参数")
+    notify_hermes_task(
+        event="started",
+        flow_name="业务线损益计算",
+        payload={"year": year, "month": month, "months": months},
+    )
 
-    # ========== 拉取最新的预算综合比例 ==========
-    print(f"\n{'='*60}")
-    print("准备就绪：首先执行 [子流程-拉取预算综合比例]，确保业务线按最新比率计算")
-    print(f"{'='*60}")
     try:
-        fetch_budget_shared_rate_flow()
-        print("✓ 预算综合比例同步完成")
-    except Exception as e:
-        print(f"✗ 预算综合比例同步失败: {str(e)}")
-        # 因为这是计算的前置条件，如果失败建议不要终止，让业务使用既有老比例跑，但需告警
-        print("警告：预算比例拉取失败，本期计算将继续沿用数据库中已存有的比例...")
+        # 确定要处理的月份列表
+        if months is not None:
+            # 批量处理多个月份（按月循环执行）
+            # 将月份数字列表转换为 (year, month) 元组列表
+            month_list = [(year, m) for m in months]
+            print(f"批量处理模式，月份数: {len(months)}，将按月循环执行以避免内存溢出")
+            print(f"处理月份: {', '.join([f'{year}年{m}月' for m in months])}")
+        elif month is not None:
+            # 只处理单个月份
+            print(f"处理模式：只处理 {year}年{month}月")
+            month_list = [(year, month)]
+        else:
+            raise ValueError("必须提供 month 或 months 参数")
 
-    # 按月循环执行
-    for idx, (process_year, process_month) in enumerate(month_list, 1):
+        # ========== 拉取最新的预算综合比例 ==========
         print(f"\n{'='*60}")
-        print(f"开始处理第 {idx}/{len(month_list)} 个月：{process_year}年{process_month}月")
+        print("准备就绪：首先执行 [子流程-拉取预算综合比例]，确保业务线按最新比率计算")
+        print(f"{'='*60}")
+        try:
+            fetch_budget_shared_rate_flow()
+            print("✓ 预算综合比例同步完成")
+        except Exception as e:
+            print(f"✗ 预算综合比例同步失败: {str(e)}")
+            # 因为这是计算的前置条件，如果失败建议不要终止，让业务使用既有老比例跑，但需告警
+            print("警告：预算比例拉取失败，本期计算将继续沿用数据库中已存有的比例...")
+
+        # 按月循环执行
+        for idx, (process_year, process_month) in enumerate(month_list, 1):
+            print(f"\n{'='*60}")
+            print(f"开始处理第 {idx}/{len(month_list)} 个月：{process_year}年{process_month}月")
+            print(f"{'='*60}")
+
+            # 获取单个月份的日期范围
+            date_range = get_date_range_by_month(process_year, process_month)
+            print(f"日期范围: {date_range.min()} 到 {date_range.max()}")
+
+            try:
+                # 收入、费用、利润明细生成流程（内部会自己获取数据）
+                revenue_expense_profit_flow(date_range)
+
+                # 资产明细生成流程
+                asset_detail_flow(date_range)
+
+                print(f"✓ {process_year}年{process_month}月 处理完成")
+            except Exception as e:
+                print(f"✗ {process_year}年{process_month}月 处理失败: {str(e)}")
+                raise  # 如果某个月失败，停止后续处理
+
+        print(f"\n{'='*60}")
+        print(f"业务线数据计算流程全部完成，共处理 {len(month_list)} 个月")
         print(f"{'='*60}")
 
-        # 获取单个月份的日期范围
-        date_range = get_date_range_by_month(process_year, process_month)
-        print(f"日期范围: {date_range.min()} 到 {date_range.max()}")
+        # ========== 利润表刷新流程 ==========
+        # 在所有月份数据计算完成后，刷新利润表
+        print(f"\n{'='*60}")
+        print("开始利润表刷新流程（处理所有已计算的月份数据）")
+        print(f"{'='*60}")
+
+        # 合并所有月份的日期范围
+        all_date_range = get_date_range_by_months(month_list)
+        print(f"利润表刷新日期范围: {all_date_range.min()} 到 {all_date_range.max()}")
 
         try:
-            # 收入、费用、利润明细生成流程（内部会自己获取数据）
-            revenue_expense_profit_flow(date_range)
-
-            # 资产明细生成流程
-            asset_detail_flow(date_range)
-
-            print(f"✓ {process_year}年{process_month}月 处理完成")
+            profit_refresh_flow(all_date_range)
+            print("✓ 利润表刷新完成")
         except Exception as e:
-            print(f"✗ {process_year}年{process_month}月 处理失败: {str(e)}")
-            raise  # 如果某个月失败，停止后续处理
+            print(f"✗ 利润表刷新失败: {str(e)}")
+            raise
 
-    print(f"\n{'='*60}")
-    print(f"业务线数据计算流程全部完成，共处理 {len(month_list)} 个月")
-    print(f"{'='*60}")
+        print(f"\n{'='*60}")
+        print("业务线损益计算流程全部完成")
+        print(f"{'='*60}")
 
-    # ========== 利润表刷新流程 ==========
-    # 在所有月份数据计算完成后，刷新利润表
-    print(f"\n{'='*60}")
-    print("开始利润表刷新流程（处理所有已计算的月份数据）")
-    print(f"{'='*60}")
-
-    # 合并所有月份的日期范围
-    all_date_range = get_date_range_by_months(month_list)
-    print(f"利润表刷新日期范围: {all_date_range.min()} 到 {all_date_range.max()}")
-
-    try:
-        profit_refresh_flow(all_date_range)
-        print("✓ 利润表刷新完成")
+        notify_hermes_task(
+            event="completed",
+            flow_name="业务线损益计算",
+            payload={
+                "year": year,
+                "month": month,
+                "months": months,
+                "summary": f"业务线损益计算完成，共处理 {len(month_list)} 个月",
+            },
+        )
     except Exception as e:
-        print(f"✗ 利润表刷新失败: {str(e)}")
-        raise
-
-    print(f"\n{'='*60}")
-    print("业务线损益计算流程全部完成")
-    print(f"{'='*60}")
+        error_msg = f"业务线损益计算流程失败: {str(e)}"
+        print(f"\n{error_msg}")
+        notify_hermes_task(
+            event="failed",
+            flow_name="业务线损益计算",
+            payload={
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "year": year,
+                "month": month,
+                "months": months,
+            },
+        )
+        raise Exception(error_msg) from e

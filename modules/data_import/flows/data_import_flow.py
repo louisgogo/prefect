@@ -14,6 +14,7 @@ from utils.date_utils import (
     get_date_range_by_months,
 )
 
+from ...common.tasks.notify_hermes_task import notify_hermes_task
 from ..tasks.data_import_tasks import (
     read_excel_data_task,
     update_business_data_task,
@@ -90,106 +91,149 @@ def data_import_flow(
     print("开始数据导入流程")
     print("=" * 60)
 
-    # 打印当前使用的参数（用于调试和确认）
-    print(f"\n当前参数设置:")
-    print(f"  - year: {year if year is not None else '未指定（将使用上个月）'}")
-    print(f"  - month: {month if month is not None else '未指定'}")
-    print(f"  - months: {months if months is not None else '未指定'}")
-    print(f"  - replace_existing: {replace_existing}")
-    print(f"  - root_directory: {root_directory}")
-    print()
+    notify_hermes_task(
+        event="started",
+        flow_name="数据导入",
+        payload={
+            "year": year,
+            "month": month,
+            "months": months,
+            "replace_existing": replace_existing,
+            "root_directory": root_directory,
+        },
+    )
 
-    # 确定要处理的年份和月份
-    if year is None:
-        # 如果没有指定年份，使用上个月
-        process_year, process_month = get_last_month()
-        if month is None and months is None:
-            # 如果也没有指定月份，使用上个月
-            month_list = [(process_year, process_month)]
-            print(f"未指定参数，使用上个月: {process_year}年{process_month}月")
-        elif month is not None:
-            month_list = [(process_year, month)]
-            print(f"使用指定月份: {process_year}年{month}月")
-        elif months is not None:
-            month_list = [(process_year, m) for m in months]
-            print(f"批量处理模式，月份数: {len(months)}，将按月循环执行")
-            print(f"处理月份: {', '.join([f'{process_year}年{m}月' for m in months])}")
-    else:
-        # 如果指定了年份
-        if months is not None:
-            # 批量处理多个月份
-            month_list = [(year, m) for m in months]
-            print(f"批量处理模式，年份: {year}，月份数: {len(months)}")
-            print(f"处理月份: {', '.join([f'{year}年{m}月' for m in months])}")
-        elif month is not None:
-            # 只处理单个月份
-            month_list = [(year, month)]
-            print(f"处理模式：只处理 {year}年{month}月")
-        else:
-            # 如果只指定了年份，使用上个月
+    try:
+        # 打印当前使用的参数（用于调试和确认）
+        print(f"\n当前参数设置:")
+        print(f"  - year: {year if year is not None else '未指定（将使用上个月）'}")
+        print(f"  - month: {month if month is not None else '未指定'}")
+        print(f"  - months: {months if months is not None else '未指定'}")
+        print(f"  - replace_existing: {replace_existing}")
+        print(f"  - root_directory: {root_directory}")
+        print()
+
+        # 确定要处理的年份和月份
+        if year is None:
+            # 如果没有指定年份，使用上个月
             process_year, process_month = get_last_month()
-            if process_year == year:
-                month_list = [(year, process_month)]
-                print(f"只指定了年份 {year}，使用上个月: {process_month}月")
+            if month is None and months is None:
+                # 如果也没有指定月份，使用上个月
+                month_list = [(process_year, process_month)]
+                print(f"未指定参数，使用上个月: {process_year}年{process_month}月")
+            elif month is not None:
+                month_list = [(process_year, month)]
+                print(f"使用指定月份: {process_year}年{month}月")
+            elif months is not None:
+                month_list = [(process_year, m) for m in months]
+                print(f"批量处理模式，月份数: {len(months)}，将按月循环执行")
+                print(f"处理月份: {', '.join([f'{process_year}年{m}月' for m in months])}")
+        else:
+            # 如果指定了年份
+            if months is not None:
+                # 批量处理多个月份
+                month_list = [(year, m) for m in months]
+                print(f"批量处理模式，年份: {year}，月份数: {len(months)}")
+                print(f"处理月份: {', '.join([f'{year}年{m}月' for m in months])}")
+            elif month is not None:
+                # 只处理单个月份
+                month_list = [(year, month)]
+                print(f"处理模式：只处理 {year}年{month}月")
             else:
-                raise ValueError(f"只指定了年份 {year}，但上个月是 {process_year}年{process_month}月，请同时指定月份")
+                # 如果只指定了年份，使用上个月
+                process_year, process_month = get_last_month()
+                if process_year == year:
+                    month_list = [(year, process_month)]
+                    print(f"只指定了年份 {year}，使用上个月: {process_month}月")
+                else:
+                    raise ValueError(f"只指定了年份 {year}，但上个月是 {process_year}年{process_month}月，请同时指定月份")
 
-    print(f"replace_existing 参数: {replace_existing}")
-    if not replace_existing:
-        print("注意: 如果数据已存在，将跳过更新")
-    print(f"Excel 文件目录: {root_directory}")
-    print("=" * 60)
+        print(f"replace_existing 参数: {replace_existing}")
+        if not replace_existing:
+            print("注意: 如果数据已存在，将跳过更新")
+        print(f"Excel 文件目录: {root_directory}")
+        print("=" * 60)
 
-    # 读取 Excel 数据（只读取一次，所有月份共享）
-    print("\n开始读取 Excel 数据...")
-    dfs = read_excel_data_task(root_directory)
+        # 读取 Excel 数据（只读取一次，所有月份共享）
+        print("\n开始读取 Excel 数据...")
+        dfs = read_excel_data_task(root_directory)
 
-    # 按月循环执行数据导入
-    for idx, (process_year, process_month) in enumerate(month_list, 1):
+        # 按月循环执行数据导入
+        for idx, (process_year, process_month) in enumerate(month_list, 1):
+            print(f"\n{'='*60}")
+            print(f"开始处理第 {idx}/{len(month_list)} 个月：{process_year}年{process_month}月")
+            print(f"{'='*60}")
+
+            # 获取该月的日期范围
+            date_range = get_date_range_by_month(process_year, process_month)
+            start_date = date_range.min().strftime("%Y-%m-%d")
+            end_date = date_range.max().strftime("%Y-%m-%d")
+            print(f"日期范围: {start_date} 到 {end_date}")
+
+            try:
+                update_production_data_task(dfs, start_date, end_date, replace_existing)
+
+                update_rd_data_task(dfs, start_date, end_date, replace_existing, root_directory)
+
+                # 3. 更新采购数据
+                update_purchase_data_task(dfs, start_date, end_date, replace_existing)
+
+                # 4. 更新存货数据
+                update_inventory_data_task(dfs, start_date, end_date, replace_existing)
+
+                # 5. 更新费控数据
+                update_cost_control_data_task(dfs, start_date, end_date, replace_existing)
+
+                # 6. 更新业务数据
+                update_business_data_task(
+                    dfs, start_date, end_date, replace_existing, root_directory
+                )
+
+                # 7. 更新人力费用数据
+                update_personnel_data_task(dfs, start_date, end_date, replace_existing)
+
+                # 8. 更新手工刷新数据
+                update_manual_refresh_data_task(dfs, start_date, end_date, replace_existing)
+
+                print(f"\n✓ {process_year}年{process_month}月 数据导入完成")
+            except Exception as e:
+                error_msg = f"{process_year}年{process_month}月 数据导入失败: {str(e)}"
+                print(f"\n❌ {error_msg}")
+                # 打印完整的错误堆栈信息
+                import traceback
+
+                print(f"错误详情:\n{traceback.format_exc()}")
+                # 重新抛出异常，让 Prefect UI 能够捕获并显示为失败状态
+                raise Exception(error_msg) from e
+
         print(f"\n{'='*60}")
-        print(f"开始处理第 {idx}/{len(month_list)} 个月：{process_year}年{process_month}月")
+        print(f"数据导入流程全部完成，共处理 {len(month_list)} 个月")
         print(f"{'='*60}")
 
-        # 获取该月的日期范围
-        date_range = get_date_range_by_month(process_year, process_month)
-        start_date = date_range.min().strftime("%Y-%m-%d")
-        end_date = date_range.max().strftime("%Y-%m-%d")
-        print(f"日期范围: {start_date} 到 {end_date}")
-
-        try:
-            update_production_data_task(dfs, start_date, end_date, replace_existing)
-
-            update_rd_data_task(dfs, start_date, end_date, replace_existing, root_directory)
-
-            # 3. 更新采购数据
-            update_purchase_data_task(dfs, start_date, end_date, replace_existing)
-
-            # 4. 更新存货数据
-            update_inventory_data_task(dfs, start_date, end_date, replace_existing)
-
-            # 5. 更新费控数据
-            update_cost_control_data_task(dfs, start_date, end_date, replace_existing)
-
-            # 6. 更新业务数据
-            update_business_data_task(dfs, start_date, end_date, replace_existing, root_directory)
-
-            # 7. 更新人力费用数据
-            update_personnel_data_task(dfs, start_date, end_date, replace_existing)
-
-            # 8. 更新手工刷新数据
-            update_manual_refresh_data_task(dfs, start_date, end_date, replace_existing)
-
-            print(f"\n✓ {process_year}年{process_month}月 数据导入完成")
-        except Exception as e:
-            error_msg = f"{process_year}年{process_month}月 数据导入失败: {str(e)}"
-            print(f"\n❌ {error_msg}")
-            # 打印完整的错误堆栈信息
-            import traceback
-
-            print(f"错误详情:\n{traceback.format_exc()}")
-            # 重新抛出异常，让 Prefect UI 能够捕获并显示为失败状态
-            raise Exception(error_msg) from e
-
-    print(f"\n{'='*60}")
-    print(f"数据导入流程全部完成，共处理 {len(month_list)} 个月")
-    print(f"{'='*60}")
+        notify_hermes_task(
+            event="completed",
+            flow_name="数据导入",
+            payload={
+                "year": year,
+                "month": month,
+                "months": months,
+                "replace_existing": replace_existing,
+                "root_directory": root_directory,
+                "summary": f"数据导入完成，共处理 {len(month_list)} 个月",
+            },
+        )
+    except Exception as e:
+        error_msg = f"数据导入流程失败: {str(e)}"
+        print(f"\n❌ {error_msg}")
+        notify_hermes_task(
+            event="failed",
+            flow_name="数据导入",
+            payload={
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "year": year,
+                "month": month,
+                "months": months,
+            },
+        )
+        raise Exception(error_msg) from e
