@@ -1,4 +1,5 @@
 """预算更新流程：从 FONE 拉取预算、严格映射检查、写库"""
+import json
 import os
 import sys
 from datetime import datetime
@@ -12,6 +13,7 @@ sys.path.append(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 )
 
+from ...common.tasks.notify_hermes_task import notify_hermes_task
 from ..tasks.budget_update_tasks import (
     fetch_fone_budget_data_task,
     process_cash_budget_task,
@@ -148,6 +150,18 @@ def budget_update_flow(
     print(f"  output_dir: {output_dir}")
     print("=" * 60)
 
+    notify_hermes_task(
+        event="started",
+        flow_name="预算更新",
+        payload={
+            "budget_year": budget_year,
+            "fone_version": fone_version,
+            "version": version,
+            "budget_type": budget_type,
+            "report_date": report_date,
+        },
+    )
+
     try:
         # 1. 从 FONE 拉取预算数据
         data = fetch_fone_budget_data_task(
@@ -190,10 +204,42 @@ def budget_update_flow(
         print("=" * 60)
         print("预算更新流程完成")
         print("=" * 60)
+
+        notify_hermes_task(
+            event="completed",
+            flow_name="预算更新",
+            payload={
+                "budget_year": budget_year,
+                "fone_version": fone_version,
+                "version": version,
+                "budget_type": budget_type,
+                "report_date": report_date,
+                "output_dir": output_dir,
+                "summary": f"{budget_year} {budget_type} 预算更新成功，report_date={report_date}",
+            },
+        )
     except Exception as e:
         error_msg = f"预算更新流程失败: {str(e)}"
         print(f"\n{error_msg}")
         import traceback
 
         print(traceback.format_exc())
+
+        # 如有未映射汇总文件，将其路径和摘要一并通知 Hermes
+        unmapped_summary_path = os.path.join(output_dir, "unmapped_summary.json")
+        unmapped_payload = {"error": str(e), "error_type": type(e).__name__}
+        if os.path.exists(unmapped_summary_path):
+            unmapped_payload["unmapped_summary_path"] = os.path.abspath(unmapped_summary_path)
+            unmapped_payload["output_dir"] = os.path.abspath(output_dir)
+            try:
+                with open(unmapped_summary_path, "r", encoding="utf-8") as f:
+                    unmapped_payload["unmapped_summary"] = json.load(f)
+            except Exception:
+                pass
+
+        notify_hermes_task(
+            event="failed",
+            flow_name="预算更新",
+            payload=unmapped_payload,
+        )
         raise Exception(error_msg) from e
