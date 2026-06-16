@@ -35,6 +35,10 @@ if __name__ == "__main__":
 
     print(f"默认参数：year={process_year}, months={months}")
 
+    # 后续流程（综合比例、数据导入）默认使用上个月
+    last_month_year = process_year
+    last_month = months[-1]
+
     # 部署 flow 到 Prefect server（带计划执行）
     business_line_profit_flow.serve(
         name="主流程-业务线损益计算",
@@ -79,7 +83,7 @@ if __name__ == "__main__":
     print("=" * 60)
 
     print(f"默认参数：使用上个月数据（{last_month_year}年{last_month}月）")
-    print("说明：默认不替换已存在的数据（replace_existing=False）")
+    print("说明：默认不替换已存在的数据（replace_existing=False），但业务数据板块默认替换")
 
     # 部署数据导入流程到 Prefect server（带计划执行）
     data_import_flow.serve(
@@ -90,20 +94,16 @@ if __name__ == "__main__":
             "replace_existing": False,
         },
         tags=["数据导入", "月度任务", "自动执行"],
-        description="数据导入流程：从 Excel 文件导入数据到数据库（默认不替换已存在数据）",
+        description="数据导入流程：从 Excel 文件导入数据到数据库（业务数据板块默认替换已存在数据，其他板块默认不替换）",
     )
 
     print("\n" + "=" * 60)
     print("预算更新流程 - 生产环境部署")
     print("=" * 60)
-    from modules.budget_update.flows.budget_update_flow import (
-        _get_budget_defaults_by_date,
-    )
+    from modules.budget_update.flows.budget_update_flow import _get_budget_defaults_by_date
 
     budget_defaults = _get_budget_defaults_by_date()
-    print(
-        "说明：预算更新为手动触发；参数已按当前月份设默认值（11月～2月→年初预算，4月～7月→年中预算）"
-    )
+    print("说明：预算更新为手动触发；参数已按当前月份设默认值（11月～2月→年初预算，4月～7月→年中预算）")
     print("易混点：report_date=要替换的那批日期；version=本批新数据的填报日期标签。")
     budget_update_flow.serve(
         name="主流程-预算更新",
@@ -115,9 +115,7 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("利润表刷新流程 - 生产环境部署")
     print("=" * 60)
-    print(
-        f"说明：利润表刷新通常在业务线损益计算流程最后一步自动调用。部署此任务是为了方便单独手动触发。"
-    )
+    print(f"说明：利润表刷新通常在业务线损益计算流程最后一步自动调用。部署此任务是为了方便单独手动触发。")
     print("易混点：date_range参数目前只为了占位，通常使用手动触发时需要设置参数")
     profit_refresh_flow.serve(
         name="子流程-利润表刷新",
@@ -128,9 +126,7 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("业务线Staging抽取流程 - 生产环境部署")
     print("=" * 60)
-    print(
-        "说明：用于从各类数据源中提取业务线拆分的基础数据（含费用、收入、存货等），打竖后存入PostgreSQL以便前端填报"
-    )
+    print("说明：用于从各类数据源中提取业务线拆分的基础数据（含费用、收入、存货等），打竖后存入PostgreSQL以便前端填报")
     bus_line_staging_flow.serve(
         name="主流程-业务线Staging抽取",
         tags=["Staging", "业务线核算", "自动执行", "月度任务"],

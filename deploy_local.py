@@ -97,6 +97,7 @@ def deploy_data_import_flow():
     print("  - month: 可选，单个月份（1-12），与 months 二选一")
     print("  - months: 可选，月份列表，例如 [10, 11, 12]，与 month 二选一")
     print("  - replace_existing: 默认 False（不替换已存在数据），设为 True 则替换")
+    print("  - replace_business_data: 默认 True（业务数据板块替换已存在数据），仅影响业务数据板块")
     print("  - root_directory: 默认使用手工刷新目录")
     print("\n注意：如果不提供 year/month/months，将自动使用上个月的数据")
 
@@ -106,7 +107,7 @@ def deploy_data_import_flow():
     data_import_flow.serve(
         name="数据导入流程-本地测试",
         tags=["本地测试", "数据导入"],
-        description="本地测试用：从 Excel 文件导入数据到数据库（默认不替换已存在数据，如存在则跳过）",
+        description="本地测试用：从 Excel 文件导入数据到数据库（业务数据板块默认替换已存在数据，其他板块默认跳过）",
     )
 
 

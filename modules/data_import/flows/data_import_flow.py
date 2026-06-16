@@ -57,6 +57,7 @@ def data_import_flow(
     month: Optional[int] = None,
     months: Optional[List[int]] = None,
     replace_existing: bool = False,
+    replace_business_data: bool = True,
     root_directory: Optional[str] = None,
 ) -> None:
     """
@@ -69,6 +70,7 @@ def data_import_flow(
         month: 单个月份（1-12），如果提供则只处理该月
         months: 月份列表（1-12），如果提供则按月循环处理多个月份，例如 [10, 11, 12]
         replace_existing: 是否替换已存在的数据，默认 False（不替换）。如果为 True，则替换已存在的数据
+        replace_business_data: 业务数据板块是否替换已存在的数据，默认 True（替换）。仅影响业务数据板块
         root_directory: Excel 文件根目录路径；不传则按系统自动选择（Windows: Z:\\11-业务报表\\1.补充数据，Rocky: /mnt/业务报表/1.补充数据）
 
     Examples:
@@ -99,6 +101,7 @@ def data_import_flow(
             "month": month,
             "months": months,
             "replace_existing": replace_existing,
+            "replace_business_data": replace_business_data,
             "root_directory": root_directory,
         },
     )
@@ -110,6 +113,7 @@ def data_import_flow(
         print(f"  - month: {month if month is not None else '未指定'}")
         print(f"  - months: {months if months is not None else '未指定'}")
         print(f"  - replace_existing: {replace_existing}")
+        print(f"  - replace_business_data: {replace_business_data}")
         print(f"  - root_directory: {root_directory}")
         print()
 
@@ -149,8 +153,11 @@ def data_import_flow(
                     raise ValueError(f"只指定了年份 {year}，但上个月是 {process_year}年{process_month}月，请同时指定月份")
 
         print(f"replace_existing 参数: {replace_existing}")
+        print(f"replace_business_data 参数: {replace_business_data}")
         if not replace_existing:
-            print("注意: 如果数据已存在，将跳过更新")
+            print("注意: 除业务数据板块外，如果数据已存在，将跳过更新")
+        if replace_business_data:
+            print("注意: 业务数据板块默认使用替换更新模式")
         print(f"Excel 文件目录: {root_directory}")
         print("=" * 60)
 
@@ -184,9 +191,9 @@ def data_import_flow(
                 # 5. 更新费控数据
                 update_cost_control_data_task(dfs, start_date, end_date, replace_existing)
 
-                # 6. 更新业务数据
+                # 6. 更新业务数据（默认替换更新）
                 update_business_data_task(
-                    dfs, start_date, end_date, replace_existing, root_directory
+                    dfs, start_date, end_date, replace_business_data, root_directory
                 )
 
                 # 7. 更新人力费用数据
@@ -218,6 +225,7 @@ def data_import_flow(
                 "month": month,
                 "months": months,
                 "replace_existing": replace_existing,
+                "replace_business_data": replace_business_data,
                 "root_directory": root_directory,
                 "summary": f"数据导入完成，共处理 {len(month_list)} 个月",
             },
