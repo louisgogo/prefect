@@ -1,4 +1,5 @@
 """预算更新流程：从 FONE 拉取预算、严格映射检查、写库"""
+import calendar
 import json
 import os
 import sys
@@ -24,6 +25,19 @@ from ..tasks.budget_update_tasks import (
     process_shared_rate_budget_task,
     write_budget_to_db_task,
 )
+
+
+def _get_actual_through_month() -> Optional[int]:
+    """
+    年中预算默认实际数取到上个月。
+    例如 6 月执行时 6 月实际数尚未出具，取到 5 月；7 月及以后取到 6 月。
+    年初预算不拼接实际数，返回 None。
+    """
+    now = datetime.now()
+    m = now.month
+    if m in (4, 5, 6, 7):
+        return m - 1
+    return None
 
 
 def _get_budget_defaults_by_date() -> dict:
@@ -78,6 +92,7 @@ def _empty(s: Optional[str]) -> bool:
 
 # 模块加载时计算默认值，供 Run Deployment 表单预填；用户可修改后再运行
 _FLOW_DEFAULTS = _get_budget_defaults_by_date()
+_FLOW_DEFAULTS["actual_through_month"] = _get_actual_through_month()
 
 
 @flow(name="budget_update_flow", log_prints=True)
@@ -87,6 +102,7 @@ def budget_update_flow(
     version: Optional[str] = _FLOW_DEFAULTS["version"],
     budget_type: Optional[str] = _FLOW_DEFAULTS["budget_type"],
     report_date: Optional[str] = _FLOW_DEFAULTS["report_date"],
+    actual_through_month: Optional[int] = _FLOW_DEFAULTS["actual_through_month"],
     output_dir: Optional[str] = None,
 ) -> None:
     """
@@ -102,6 +118,8 @@ def budget_update_flow(
         version: 填报日期（字符串），本批数据的版本标签。不填则按当前月份规则推导
         budget_type: 预算类型，'年初预算' 或 '年中预算'。不填则按当前月份规则推导
         report_date: 报告日期（字符串），写库时按此日期定位要替换的那一批。不填则按当前月份规则推导
+        actual_through_month: 年中预算时，实际数取到第几个月（1-11）。不填则按执行月份自动推导：
+            4月→3、5月→4、6月→5、7月→6。年初预算忽略此参数。
         output_dir: 未映射数据 CSV/JSON 导出目录，默认 `/root/prefect/check/budget_unmapped`
 
     易混点（version 与 report_date）：
@@ -124,6 +142,8 @@ def budget_update_flow(
         version = defaults["version"]
     if _empty(report_date):
         report_date = defaults["report_date"]
+    if actual_through_month is None:
+        actual_through_month = _get_actual_through_month()
 
     # 参数校验
     if not budget_year or not fone_version or not version or not budget_type or not report_date:
@@ -132,12 +152,29 @@ def budget_update_flow(
         raise ValueError("budget_type 必须为「年初预算」或「年中预算」")
 
     report_date_ts = pd.to_datetime(report_date)
-    date_range_psql = pd.date_range(
-        start=f"{budget_year}-01-01", end=f"{budget_year}-06-30", freq="D"
-    )
-    date_range_fone = pd.date_range(
-        start=f"{budget_year}-07-01", end=f"{budget_year}-12-31", freq="D"
-    )
+    if budget_type == "年中预算":
+        if actual_through_month is None or not (1 <= actual_through_month <= 11):
+            raise ValueError("年中预算必须指定 actual_through_month（1-11）")
+        psql_end_day = calendar.monthrange(int(budget_year), actual_through_month)[1]
+        fone_start_month = actual_through_month + 1
+        date_range_psql = pd.date_range(
+            start=f"{budget_year}-01-01",
+            end=f"{budget_year}-{actual_through_month:02d}-{psql_end_day}",
+            freq="D",
+        )
+        date_range_fone = pd.date_range(
+            start=f"{budget_year}-{fone_start_month:02d}-01",
+            end=f"{budget_year}-12-31",
+            freq="D",
+        )
+    else:
+        # 年初预算不拼接实际数，保留默认值即可（写库分支不会使用）
+        date_range_psql = pd.date_range(
+            start=f"{budget_year}-01-01", end=f"{budget_year}-06-30", freq="D"
+        )
+        date_range_fone = pd.date_range(
+            start=f"{budget_year}-07-01", end=f"{budget_year}-12-31", freq="D"
+        )
 
     print("=" * 60)
     print("开始预算更新流程")
@@ -147,6 +184,7 @@ def budget_update_flow(
     print(f"  version: {version}")
     print(f"  budget_type: {budget_type}")
     print(f"  report_date: {report_date}")
+    print(f"  actual_through_month: {actual_through_month}")
     print(f"  output_dir: {output_dir}")
     print("=" * 60)
 
@@ -159,6 +197,7 @@ def budget_update_flow(
             "version": version,
             "budget_type": budget_type,
             "report_date": report_date,
+            "actual_through_month": actual_through_month,
         },
     )
 
@@ -214,8 +253,9 @@ def budget_update_flow(
                 "version": version,
                 "budget_type": budget_type,
                 "report_date": report_date,
+                "actual_through_month": actual_through_month,
                 "output_dir": output_dir,
-                "summary": f"{budget_year} {budget_type} 预算更新成功，report_date={report_date}",
+                "summary": f"{budget_year} {budget_type} 预算更新成功，report_date={report_date}，实际数取到 {actual_through_month} 月",
             },
         )
     except Exception as e:

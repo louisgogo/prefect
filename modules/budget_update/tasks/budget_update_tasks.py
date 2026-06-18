@@ -612,7 +612,7 @@ def write_budget_to_db_task(
             psql_exp["填报日期"] = report_date
             psql_exp["会计期间"] = pd.to_datetime(psql_exp["会计期间"])
             psql_exp = psql_exp[psql_exp["会计期间"].isin(date_range_psql)]
-            psql_exp = psql_exp.drop(["日期", "唯一层级"], axis=1, errors="ignore")
+            psql_exp = psql_exp.drop(["日期"], axis=1, errors="ignore")
             psql_exp = psql_exp.rename(
                 columns={
                     "会计期间": "日期",
@@ -620,7 +620,6 @@ def write_budget_to_db_task(
                     "核算项目-费控": "核算项目",
                     "研发项目": "项目",
                     "摘要": "费用说明",
-                    "来源层级": "唯一层级",
                 }
             )
 
@@ -628,13 +627,11 @@ def write_budget_to_db_task(
             psql_inc["填报日期"] = report_date
             psql_inc["会计期间"] = pd.to_datetime(psql_inc["会计期间"])
             psql_inc = psql_inc[psql_inc["会计期间"].isin(date_range_psql)]
-            psql_inc = psql_inc.drop(["唯一层级"], axis=1, errors="ignore")
             psql_inc = psql_inc.rename(
                 columns={
                     "会计期间": "日期",
                     "客户群编码": "客户标识",
                     "客户群名称": "客户群",
-                    "来源层级": "唯一层级",
                 }
             )
 
