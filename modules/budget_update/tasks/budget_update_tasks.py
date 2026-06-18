@@ -533,10 +533,16 @@ def process_shared_rate_budget_task(
     fone_shared_rate: pd.DataFrame,
     version: str,
 ) -> pd.DataFrame:
-    """综合比例预算：仅清洗，无映射检查。"""
+    """综合比例预算：仅清洗，无映射检查；过滤掉不在 dim_bus_line 中的业务线（如电子相框）。"""
     try:
         df = fone_shared_rate.copy()
         df["填报日期"] = version
+        if "业务线" in df.columns:
+            before = len(df)
+            df = df[df["业务线"] != "电子相框"]
+            dropped = before - len(df)
+            if dropped:
+                print(f"综合比例预算过滤掉 {dropped} 条业务线为'电子相框'的记录")
         print(f"综合比例预算处理完成: {len(df)} 条")
         return df
     except Exception as e:
