@@ -4,8 +4,8 @@
 Hermes 触发 flow 后秒回复用户，flow 执行结果通过 webhook 异步通知回 Hermes。
 
 环境变量:
-    HERMES_WEBHOOK_URL: Hermes 回调接收地址，例: http://hermes.internal/api/callbacks/prefect
-    HERMES_WEBHOOK_SECRET: 认证密钥，Bearer Token
+    HERMES_WEBHOOK_URL: Hermes 回调接收地址，例: http://hermes.internal/webhooks/prefect-alerts
+    HERMES_WEBHOOK_SECRET: HMAC-SHA256 签名密钥
 
 使用方式:
     1. 在 flow 开头调用 notify_hermes_task(event="started", ...)
@@ -30,6 +30,9 @@ Hermes 触发 flow 后秒回复用户，flow 执行结果通过 webhook 异步�
             raise
 """
 
+import hashlib
+import hmac
+import json
 import os
 from typing import Any, Optional
 
@@ -132,11 +135,14 @@ def notify_hermes_task(
         logger.info(f"[notify_hermes] 附带 {len(logs)} 条日志")
 
     headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
     try:
-        response = httpx.post(url, json=body, headers=headers, timeout=15.0)
+        if token:
+            content = json.dumps(body, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+            signature = hmac.new(token.encode("utf-8"), content, hashlib.sha256).hexdigest()
+            headers["X-Webhook-Signature"] = signature
+            response = httpx.post(url, content=content, headers=headers, timeout=15.0)
+        else:
+            response = httpx.post(url, json=body, headers=headers, timeout=15.0)
         response.raise_for_status()
         logger.info(f"[notify_hermes] {event} 通知成功 ({response.status_code})")
         return {"success": True, "status_code": response.status_code, "detail": response.text}
