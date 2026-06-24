@@ -11,6 +11,7 @@ from modules import (
     budget_update_flow,
     business_line_profit_flow,
     calculate_shared_rate_flow,
+    contract_ocr_flow,
     data_import_flow,
     fetch_budget_shared_rate_flow,
     fone_recon_flow,
@@ -156,6 +157,15 @@ def _serve_view_update():
     )
 
 
+def _serve_contract_ocr():
+    """模块级函数，供 Process 调用"""
+    contract_ocr_flow.serve(
+        name="主流程-合同OCR识别",
+        tags=["OCR", "合同识别", "AI", "手动触发"],
+        description="对财务部知识库中的合同 PDF/图片进行 OCR，提取关键信息并输出 Markdown。",
+    )
+
+
 def _serve_org_sync():
     """模块级函数，供 Process 调用"""
     org_sync_flow.serve(
@@ -224,6 +234,7 @@ def deploy_to_remote_server():
     process11 = Process(target=_serve_profit_report)
     process12 = Process(target=_serve_view_update)
     process13 = Process(target=_serve_org_sync)
+    process14 = Process(target=_serve_contract_ocr)
 
     process1.start()
     time.sleep(1)
@@ -250,6 +261,8 @@ def deploy_to_remote_server():
     process12.start()
     time.sleep(1)
     process13.start()
+    time.sleep(1)
+    process14.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -280,6 +293,7 @@ def deploy_to_remote_server():
             process11,
             process12,
             process13,
+            process14,
         ]:
             p.terminate()
             p.join()

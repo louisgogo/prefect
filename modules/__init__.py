@@ -7,6 +7,9 @@ from .ai_data_etl.flows.ai_data_etl_flow import ai_data_etl_flow
 from .budget_update.flows.budget_update_flow import budget_update_flow
 from .bus_line_cal.flows.business_line_profit_flow import business_line_profit_flow
 
+# 合同 OCR 识别流程
+from .contract_ocr.flows.contract_ocr_flow import contract_ocr_flow
+
 # 数据导入流程
 from .data_import.flows.data_import_flow import data_import_flow
 
@@ -35,6 +38,7 @@ __all__ = [
     "ai_data_etl_flow",
     "business_line_profit_flow",
     "calculate_shared_rate_flow",
+    "contract_ocr_flow",
     "fetch_budget_shared_rate_flow",
     "data_import_flow",
     "budget_update_flow",
