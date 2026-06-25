@@ -11,7 +11,6 @@ from modules import (
     budget_update_flow,
     business_line_profit_flow,
     calculate_shared_rate_flow,
-    contract_ocr_flow,
     data_import_flow,
     fetch_budget_shared_rate_flow,
     fone_recon_flow,
@@ -83,24 +82,6 @@ def deploy_shared_rate_flow():
         name="综合比例计算流程-本地测试",
         tags=["本地测试", "业务线核算", "综合比例"],
         description="本地测试用：计算业务线综合比例",
-    )
-
-
-def deploy_contract_ocr_flow():
-    """部署合同 OCR 识别流程"""
-    print("=" * 60)
-    print("合同 OCR 识别流程 - 本地测试部署")
-    print("=" * 60)
-
-    print("说明：请在 UI 中手动输入参数（或使用默认值）")
-    print("提示：")
-    print("  - file_path: 合同文件路径，默认读取嘉联合同/应收系统合同第一个 PDF")
-    print("  - output_dir: OCR 结果输出目录，默认保存到知识库/OCR结果")
-
-    contract_ocr_flow.serve(
-        name="合同OCR识别流程-本地测试",
-        tags=["本地测试", "OCR", "合同识别", "AI"],
-        description="本地测试用：对财务部知识库中的合同 PDF/图片进行 OCR，提取关键信息并输出 Markdown。",
     )
 
 
@@ -320,7 +301,6 @@ if __name__ == "__main__":
     process11 = Process(target=deploy_fone_recon_flow)
     process12 = Process(target=deploy_view_update_flow)
     process13 = Process(target=deploy_org_sync_flow)
-    process14 = Process(target=deploy_contract_ocr_flow)
 
     process1.start()
     time.sleep(1)
@@ -347,8 +327,6 @@ if __name__ == "__main__":
     process12.start()
     time.sleep(1)
     process13.start()
-    time.sleep(1)
-    process14.start()
 
     # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
@@ -375,7 +353,6 @@ if __name__ == "__main__":
             process11,
             process12,
             process13,
-            process14,
         ]:
             p.terminate()
             p.join()
