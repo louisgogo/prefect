@@ -225,6 +225,10 @@ def calculate_budget_profit_indicators_task(df_merged: pd.DataFrame) -> pd.DataF
         # 定义需要计算的维度列（分组键）
         group_cols = ["date", "bus_line", "bus_line_code", "unique_lvl", "report_date"]
 
+        # 实际数（1-actual_through_month 月）从 fact_bus_* 读取，bus_line_code 可能为 NULL；
+        # pivot_table 默认 dropna=True 会丢弃 index 中含 NaN 的组合，导致 1-5 月利润数据缺失。
+        df_merged["bus_line_code"] = df_merged["bus_line_code"].fillna("UNKNOWN")
+
         # 按维度透视，计算各科目合计
         df_pivot = df_merged.pivot_table(
             index=group_cols, columns="prim_subj", values="amt", aggfunc="sum", fill_value=0
