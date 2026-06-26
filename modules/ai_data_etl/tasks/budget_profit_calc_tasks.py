@@ -17,7 +17,9 @@ from mypackage.utilities import connect_to_db, delete_data_add_data_by_DateRange
 
 @task(name="load_budget_data", log_prints=True)
 def load_budget_data_task(
-    year: int, month: Optional[int] = None
+    year: int,
+    month: Optional[int] = None,
+    budget_version: Optional[str] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     加载预算收入、费用、利润基础数据
@@ -25,11 +27,12 @@ def load_budget_data_task(
     Args:
         year: 年份
         month: 月份（可选，不指定则加载全年）
+        budget_version: 预算版本（如 '2026-07-01'），只加载每月 1 日的最终定稿版本
 
     Returns:
         (df_income, df_expense, df_profit_base) 三个DataFrame
     """
-    print(f"开始加载预算数据，年份: {year}，月份: {month if month else '全年'}")
+    print(f"开始加载预算数据，年份: {year}，月份: {month if month else '全年'}，版本: {budget_version or '全部每月1日版本'}")
 
     conn, cur = connect_to_db()
 
@@ -49,6 +52,11 @@ def load_budget_data_task(
         else:
             date_filter = f"AND date >= '{year}-01-01' AND date < '{year+1}-01-01'"
 
+        # 只取每月 1 日的最终定稿版本
+        version_filter = "AND EXTRACT(DAY FROM report_date) = 1"
+        if budget_version:
+            version_filter += f" AND report_date = '{budget_version}'"
+
         # 1. 加载预算收入表 - 包含营业收入和营业成本
         print("加载预算收入表...")
         cur.execute(
@@ -58,10 +66,12 @@ def load_budget_data_task(
                 prod_major_cat_code, product, ind_id, indicator,
                 date, mo_amt as amt, prim_subj, unique_lvl,
                 cust_region, cust_cat, prod_major_cat, inc_major_cat,
-                bus_line_code, bus_line, acct_period, custgp_code
+                bus_line_code, bus_line, acct_period, custgp_code,
+                report_date
             FROM bud_income
             WHERE prim_subj IN ('营业收入', '营业成本')
             {date_filter}
+            {version_filter}
         """
         )
         df_income = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
@@ -76,10 +86,12 @@ def load_budget_data_task(
                 ind_code, prim_subj, project, exp_desc,
                 acc_proj, exp_major_cat, date, unique_lvl,
                 bud_sys_amt as amt, exp_item_code,
-                bus_line_code, bus_line, proj_code
+                bus_line_code, bus_line, proj_code,
+                report_date
             FROM bud_expense
             WHERE prim_subj IN ('管理费用', '研发费用', '销售费用', '财务费用')
             {date_filter}
+            {version_filter}
         """
         )
         df_expense = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
@@ -92,13 +104,15 @@ def load_budget_data_task(
             SELECT
                 id, identifier, prim_org, sec_org, third_org,
                 prim_subj, date, unique_lvl, bud_sys_amt as amt,
-                bus_line, bus_line_code
+                bus_line, bus_line_code,
+                report_date
             FROM bud_profit
             WHERE prim_subj NOT IN (
                 '营业收入', '营业成本', '管理费用', '研发费用',
                 '销售费用', '财务费用', '毛利润', '营业利润', '利润总额', '净利润'
             )
             {date_filter}
+            {version_filter}
         """
         )
         df_profit_base = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
@@ -142,6 +156,7 @@ def merge_budget_data_task(df_income: pd.DataFrame, df_expense: pd.DataFrame) ->
             "custgp_name": "cust_name",
             "product": "product_name",
             "indicator": "indicator_name",
+            "report_date": "report_date",
         }
 
         # 选择并重命名收入表列
@@ -162,6 +177,7 @@ def merge_budget_data_task(df_income: pd.DataFrame, df_expense: pd.DataFrame) ->
             "exp_desc": "cust_name",  # 费用描述作为名称
             "project": "product_name",
             "ind_code": "indicator_name",
+            "report_date": "report_date",
         }
 
         # 选择并重命名费用表列
@@ -207,7 +223,7 @@ def calculate_budget_profit_indicators_task(df_merged: pd.DataFrame) -> pd.DataF
         df_merged["date"] = pd.to_datetime(df_merged["date"])
 
         # 定义需要计算的维度列（分组键）
-        group_cols = ["date", "bus_line", "bus_line_code", "unique_lvl"]
+        group_cols = ["date", "bus_line", "bus_line_code", "unique_lvl", "report_date"]
 
         # 按维度透视，计算各科目合计
         df_pivot = df_merged.pivot_table(
@@ -295,6 +311,7 @@ def calculate_budget_profit_indicators_task(df_merged: pd.DataFrame) -> pd.DataF
             "org_name",
             "cust_name",
             "data_source",
+            "report_date",
         ]
         df_melted = df_melted[final_cols]
 
@@ -309,7 +326,10 @@ def calculate_budget_profit_indicators_task(df_merged: pd.DataFrame) -> pd.DataF
 
 @task(name="save_budget_profit", log_prints=True)
 def save_budget_profit_task(
-    df_calculated: pd.DataFrame, year: int, month: Optional[int] = None
+    df_calculated: pd.DataFrame,
+    year: int,
+    month: Optional[int] = None,
+    budget_version: Optional[str] = None,
 ) -> str:
     """
     保存计算后的预算利润数据到数据库
@@ -318,6 +338,7 @@ def save_budget_profit_task(
         df_calculated: 计算后的预算利润数据
         year: 年份
         month: 月份（可选）
+        budget_version: 预算版本（可选），用于精确删除该版本的历史数据
 
     Returns:
         保存的表名
@@ -351,30 +372,37 @@ def save_budget_profit_task(
                     org_name TEXT,
                     cust_name TEXT,
                     data_source TEXT,
+                    report_date DATE,
                     calc_time TIMESTAMP
                 )
             """
             cur.execute(create_table_sql)
+            # 兼容旧表：添加 report_date 列
+            cur.execute(
+                f"""
+                ALTER TABLE {table_name}
+                ADD COLUMN IF NOT EXISTS report_date DATE
+            """
+            )
             conn.commit()
             print(f"  表 {table_name} 检查/创建完成")
         finally:
             cur.close()
             conn.close()
 
-        # 删除该月份的历史计算数据（避免重复）
+        # 删除该月份/版本的历史计算数据（避免重复）
         conn, cur = connect_to_db()
         try:
+            where_parts = [f"EXTRACT(YEAR FROM date) = {year}"]
             if month:
-                delete_sql = f"""
-                    DELETE FROM {table_name}
-                    WHERE EXTRACT(YEAR FROM date) = {year}
-                    AND EXTRACT(MONTH FROM date) = {month}
-                """
-            else:
-                delete_sql = f"""
-                    DELETE FROM {table_name}
-                    WHERE EXTRACT(YEAR FROM date) = {year}
-                """
+                where_parts.append(f"EXTRACT(MONTH FROM date) = {month}")
+            if budget_version:
+                where_parts.append(f"report_date = '{budget_version}'")
+
+            delete_sql = f"""
+                DELETE FROM {table_name}
+                WHERE {' AND '.join(where_parts)}
+            """
 
             cur.execute(delete_sql)
             deleted_rows = cur.rowcount
@@ -401,10 +429,12 @@ def save_budget_profit_task(
                 "org_name",
                 "cust_name",
                 "data_source",
+                "report_date",
             ]
 
             # 转换日期格式为字符串
             df_save["date"] = df_save["date"].dt.strftime("%Y-%m-%d")
+            df_save["report_date"] = pd.to_datetime(df_save["report_date"]).dt.strftime("%Y-%m-%d")
             df_save["calc_time_str"] = df_save["calc_time"].dt.strftime("%Y-%m-%d %H:%M:%S")
 
             # 使用COPY批量插入
@@ -423,6 +453,7 @@ def save_budget_profit_task(
                             str(row["org_name"]) if pd.notna(row["org_name"]) else "",
                             str(row["cust_name"]) if pd.notna(row["cust_name"]) else "",
                             str(row["data_source"]),
+                            str(row["report_date"]) if pd.notna(row["report_date"]) else "",
                             str(row["calc_time_str"]),
                         ]
                     )
@@ -478,6 +509,7 @@ def create_budget_profit_view_task(year: int, month: Optional[int] = None) -> bo
             calc.org_name as prim_org,
             calc.org_name as sec_org,
             calc.org_name as third_org,
+            calc.report_date as report_date,
             '计算' as data_type,
             calc.calc_time as calc_time
         FROM bud_profit_calc calc

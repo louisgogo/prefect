@@ -22,10 +22,11 @@ from ..tasks.budget_profit_calc_tasks import (
 
 @flow(name="ai_data_etl_flow", log_prints=True)
 def ai_data_etl_flow(
-    type: Literal["业务线数据", "业报数据"] = "业务线数据",
+    data_type: Literal["业务线数据", "业报数据"] = "业务线数据",
     calc_budget_profit: bool = True,
     year: Optional[int] = None,
     month: Optional[int] = None,
+    budget_version: Optional[str] = None,
 ) -> None:
     """
     AI数据ETL流程 - 为AI平台生成业务数据视图
@@ -37,43 +38,49 @@ def ai_data_etl_flow(
     4. 支持'业务线数据'和'业报数据'两种模式
 
     Args:
-        type: 数据类型，默认为'业务线数据'
+        data_type: 数据类型，默认为'业务线数据'
             - '业务线数据': 使用业务线分表（fact_bus_*）
             - '业报数据': 使用业报主表（fact_*）
         calc_budget_profit: 是否计算预算利润表，默认为True
         year: 预算利润计算的年份（可选，默认为当前年）
         month: 预算利润计算的月份（可选，默认为None表示全年）
+        budget_version: 预算版本（如 '2026-07-01'），只加载每月1日的最终定稿版本；
+                        不传则加载全部每月1日版本
 
     Examples:
         # 业务线数据模式（默认）
         ai_data_etl_flow()
 
         # 业报数据模式
-        ai_data_etl_flow(type='业报数据')
+        ai_data_etl_flow(data_type='业报数据')
 
         # 不计算预算利润
         ai_data_etl_flow(calc_budget_profit=False)
 
         # 计算特定年份的预算利润
         ai_data_etl_flow(year=2025, month=12)
+
+        # 只生成指定预算版本
+        ai_data_etl_flow(year=2026, budget_version='2026-07-01')
     """
     # 验证参数
-    if type not in ["业务线数据", "业报数据"]:
-        raise ValueError(f"type参数必须是'业务线数据'或'业报数据'，当前值: {type}")
+    if data_type not in ["业务线数据", "业报数据"]:
+        raise ValueError(f"data_type参数必须是'业务线数据'或'业报数据'，当前值: {data_type}")
 
     notify_hermes_task(
         event="started",
         flow_name="AI数据ETL",
         payload={
-            "type": type,
+            "type": data_type,
             "calc_budget_profit": calc_budget_profit,
             "year": year,
             "month": month,
+            "budget_version": budget_version,
         },
     )
 
     try:
-        print(f"开始执行AI数据ETL流程，数据类型: {type}")
+        print(f"开始执行AI数据ETL流程，数据类型: {data_type}")
         print(f"{'='*60}")
 
         # ========== 第一步：预算利润计算（新增）==========
@@ -90,8 +97,12 @@ def ai_data_etl_flow(
 
             try:
                 # 1. 加载预算基础数据
-                print(f"\n[1/5] 加载预算基础数据（年份: {year}，月份: {month if month else '全年'}）")
-                df_income, df_expense, df_profit_base = load_budget_data_task(year, month)
+                print(
+                    f"\n[1/5] 加载预算基础数据（年份: {year}，月份: {month if month else '全年'}，版本: {budget_version or '全部每月1日版本'}）"
+                )
+                df_income, df_expense, df_profit_base = load_budget_data_task(
+                    year, month, budget_version
+                )
 
                 # 2. 融合收入、成本、费用数据
                 print("\n[2/5] 融合预算收入、成本、费用数据")
@@ -101,9 +112,54 @@ def ai_data_etl_flow(
                 print("\n[3/5] 计算预算利润指标（毛利润、营业利润、净利润）")
                 df_calculated = calculate_budget_profit_indicators_task(df_merged)
 
+                # 3.5 合并利润基础表中的其他科目（投资收益、其他收益、营业外收支等）
+                if not df_profit_base.empty:
+                    print("\n[3.5/5] 合并利润基础表其他科目")
+                    import pandas as pd
+
+                    df_profit_base_std = df_profit_base[
+                        [
+                            "id",
+                            "date",
+                            "prim_subj",
+                            "amt",
+                            "unique_lvl",
+                            "bus_line",
+                            "bus_line_code",
+                            "report_date",
+                        ]
+                    ].copy()
+                    df_profit_base_std = df_profit_base_std.rename(columns={"id": "source_id"})
+                    df_profit_base_std["data_source"] = "profit_base"
+                    df_profit_base_std["org_name"] = "预算计算"
+                    df_profit_base_std["cust_name"] = "系统自动"
+                    df_profit_base_std = df_profit_base_std[
+                        [
+                            "source_id",
+                            "date",
+                            "prim_subj",
+                            "amt",
+                            "unique_lvl",
+                            "bus_line",
+                            "bus_line_code",
+                            "org_name",
+                            "cust_name",
+                            "data_source",
+                            "report_date",
+                        ]
+                    ]
+                    df_profit_base_std["amt"] = pd.to_numeric(
+                        df_profit_base_std["amt"], errors="coerce"
+                    ).fillna(0)
+                    df_profit_base_std["date"] = pd.to_datetime(df_profit_base_std["date"])
+                    df_calculated = pd.concat(
+                        [df_calculated, df_profit_base_std], ignore_index=True
+                    )
+                    print(f"  合并后共 {len(df_calculated)} 条")
+
                 # 4. 保存计算结果
                 print("\n[4/5] 保存预算利润计算结果")
-                save_budget_profit_task(df_calculated, year, month)
+                save_budget_profit_task(df_calculated, year, month, budget_version)
 
                 # 5. 创建预算利润视图
                 print("\n[5/5] 创建预算利润视图")
@@ -125,9 +181,9 @@ def ai_data_etl_flow(
             raise
 
         # ========== 第二步：定义表转换配置 ==========
-        print(f"\n步骤2: 定义数据转换配置（{type}模式）")
+        print(f"\n步骤2: 定义数据转换配置（{data_type}模式）")
 
-        if type == "业务线数据":
+        if data_type == "业务线数据":
             table_configs = [
                 {
                     "source": "fact_bus_revenue",
@@ -224,6 +280,7 @@ def ai_data_etl_flow(
                               bpc.cust_name,
                               bpc.data_source,
                               bpc.calc_time,
+                              bpc.report_date,
                               CASE
                                   WHEN bpc.unique_lvl IS NOT NULL THEN split_part(bpc.unique_lvl, '-', 1)
                                   ELSE NULL
@@ -305,7 +362,7 @@ def ai_data_etl_flow(
                 },
             ]
 
-        elif type == "业报数据":
+        elif data_type == "业报数据":
             table_configs = [
                 {
                     "source": "7-4收入计算表",
@@ -398,6 +455,7 @@ def ai_data_etl_flow(
                               bpc.cust_name,
                               bpc.data_source,
                               bpc.calc_time,
+                              bpc.report_date,
                               CASE
                                   WHEN bpc.unique_lvl IS NOT NULL THEN split_part(bpc.unique_lvl, '-', 1)
                                   ELSE NULL
@@ -519,11 +577,12 @@ def ai_data_etl_flow(
             event="completed",
             flow_name="AI数据ETL",
             payload={
-                "type": type,
+                "type": data_type,
                 "calc_budget_profit": calc_budget_profit,
                 "year": year,
                 "month": month,
-                "summary": f"AI数据ETL完成，数据类型: {type}",
+                "budget_version": budget_version,
+                "summary": f"AI数据ETL完成，数据类型: {data_type}",
             },
         )
     except Exception as e:
@@ -535,10 +594,11 @@ def ai_data_etl_flow(
             payload={
                 "error": str(e),
                 "error_type": type(e).__name__,
-                "type": type,
+                "type": data_type,
                 "calc_budget_profit": calc_budget_profit,
                 "year": year,
                 "month": month,
+                "budget_version": budget_version,
             },
         )
         raise Exception(error_msg) from e

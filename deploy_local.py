@@ -119,7 +119,7 @@ def deploy_ai_data_etl_flow():
 
     print("说明：请在 UI 中手动输入参数（或使用默认值）")
     print("提示：")
-    print("  - type: 数据类型，可选'业务线数据'或'业报数据'，默认'业务线数据'")
+    print("  - data_type: 数据类型，可选'业务线数据'或'业报数据'，默认'业务线数据'")
     print("\n业务线数据模式：使用 fact_bus_* 表（业务线分表）")
     print("业报数据模式：使用 fact_* 表（业报主表）")
 
