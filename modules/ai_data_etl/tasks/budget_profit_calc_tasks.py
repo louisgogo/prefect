@@ -129,18 +129,21 @@ def load_budget_data_task(
 
 
 @task(name="merge_budget_data", log_prints=True)
-def merge_budget_data_task(df_income: pd.DataFrame, df_expense: pd.DataFrame) -> pd.DataFrame:
+def merge_budget_data_task(
+    df_income: pd.DataFrame, df_expense: pd.DataFrame, df_profit_base: pd.DataFrame
+) -> pd.DataFrame:
     """
-    融合预算收入表和费用表
+    融合预算收入表、费用表和利润基础表（税金及附加、投资收益、其他收益、营业外收支等）
 
     Args:
         df_income: 预算收入数据
         df_expense: 预算费用数据
+        df_profit_base: 预算利润基础数据（不含已计算指标和收入/费用重复科目）
 
     Returns:
         融合后的基础数据
     """
-    print("开始融合预算收入、成本、费用数据...")
+    print("开始融合预算收入、成本、费用及利润基础科目...")
 
     try:
         # 标准化收入表结构
@@ -185,8 +188,27 @@ def merge_budget_data_task(df_income: pd.DataFrame, df_expense: pd.DataFrame) ->
         df_expense_std = df_expense_std.rename(columns=expense_cols)
         df_expense_std["data_source"] = "expense"
 
-        # 合并收入表和费用表
-        df_merged = pd.concat([df_income_std, df_expense_std], ignore_index=True)
+        # 标准化利润基础表结构（投资收益、其他收益、营业外收支、所得税费用等）
+        profit_base_cols = {
+            "id": "source_id",
+            "date": "date",
+            "prim_subj": "prim_subj",
+            "amt": "amt",
+            "unique_lvl": "unique_lvl",
+            "bus_line": "bus_line",
+            "bus_line_code": "bus_line_code",
+            "report_date": "report_date",
+        }
+        df_profit_base_std = df_profit_base[list(profit_base_cols.keys())].copy()
+        df_profit_base_std = df_profit_base_std.rename(columns=profit_base_cols)
+        df_profit_base_std["data_source"] = "profit_base"
+        df_profit_base_std["org_name"] = "预算计算"
+        df_profit_base_std["cust_name"] = "系统自动"
+
+        # 合并收入表、费用表和利润基础表
+        df_merged = pd.concat(
+            [df_income_std, df_expense_std, df_profit_base_std], ignore_index=True
+        )
 
         # 确保金额列为数值类型
         df_merged["amt"] = pd.to_numeric(df_merged["amt"], errors="coerce").fillna(0)
@@ -197,6 +219,7 @@ def merge_budget_data_task(df_income: pd.DataFrame, df_expense: pd.DataFrame) ->
         print(f"✓ 预算数据融合完成: {len(df_merged)} 条")
         print(f"  - 收入/成本: {len(df_income_std)} 条")
         print(f"  - 费用: {len(df_expense_std)} 条")
+        print(f"  - 利润基础科目: {len(df_profit_base_std)} 条")
 
         return df_merged
 
@@ -210,8 +233,12 @@ def calculate_budget_profit_indicators_task(df_merged: pd.DataFrame) -> pd.DataF
     """
     计算预算利润指标：毛利润、营业利润、利润总额、净利润
 
+    计算口径与 profit_refresh_tasks.py 保持一致，纳入税金及附加、投资收益、
+    其他收益、资产处置收益、公允价值变动收益、资产/信用减值损失、营业外收支、
+    所得税费用等利润基础科目。
+
     Args:
-        df_merged: 融合后的预算基础数据
+        df_merged: 融合后的预算基础数据（含收入、成本、费用及利润基础科目）
 
     Returns:
         包含利润指标的完整预算数据
@@ -237,7 +264,24 @@ def calculate_budget_profit_indicators_task(df_merged: pd.DataFrame) -> pd.DataF
         print(f"数据透视完成，维度组合数: {len(df_pivot)}")
 
         # 确保所有必需的科目列都存在（不存在则填充0）
-        required_subjects = ["营业收入", "营业成本", "管理费用", "研发费用", "销售费用", "财务费用"]
+        required_subjects = [
+            "营业收入",
+            "营业成本",
+            "税金及附加",
+            "销售费用",
+            "管理费用",
+            "研发费用",
+            "财务费用",
+            "信用减值损失",
+            "资产减值损失",
+            "资产处置收益",
+            "公允价值变动收益",
+            "其他收益",
+            "投资收益",
+            "营业外收入",
+            "营业外支出",
+            "所得税费用",
+        ]
         for subj in required_subjects:
             if subj not in df_pivot.columns:
                 df_pivot[subj] = 0
@@ -249,24 +293,33 @@ def calculate_budget_profit_indicators_task(df_merged: pd.DataFrame) -> pd.DataF
         # 1. 毛利润 = 营业收入 - 营业成本
         df_pivot["毛利润"] = df_pivot["营业收入"] - df_pivot["营业成本"]
 
-        # 2. 营业利润 = 毛利润 - 税金及附加 - 销售费用 - 管理费用 - 研发费用 - 财务费用 + 其他收益 + 投资收益等
-        # 简化版：营业利润 = 营业收入 - 营业成本 - 销售费用 - 管理费用 - 研发费用 - 财务费用
+        # 2. 营业利润 = 营业收入 - 税金及附加 - 营业成本 - 销售费用 - 管理费用 - 研发费用 - 财务费用
+        #              + 信用减值损失 + 资产减值损失 + 资产处置收益 + 公允价值变动收益 + 其他收益 + 投资收益
         df_pivot["营业利润"] = (
             df_pivot["营业收入"]
-            - df_pivot["营业成本"]
-            - df_pivot.get("税金及附加", 0)
-            - df_pivot["销售费用"]
-            - df_pivot["管理费用"]
-            - df_pivot["研发费用"]
-            - df_pivot["财务费用"]
+            - (
+                df_pivot["税金及附加"]
+                + df_pivot["营业成本"]
+                + df_pivot["销售费用"]
+                + df_pivot["管理费用"]
+                + df_pivot["研发费用"]
+                + df_pivot["财务费用"]
+            )
+            + (
+                df_pivot["信用减值损失"]
+                + df_pivot["资产减值损失"]
+                + df_pivot["资产处置收益"]
+                + df_pivot["公允价值变动收益"]
+                + df_pivot["其他收益"]
+                + df_pivot["投资收益"]
+            )
         )
 
-        # 3. 利润总额 = 营业利润 + 营业外收入 - 营业外支出 + 其他收益等
-        # 简化版：利润总额 = 营业利润
-        df_pivot["利润总额"] = df_pivot["营业利润"] + df_pivot.get("营业外收入", 0) - df_pivot.get("营业外支出", 0)
+        # 3. 利润总额 = 营业利润 + 营业外收入 - 营业外支出
+        df_pivot["利润总额"] = df_pivot["营业利润"] + df_pivot["营业外收入"] - df_pivot["营业外支出"]
 
         # 4. 净利润 = 利润总额 - 所得税费用
-        df_pivot["净利润"] = df_pivot["利润总额"] - df_pivot.get("所得税费用", 0)
+        df_pivot["净利润"] = df_pivot["利润总额"] - df_pivot["所得税费用"]
 
         print(f"✓ 利润指标计算完成")
         print(f"  - 毛利润合计: {df_pivot['毛利润'].sum():,.2f}")
@@ -278,10 +331,20 @@ def calculate_budget_profit_indicators_task(df_merged: pd.DataFrame) -> pd.DataF
         profit_indicators = [
             "营业收入",
             "营业成本",
+            "税金及附加",
+            "销售费用",
             "管理费用",
             "研发费用",
-            "销售费用",
             "财务费用",
+            "信用减值损失",
+            "资产减值损失",
+            "资产处置收益",
+            "公允价值变动收益",
+            "其他收益",
+            "投资收益",
+            "营业外收入",
+            "营业外支出",
+            "所得税费用",
             "毛利润",
             "营业利润",
             "利润总额",

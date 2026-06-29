@@ -104,58 +104,13 @@ def ai_data_etl_flow(
                     year, month, budget_version
                 )
 
-                # 2. 融合收入、成本、费用数据
-                print("\n[2/5] 融合预算收入、成本、费用数据")
-                df_merged = merge_budget_data_task(df_income, df_expense)
+                # 2. 融合收入、成本、费用及利润基础科目数据
+                print("\n[2/5] 融合预算收入、成本、费用及利润基础科目数据")
+                df_merged = merge_budget_data_task(df_income, df_expense, df_profit_base)
 
                 # 3. 计算利润指标
-                print("\n[3/5] 计算预算利润指标（毛利润、营业利润、净利润）")
+                print("\n[3/5] 计算预算利润指标（毛利润、营业利润、利润总额、净利润）")
                 df_calculated = calculate_budget_profit_indicators_task(df_merged)
-
-                # 3.5 合并利润基础表中的其他科目（投资收益、其他收益、营业外收支等）
-                if not df_profit_base.empty:
-                    print("\n[3.5/5] 合并利润基础表其他科目")
-                    import pandas as pd
-
-                    df_profit_base_std = df_profit_base[
-                        [
-                            "id",
-                            "date",
-                            "prim_subj",
-                            "amt",
-                            "unique_lvl",
-                            "bus_line",
-                            "bus_line_code",
-                            "report_date",
-                        ]
-                    ].copy()
-                    df_profit_base_std = df_profit_base_std.rename(columns={"id": "source_id"})
-                    df_profit_base_std["data_source"] = "profit_base"
-                    df_profit_base_std["org_name"] = "预算计算"
-                    df_profit_base_std["cust_name"] = "系统自动"
-                    df_profit_base_std = df_profit_base_std[
-                        [
-                            "source_id",
-                            "date",
-                            "prim_subj",
-                            "amt",
-                            "unique_lvl",
-                            "bus_line",
-                            "bus_line_code",
-                            "org_name",
-                            "cust_name",
-                            "data_source",
-                            "report_date",
-                        ]
-                    ]
-                    df_profit_base_std["amt"] = pd.to_numeric(
-                        df_profit_base_std["amt"], errors="coerce"
-                    ).fillna(0)
-                    df_profit_base_std["date"] = pd.to_datetime(df_profit_base_std["date"])
-                    df_calculated = pd.concat(
-                        [df_calculated, df_profit_base_std], ignore_index=True
-                    )
-                    print(f"  合并后共 {len(df_calculated)} 条")
 
                 # 4. 保存计算结果
                 print("\n[4/5] 保存预算利润计算结果")
