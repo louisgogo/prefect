@@ -19,6 +19,7 @@ from .profit_refresh.flows.profit_refresh_flow import profit_refresh_flow
 # 往来对账流程
 from .recon.flows.fone_recon_flow import fone_recon_flow
 from .recon.flows.recon_flow import recon_flow
+from .recon.flows.staging_recon_flow import staging_recon_flow
 
 # 报表数据收集流程
 from .report_collection.flows.profit_report_flow import profit_report_flow
@@ -42,6 +43,7 @@ __all__ = [
     "profit_refresh_flow",
     "fone_recon_flow",
     "recon_flow",
+    "staging_recon_flow",
     "report_collection_flow",
     "profit_report_flow",
     "view_update_flow",

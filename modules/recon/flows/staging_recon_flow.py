@@ -1,10 +1,7 @@
-"""往来对账主流程
+"""往来对账主流程（staging_intercourse 数据源）
 
-整合两个阶段：
-  阶段1 - 采集：从 MySQL + 共享盘 Excel 获取原始数据，写入 PostgreSQL
-  阶段2 - 核对：从 PostgreSQL 读取数据，加载映射配置表，生成三类对账结果
-
-默认处理"上个自然月"数据，也可通过 target_date 参数指定月份。
+流程逻辑与 Excel 版往来对账一致，但填报数据从 PostgreSQL
+staging_intercourse 表读取，不再扫描共享盘 Excel。
 """
 import os
 import sys
@@ -25,56 +22,32 @@ from ..tasks.recon_calc_tasks import (
     save_recon_results_task,
 )
 from ..tasks.recon_fetch_tasks import (
-    collect_recon_from_excel_task,
     delete_old_recon_data_task,
     fetch_recon_from_mysql_task,
+    fetch_recon_from_staging_intercourse_task,
     insert_recon_data_task,
-    sync_data_source_task,
 )
 from .fone_recon_flow import fone_recon_flow
 
 
-@flow(name="recon_flow", log_prints=True)
-def recon_flow(target_date: Optional[str] = None, use_fone: bool = False) -> None:
+@flow(name="staging_recon_flow", log_prints=True)
+def staging_recon_flow(target_date: Optional[str] = None, use_fone: bool = False) -> None:
     """
-    内部往来对账完整流程（阶段0同步 + 阶段1采集 + 阶段2核对）
+    内部往来对账完整流程（FONE 可选同步 + staging 采集 + 核对）。
 
     Args:
         target_date: 目标月份，格式 YYYY-MM-DD（如 "2026-02-01"）。
-                     不传则自动使用上个自然月（相对于运行日期）。
-        use_fone: 是否触发从 FONE 获取往来数据子流程（fone_recon_flow）获取 ERP 科目余额表。
-                  默认 False（不触发），仅当需要重新拉取 FONE 数据时设为 True。
-
-    流程说明：
-        阶段0 - 数据源同步：
-          0. 从 2-往来对账填报表 同步 4月修改的文件到 9-数据源
-             （清理旧文件，只保留2026年4月更新的文件）
-
-        阶段1 - 数据采集与存库：
-          1. 从 MySQL Fone2BI_IntCommCheck 读取当月数据
-          2. 从共享盘 Excel（/9-数据源）扫描采集数据
-          3. 删除 PostgreSQL excel_account_recon 中目标月旧数据
-          4. 合并 MySQL + Excel 数据写入 PostgreSQL
-
-        阶段2 - 对账核对与结果输出：
-          5. 检测 recon_name 表，如无目标月数据则从上月复制，日期修改为目标月份
-          6. 加载共享盘参数表（科目统一名称映射）
-          7. 从 PostgreSQL 读取目标月原始数据
-          8. 往来余额 三向核对（应收 vs 应付）
-          9. 销售/采购 发生额核对
-         10. 现金流量 收入 vs 支付核对
-         11. 写入结果表（PostgreSQL）+ 导出备份 Excel，差异原因从旧结果增量继承
+                     不传则自动使用上个自然月。
+        use_fone: 是否触发从 FONE 获取往来数据子流程。默认 False。
     """
     print("=" * 60)
-    print(f"EXCEL往来对账流程启动，目标月份: {target_date or '上个自然月（自动计算）'}")
-    print("填报数据源: 共享盘 Excel")
+    print(f"往来对账流程启动，目标月份: {target_date or '上个自然月（自动计算）'}")
+    print("填报数据源: PostgreSQL public.staging_intercourse")
     print("=" * 60)
 
-    # 启动通知 Hermes
-    notify_hermes_task(event="started", flow_name="EXCEL往来对账")
+    notify_hermes_task(event="started", flow_name="往来对账")
 
     try:
-        # ──── 前置阶段：FONE 数据获取（可选）─────────────────────────────
         if use_fone:
             print("\n【前置阶段】触发从 FONE 获取往来数据脚本，获取 ERP 科目余额表...")
             if target_date:
@@ -87,38 +60,22 @@ def recon_flow(target_date: Optional[str] = None, use_fone: bool = False) -> Non
         else:
             print("\n【前置阶段】跳过 FONE 数据获取（use_fone=False），如需重新拉取请设为 True")
 
-        # ──── 阶段0：同步数据源 ───────────────────────────────────
-        print("\n【阶段0】同步数据源（同步目标月份到当前月份之间的文件）...")
-        sync_result = sync_data_source_task(target_date=target_date)
-        if not sync_result.get("success"):
-            print(f"[WARN] 数据源同步异常: {sync_result.get('message')}，继续执行")
-        else:
-            print(f"【阶段0】完成，{sync_result.get('message')}")
-
-        # ──── 阶段1：数据采集 ────────────────────────────────────
         print("\n【阶段1】开始数据采集...")
 
-        # Step 1: 从 MySQL 读取
         df_mysql = fetch_recon_from_mysql_task(target_date=target_date)
+        df_staging = fetch_recon_from_staging_intercourse_task(target_date=target_date)
 
-        # Step 2: 从 Excel 扫描（失败不中断）
-        df_excel = collect_recon_from_excel_task(target_date=target_date)
-
-        # Step 3: 删除旧数据
         del_result = delete_old_recon_data_task(target_date=target_date)
         if not del_result.get("success"):
             print(f"[WARN] 删除旧数据返回异常: {del_result.get('error')}，继续写入")
 
-        # Step 4: 写入新数据
-        insert_result = insert_recon_data_task(df_mysql=df_mysql, df_excel=df_excel)
+        insert_result = insert_recon_data_task(df_mysql=df_mysql, df_excel=df_staging)
         if not insert_result.get("success"):
             raise RuntimeError(f"阶段1失败，写库错误: {insert_result.get('error')}")
         print(f"【阶段1】完成，共写入 {insert_result.get('count', 0)} 条记录")
 
-        # ──── 阶段2：对账核对 ────────────────────────────────────
         print("\n【阶段2】开始对账核对...")
 
-        # Step 5: 检测 recon_name 表数据并自动填充
         auto_fill_result = check_and_fill_recon_data_task(target_date=target_date)
         if auto_fill_result.get("action") == "filled":
             print(f"【自动填充】{auto_fill_result.get('message')}")
@@ -127,30 +84,13 @@ def recon_flow(target_date: Optional[str] = None, use_fone: bool = False) -> Non
         else:
             print(f"[WARN] 自动填充检测异常: {auto_fill_result.get('message')}")
 
-        # Step 6: 加载参数表（差异说明不再从 Excel 加载，改为数据库增量继承）
         df_params = load_mapping_config_task()
-
-        # Step 7: 读取原始数据
         df_raw = load_recon_raw_task(target_date=target_date)
 
-        # Step 8: 往来核对
-        res_wanglai = reconcile_wanglai_task(
-            df_raw=df_raw,
-            df_params=df_params,
-        )
+        res_wanglai = reconcile_wanglai_task(df_raw=df_raw, df_params=df_params)
+        res_transaction = process_sales_purchases_task(df_raw=df_raw)
+        res_cashflow = process_cashflow_task(df_raw=df_raw, df_params=df_params)
 
-        # Step 9: 销售/采购核对
-        res_transaction = process_sales_purchases_task(
-            df_raw=df_raw,
-        )
-
-        # Step 10: 现金流核对
-        res_cashflow = process_cashflow_task(
-            df_raw=df_raw,
-            df_params=df_params,
-        )
-
-        # Step 11: 保存结果
         output_path = save_recon_results_task(
             res_wanglai=res_wanglai,
             res_transaction=res_transaction,
@@ -169,20 +109,19 @@ def recon_flow(target_date: Optional[str] = None, use_fone: bool = False) -> Non
         print("=" * 60)
 
         print("\n" + "=" * 60)
-        print(f"EXCEL往来对账流程全部完成！")
+        print("往来对账流程全部完成！")
         print(f"  往来差异:     {len(res_wanglai)} 条")
         print(f"  销售/采购差异: {len(res_transaction)} 条")
         print(f"  现金流差异:   {len(res_cashflow)} 条")
         print(f"  备份 Excel:   {output_path}")
         print("=" * 60)
 
-        # 完成通知 Hermes（附带日志摘要）
         notify_hermes_task(
             event="completed",
-            flow_name="EXCEL往来对账",
+            flow_name="往来对账",
             payload={
                 "target_date": target_date,
-                "source": "excel",
+                "source": "staging_intercourse",
                 "output_path": output_path,
                 "wanglai_count": len(res_wanglai),
                 "transaction_count": len(res_transaction),
@@ -192,13 +131,12 @@ def recon_flow(target_date: Optional[str] = None, use_fone: bool = False) -> Non
         )
 
     except Exception as e:
-        # 失败通知 Hermes（附带错误信息和日志摘要）
         notify_hermes_task(
             event="failed",
-            flow_name="EXCEL往来对账",
+            flow_name="往来对账",
             payload={
                 "target_date": target_date,
-                "source": "excel",
+                "source": "staging_intercourse",
                 "error": str(e),
                 "error_type": type(e).__name__,
             },

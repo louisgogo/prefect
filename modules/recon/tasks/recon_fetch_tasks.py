@@ -376,7 +376,69 @@ def collect_recon_from_excel_task(target_date: Optional[str] = None) -> pd.DataF
 
 
 # ──────────────────────────────────────────────
-# Task 3：删除目标月旧数据
+# Task 3：从 staging_intercourse 收集填报数据
+# ──────────────────────────────────────────────
+
+
+@task(name="fetch_recon_from_staging_intercourse", log_prints=True)
+def fetch_recon_from_staging_intercourse_task(target_date: Optional[str] = None) -> pd.DataFrame:
+    """
+    从 PostgreSQL staging_intercourse 表读取指定月份的填报数据，并映射列名为英文。
+
+    该数据源替代共享盘 Excel 填报表；FONE/MySQL 侧数据仍由 fetch_recon_from_mysql_task 获取。
+    """
+    from mypackage.utilities import engine_to_db
+    from sqlalchemy import text
+
+    lastmonth, lastmonth_str, _ = _calc_target_month(target_date)
+
+    column_mapping = {
+        "公司简称": "co_abbr",
+        "科目名称": "prim_subj",
+        "类别": "class",
+        "对方简称": "cp_abbr",
+        "具体内容": "content",
+        "金额": "amt",
+        "日期": "date",
+        "备注": "remarks",
+        "责任人": "resp_person",
+        "大类": "major_cat",
+        "附注分类": "note_cat",
+    }
+    source_cols = list(column_mapping.keys())
+
+    try:
+        engine = engine_to_db()
+        sql = text(
+            """
+            SELECT "公司简称", "科目名称", "类别", "对方简称", "具体内容", "金额",
+                   "日期", "备注", "责任人", "大类", "附注分类"
+            FROM public.staging_intercourse
+            WHERE "日期" = :target_date
+            """
+        )
+        print(f"--> 从 PostgreSQL staging_intercourse 查询目标月份: {lastmonth_str}")
+        df = pd.read_sql(sql, con=engine, params={"target_date": lastmonth})
+
+        if df.empty:
+            print(f"[WARN] staging_intercourse 没有 {lastmonth_str} 的数据，填报数据为空")
+            return pd.DataFrame()
+
+        for col in source_cols:
+            if col not in df.columns:
+                df[col] = None
+
+        df = df[source_cols].rename(columns=column_mapping)
+        print(f"--> 从 staging_intercourse 获取 {len(df)} 条记录")
+        return df
+
+    except Exception as e:
+        print(f"[ERROR] 从 staging_intercourse 获取数据失败: {e}")
+        raise
+
+
+# ──────────────────────────────────────────────
+# Task 4：删除目标月旧数据
 # ──────────────────────────────────────────────
 
 
@@ -423,7 +485,7 @@ def delete_old_recon_data_task(target_date: Optional[str] = None) -> Dict[str, A
 
 
 # ──────────────────────────────────────────────
-# Task 4：合并 MySQL + Excel 并写入 PostgreSQL
+# Task 5：合并 MySQL + Excel/Staging 并写入 PostgreSQL
 # ──────────────────────────────────────────────
 
 

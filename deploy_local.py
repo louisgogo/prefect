@@ -18,6 +18,7 @@ from modules import (
     profit_refresh_flow,
     profit_report_flow,
     recon_flow,
+    staging_recon_flow,
     view_update_flow,
 )
 from modules.bus_line_staging import bus_line_staging_flow
@@ -175,16 +176,29 @@ def deploy_fone_recon_flow():
 
 
 def deploy_recon_flow():
-    """部署内部往来对账流程"""
+    """部署内部往来对账流程（Excel 数据源）"""
     print("=" * 60)
-    print("内部往来对账流程 - 本地测试部署")
+    print("EXCEL往来对账流程 - 本地测试部署")
     print("=" * 60)
 
     # 部署内部往来对账流程到本地 Prefect Server
     recon_flow.serve(
-        name="内部往来对账流程-本地测试",
-        tags=["本地测试", "往来对账", "月度任务"],
+        name="EXCEL往来对账流程-本地测试",
+        tags=["本地测试", "往来对账", "EXCEL", "月度任务"],
         description="本地测试用：自动从 MySQL + Excel 采集上月数据写入 PostgreSQL，生成往来/销售/现金流对账结果并导出 Excel。",
+    )
+
+
+def deploy_staging_recon_flow():
+    """部署内部往来对账流程（staging_intercourse 数据源）"""
+    print("=" * 60)
+    print("往来对账流程（staging_intercourse）- 本地测试部署")
+    print("=" * 60)
+
+    staging_recon_flow.serve(
+        name="往来对账流程-本地测试",
+        tags=["本地测试", "往来对账", "Staging", "月度任务"],
+        description="本地测试用：自动从 MySQL + staging_intercourse 采集上月数据写入 PostgreSQL，生成往来/销售/现金流对账结果并导出 Excel。",
     )
 
 
@@ -294,13 +308,14 @@ if __name__ == "__main__":
     process4 = Process(target=deploy_ai_data_etl_flow)
     process5 = Process(target=deploy_budget_update_flow)
     process6 = Process(target=deploy_recon_flow)
-    process7 = Process(target=deploy_profit_refresh_flow)
-    process8 = Process(target=deploy_bus_line_staging_flow)
-    process9 = Process(target=deploy_fetch_budget_shared_rate_flow)
-    process10 = Process(target=deploy_profit_report_flow)
-    process11 = Process(target=deploy_fone_recon_flow)
-    process12 = Process(target=deploy_view_update_flow)
-    process13 = Process(target=deploy_org_sync_flow)
+    process7 = Process(target=deploy_staging_recon_flow)
+    process8 = Process(target=deploy_profit_refresh_flow)
+    process9 = Process(target=deploy_bus_line_staging_flow)
+    process10 = Process(target=deploy_fetch_budget_shared_rate_flow)
+    process11 = Process(target=deploy_profit_report_flow)
+    process12 = Process(target=deploy_fone_recon_flow)
+    process13 = Process(target=deploy_view_update_flow)
+    process14 = Process(target=deploy_org_sync_flow)
 
     process1.start()
     time.sleep(1)
@@ -327,6 +342,8 @@ if __name__ == "__main__":
     process12.start()
     time.sleep(1)
     process13.start()
+    time.sleep(1)
+    process14.start()
 
     # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
@@ -353,6 +370,7 @@ if __name__ == "__main__":
             process11,
             process12,
             process13,
+            process14,
         ]:
             p.terminate()
             p.join()

@@ -18,6 +18,7 @@ from modules import (
     profit_refresh_flow,
     profit_report_flow,
     recon_flow,
+    staging_recon_flow,
     view_update_flow,
 )
 from modules.bus_line_staging import bus_line_staging_flow
@@ -114,9 +115,18 @@ def _serve_fetch_budget_shared_rate():
 def _serve_recon():
     """模块级函数，供 Process 调用"""
     recon_flow.serve(
-        name="主流程-往来对账",
-        tags=["往来对账", "月度任务", "自动执行"],
+        name="主流程-EXCEL往来对账",
+        tags=["往来对账", "EXCEL", "月度任务", "自动执行"],
         description="内部往来对账流程：自动从 MySQL + Excel 采集上月数据，写入 PostgreSQL，再生成往来/销售/现金流三类对账结果并导出 Excel。",
+    )
+
+
+def _serve_staging_recon():
+    """模块级函数，供 Process 调用"""
+    staging_recon_flow.serve(
+        name="主流程-往来对账",
+        tags=["往来对账", "Staging", "月度任务", "自动执行"],
+        description="内部往来对账流程：自动从 MySQL + staging_intercourse 采集上月数据，写入 PostgreSQL，再生成往来/销售/现金流三类对账结果并导出 Excel。",
     )
 
 
@@ -219,11 +229,12 @@ def deploy_to_remote_server():
     process6 = Process(target=_serve_fetch_budget_shared_rate)
     process7 = Process(target=_serve_profit_refresh)
     process8 = Process(target=_serve_recon)
-    process9 = Process(target=_serve_fone_recon)
-    process10 = Process(target=_serve_bus_line_staging)
-    process11 = Process(target=_serve_profit_report)
-    process12 = Process(target=_serve_view_update)
-    process13 = Process(target=_serve_org_sync)
+    process9 = Process(target=_serve_staging_recon)
+    process10 = Process(target=_serve_fone_recon)
+    process11 = Process(target=_serve_bus_line_staging)
+    process12 = Process(target=_serve_profit_report)
+    process13 = Process(target=_serve_view_update)
+    process14 = Process(target=_serve_org_sync)
 
     process1.start()
     time.sleep(1)
@@ -250,6 +261,8 @@ def deploy_to_remote_server():
     process12.start()
     time.sleep(1)
     process13.start()
+    time.sleep(1)
+    process14.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -280,6 +293,7 @@ def deploy_to_remote_server():
             process11,
             process12,
             process13,
+            process14,
         ]:
             p.terminate()
             p.join()
