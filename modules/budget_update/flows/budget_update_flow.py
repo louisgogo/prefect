@@ -103,6 +103,7 @@ def budget_update_flow(
     budget_type: Optional[str] = _FLOW_DEFAULTS["budget_type"],
     report_date: Optional[str] = _FLOW_DEFAULTS["report_date"],
     actual_through_month: Optional[int] = _FLOW_DEFAULTS["actual_through_month"],
+    refresh_ai_data_etl: bool = True,
     output_dir: Optional[str] = None,
 ) -> None:
     """
@@ -120,6 +121,8 @@ def budget_update_flow(
         report_date: 报告日期（字符串），写库时按此日期定位要替换的那一批。不填则按当前月份规则推导
         actual_through_month: 年中预算时，实际数取到第几个月（1-11）。不填则按执行月份自动推导：
             4月→3、5月→4、6月→5、7月→6。年初预算忽略此参数。
+        refresh_ai_data_etl: 预算基础表写库成功后，是否自动刷新 AI 数据 ETL/预算利润表。
+            默认开启，确保 ai_bud_profit 使用最新 bud_income/bud_expense/bud_profit 重算。
         output_dir: 未映射数据 CSV/JSON 导出目录，默认 `/root/prefect/check/budget_unmapped`
 
     易混点（version 与 report_date）：
@@ -185,6 +188,7 @@ def budget_update_flow(
     print(f"  budget_type: {budget_type}")
     print(f"  report_date: {report_date}")
     print(f"  actual_through_month: {actual_through_month}")
+    print(f"  refresh_ai_data_etl: {refresh_ai_data_etl}")
     print(f"  output_dir: {output_dir}")
     print("=" * 60)
 
@@ -198,6 +202,7 @@ def budget_update_flow(
             "budget_type": budget_type,
             "report_date": report_date,
             "actual_through_month": actual_through_month,
+            "refresh_ai_data_etl": refresh_ai_data_etl,
         },
     )
 
@@ -240,6 +245,24 @@ def budget_update_flow(
             df_shared_rate=df_shared_rate,
         )
 
+        # 4. 预算基础表更新后，重算 AI 预算利润表，避免 ai_bud_profit 留在旧版本计算结果。
+        if refresh_ai_data_etl:
+            print("=" * 60)
+            print("开始刷新 AI 数据 ETL/预算利润表")
+            print("=" * 60)
+            from ...ai_data_etl.flows.ai_data_etl_flow import ai_data_etl_flow
+
+            ai_data_etl_flow(
+                data_type="业务线数据",
+                calc_budget_profit=True,
+                year=int(budget_year),
+                month=None,
+                budget_version=version,
+            )
+            print("=" * 60)
+            print("AI 数据 ETL/预算利润表刷新完成")
+            print("=" * 60)
+
         print("=" * 60)
         print("预算更新流程完成")
         print("=" * 60)
@@ -254,8 +277,13 @@ def budget_update_flow(
                 "budget_type": budget_type,
                 "report_date": report_date,
                 "actual_through_month": actual_through_month,
+                "refresh_ai_data_etl": refresh_ai_data_etl,
                 "output_dir": output_dir,
-                "summary": f"{budget_year} {budget_type} 预算更新成功，report_date={report_date}，实际数取到 {actual_through_month} 月",
+                "summary": (
+                    f"{budget_year} {budget_type} 预算更新成功，report_date={report_date}，"
+                    f"实际数取到 {actual_through_month} 月，"
+                    f"AI数据ETL={'已刷新' if refresh_ai_data_etl else '未刷新'}"
+                ),
             },
         )
     except Exception as e:
