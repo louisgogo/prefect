@@ -376,14 +376,14 @@ def collect_recon_from_excel_task(target_date: Optional[str] = None) -> pd.DataF
 
 
 # ──────────────────────────────────────────────
-# Task 3：从 staging_intercourse 收集填报数据
+# Task 3：从 staging_recon 收集填报数据
 # ──────────────────────────────────────────────
 
 
-@task(name="fetch_recon_from_staging_intercourse", log_prints=True)
-def fetch_recon_from_staging_intercourse_task(target_date: Optional[str] = None) -> pd.DataFrame:
+@task(name="fetch_recon_from_staging_recon", log_prints=True)
+def fetch_recon_from_staging_recon_task(target_date: Optional[str] = None) -> pd.DataFrame:
     """
-    从 PostgreSQL staging_intercourse 表读取指定月份的填报数据，并映射列名为英文。
+    从 PostgreSQL staging_recon 表读取指定月份的填报数据，并映射列名为英文。
 
     该数据源替代共享盘 Excel 填报表；FONE/MySQL 侧数据仍由 fetch_recon_from_mysql_task 获取。
     """
@@ -413,15 +413,15 @@ def fetch_recon_from_staging_intercourse_task(target_date: Optional[str] = None)
             """
             SELECT "公司简称", "科目名称", "类别", "对方简称", "具体内容", "金额",
                    "日期", "备注", "责任人", "大类", "附注分类"
-            FROM public.staging_intercourse
+            FROM public.staging_recon
             WHERE "日期" = :target_date
             """
         )
-        print(f"--> 从 PostgreSQL staging_intercourse 查询目标月份: {lastmonth_str}")
+        print(f"--> 从 PostgreSQL staging_recon 查询目标月份: {lastmonth_str}")
         df = pd.read_sql(sql, con=engine, params={"target_date": lastmonth})
 
         if df.empty:
-            print(f"[WARN] staging_intercourse 没有 {lastmonth_str} 的数据，填报数据为空")
+            print(f"[WARN] staging_recon 没有 {lastmonth_str} 的数据，填报数据为空")
             return pd.DataFrame()
 
         for col in source_cols:
@@ -429,11 +429,11 @@ def fetch_recon_from_staging_intercourse_task(target_date: Optional[str] = None)
                 df[col] = None
 
         df = df[source_cols].rename(columns=column_mapping)
-        print(f"--> 从 staging_intercourse 获取 {len(df)} 条记录")
+        print(f"--> 从 staging_recon 获取 {len(df)} 条记录")
         return df
 
     except Exception as e:
-        print(f"[ERROR] 从 staging_intercourse 获取数据失败: {e}")
+        print(f"[ERROR] 从 staging_recon 获取数据失败: {e}")
         raise
 
 

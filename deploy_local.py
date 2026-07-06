@@ -190,15 +190,15 @@ def deploy_recon_flow():
 
 
 def deploy_staging_recon_flow():
-    """部署内部往来对账流程（staging_intercourse 数据源）"""
+    """部署内部往来对账流程（staging_recon 数据源）"""
     print("=" * 60)
-    print("往来对账流程（staging_intercourse）- 本地测试部署")
+    print("往来对账流程（staging_recon）- 本地测试部署")
     print("=" * 60)
 
     staging_recon_flow.serve(
         name="往来对账流程-本地测试",
         tags=["本地测试", "往来对账", "Staging", "月度任务"],
-        description="本地测试用：自动从 MySQL + staging_intercourse 采集上月数据写入 PostgreSQL，生成往来/销售/现金流对账结果并导出 Excel。",
+        description="本地测试用：自动从 MySQL + staging_recon 采集上月数据写入 PostgreSQL，生成往来/销售/现金流对账结果并导出 Excel。",
     )
 
 

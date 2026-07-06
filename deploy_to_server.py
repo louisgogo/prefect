@@ -126,7 +126,7 @@ def _serve_staging_recon():
     staging_recon_flow.serve(
         name="主流程-往来对账",
         tags=["往来对账", "Staging", "月度任务", "自动执行"],
-        description="内部往来对账流程：自动从 MySQL + staging_intercourse 采集上月数据，写入 PostgreSQL，再生成往来/销售/现金流三类对账结果并导出 Excel。",
+        description="内部往来对账流程：自动从 MySQL + staging_recon 采集上月数据，写入 PostgreSQL，再生成往来/销售/现金流三类对账结果并导出 Excel。",
     )
 
 

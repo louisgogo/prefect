@@ -1,7 +1,7 @@
-"""往来对账主流程（staging_intercourse 数据源）
+"""往来对账主流程（staging_recon 数据源）
 
 流程逻辑与 Excel 版往来对账一致，但填报数据从 PostgreSQL
-staging_intercourse 表读取，不再扫描共享盘 Excel。
+staging_recon 表读取，不再扫描共享盘 Excel。
 """
 import os
 import sys
@@ -24,7 +24,7 @@ from ..tasks.recon_calc_tasks import (
 from ..tasks.recon_fetch_tasks import (
     delete_old_recon_data_task,
     fetch_recon_from_mysql_task,
-    fetch_recon_from_staging_intercourse_task,
+    fetch_recon_from_staging_recon_task,
     insert_recon_data_task,
 )
 from .fone_recon_flow import fone_recon_flow
@@ -42,7 +42,7 @@ def staging_recon_flow(target_date: Optional[str] = None, use_fone: bool = False
     """
     print("=" * 60)
     print(f"往来对账流程启动，目标月份: {target_date or '上个自然月（自动计算）'}")
-    print("填报数据源: PostgreSQL public.staging_intercourse")
+    print("填报数据源: PostgreSQL public.staging_recon")
     print("=" * 60)
 
     notify_hermes_task(event="started", flow_name="往来对账")
@@ -63,7 +63,7 @@ def staging_recon_flow(target_date: Optional[str] = None, use_fone: bool = False
         print("\n【阶段1】开始数据采集...")
 
         df_mysql = fetch_recon_from_mysql_task(target_date=target_date)
-        df_staging = fetch_recon_from_staging_intercourse_task(target_date=target_date)
+        df_staging = fetch_recon_from_staging_recon_task(target_date=target_date)
 
         del_result = delete_old_recon_data_task(target_date=target_date)
         if not del_result.get("success"):
@@ -121,7 +121,7 @@ def staging_recon_flow(target_date: Optional[str] = None, use_fone: bool = False
             flow_name="往来对账",
             payload={
                 "target_date": target_date,
-                "source": "staging_intercourse",
+                "source": "staging_recon",
                 "output_path": output_path,
                 "wanglai_count": len(res_wanglai),
                 "transaction_count": len(res_transaction),
@@ -136,7 +136,7 @@ def staging_recon_flow(target_date: Optional[str] = None, use_fone: bool = False
             flow_name="往来对账",
             payload={
                 "target_date": target_date,
-                "source": "staging_intercourse",
+                "source": "staging_recon",
                 "error": str(e),
                 "error_type": type(e).__name__,
             },
