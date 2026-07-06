@@ -24,6 +24,27 @@ APP_USER_ID = "6a0183b79e00504b378bc0f0"
 GLOBAL_USER_ID = "6a0182c19e00504b378bc0dc"
 
 
+def _is_fone_api_success(data: Dict[str, Any]) -> bool:
+    """兼容 FONE 不同接口版本的成功标记。"""
+    if data.get("isSuccess") is True:
+        return True
+    if data.get("status") is True:
+        return True
+    return str(data.get("code")) == "0"
+
+
+def _redact_fone_response(data: Dict[str, Any]) -> Dict[str, Any]:
+    """脱敏 FONE 响应中的认证票据，仅用于日志和错误信息。"""
+    redacted = dict(data)
+    response_data = redacted.get("data")
+    if isinstance(response_data, dict):
+        redacted["data"] = dict(response_data)
+        for key in ("ticket", "Ticket"):
+            if redacted["data"].get(key):
+                redacted["data"][key] = "***REDACTED***"
+    return redacted
+
+
 def _build_script_text(start_date: str, end_date: str) -> str:
     """构造 0501 脚本内容，替换日期变量。（生产环境配置）"""
     template_path = os.path.join(os.path.dirname(__file__), "fone_recon_script_template.txt")
@@ -55,10 +76,10 @@ def get_fone_token_task() -> Dict[str, str]:
         raise RuntimeError(f"登录响应解析失败 (HTTP {resp.status_code}): {e}, 原始内容: {resp.text}")
 
     print(f"<-- 登录响应 (HTTP {resp.status_code}):")
-    print(json.dumps(data, ensure_ascii=False, indent=2))
+    print(json.dumps(_redact_fone_response(data), ensure_ascii=False, indent=2))
 
-    if not data.get("isSuccess"):
-        raise RuntimeError(f"登录失败: {data}")
+    if not _is_fone_api_success(data):
+        raise RuntimeError(f"登录失败: {_redact_fone_response(data)}")
 
     ticket = data.get("data", {}).get("ticket") or data.get("data", {}).get("Ticket")
     user_id = data.get("data", {}).get("user_id")
@@ -116,7 +137,7 @@ def execute_fone_recon_script_task(ticket: str, start_date: str, end_date: str) 
 
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
-    if not data.get("isSuccess"):
+    if not _is_fone_api_success(data):
         raise RuntimeError(f"执行脚本接口调用失败: {data}")
 
     inner_data_str = data.get("data", "{}")

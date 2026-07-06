@@ -46,7 +46,7 @@ def fone_recon_flow(
 
     流程说明：
       1. 计算目标月份的起止日期（1号 ~ 月末）
-      2. 调用 FONE 登录接口获取 ticket（使用 /api/login/test）
+      2. 调用 FONE 登录接口获取 ticket（使用 /api/login/prod）
       3. 调用执行脚本接口，触发 0501-获取ERP科目余额表-WebApi
       4. 校验脚本执行结果，失败则抛出异常
     """
