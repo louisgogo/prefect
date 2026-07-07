@@ -564,6 +564,15 @@ def insert_recon_data_task(
         if len(df) < before_count:
             print(f"[INFO] 已过滤 {before_count - len(df)} 条 major_cat 为空的无效行，剩余 {len(df)} 条")
 
+        # 剔除 co_abbr/cp_abbr（公司简称/对方简称）为空的记录，避免违反外键约束
+        for col, label in [("co_abbr", "公司简称"), ("cp_abbr", "对方简称")]:
+            before_count = len(df)
+            df = df[df[col].str.strip().astype(bool)].copy()
+            if len(df) < before_count:
+                print(
+                    f"[WARN] 存在 {before_count - len(df)} 条 {col}（{label}）为空白的记录，已进行过滤，剩余 {len(df)} 条"
+                )
+
         # 写入数据库
         engine = engine_to_db()
         df.to_sql("excel_account_recon", con=engine, if_exists="append", index=False)
