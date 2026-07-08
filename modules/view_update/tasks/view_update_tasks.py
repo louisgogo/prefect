@@ -23,6 +23,18 @@ from mypackage.mapping import (
 )
 from mypackage.utilities import connect_to_db
 
+CUSTOM_TABLE_MAPPING = {
+    "往来对账映射配置": "recon_mapping_config",
+}
+
+CUSTOM_COLUMN_MAPPING = {
+    "对账映射项目": "recon_item",
+    "对账统一名称": "recon_unified_name",
+}
+
+CUSTOM_REVERSE_TABLE_MAPPING = {v: k for k, v in CUSTOM_TABLE_MAPPING.items()}
+CUSTOM_REVERSE_COLUMN_MAPPING = {v: k for k, v in CUSTOM_COLUMN_MAPPING.items()}
+
 # 排除不生成视图的系统表
 EXCLUDE_TABLES = {
     "map_translate",
@@ -55,13 +67,28 @@ def update_map_translate_task() -> Dict[str, Any]:
     """
     更新 map_translate 映射表
 
-    将 combined_column_mapping 和 combined_table_mapping 合并后写入数据库，
+    将 combined/custom column/table mapping 合并后写入数据库，
     每次执行前先清空旧数据。
 
     Returns:
         {"success": bool, "count": int, "message": str}
     """
-    field_mapping = {**combined_column_mapping, **combined_table_mapping}
+    field_mapping = {
+        **combined_column_mapping,
+        **combined_table_mapping,
+        **CUSTOM_COLUMN_MAPPING,
+        **CUSTOM_TABLE_MAPPING,
+    }
+
+    seen_en: Dict[str, str] = {}
+    seen_ch: Dict[str, str] = {}
+    for name_ch, name_en in field_mapping.items():
+        if name_en in seen_en and seen_en[name_en] != name_ch:
+            raise ValueError(f"map_translate 英文字段重复: {name_en} -> {seen_en[name_en]}, {name_ch}")
+        if name_ch in seen_ch and seen_ch[name_ch] != name_en:
+            raise ValueError(f"map_translate 中文字段重复: {name_ch} -> {seen_ch[name_ch]}, {name_en}")
+        seen_en[name_en] = name_ch
+        seen_ch[name_ch] = name_en
 
     conn = None
     cur = None
@@ -76,6 +103,32 @@ def update_map_translate_task() -> Dict[str, Any]:
             )
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS recon_mapping_config (
+                recon_item VARCHAR(255) PRIMARY KEY,
+                recon_unified_name VARCHAR(255) NOT NULL DEFAULT ''
+            )
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE recon_mapping_config
+            ADD COLUMN IF NOT EXISTS recon_item VARCHAR(255)
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE recon_mapping_config
+            ADD COLUMN IF NOT EXISTS recon_unified_name VARCHAR(255) NOT NULL DEFAULT ''
+            """
+        )
+        cur.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_recon_mapping_config_recon_item
+            ON recon_mapping_config (recon_item)
+            """
+        )
         cur.execute("DELETE FROM map_translate")
 
         inserted = 0
@@ -86,11 +139,28 @@ def update_map_translate_task() -> Dict[str, Any]:
             )
             inserted += 1
 
+        cur.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_map_translate_name_en
+            ON map_translate (name_en)
+            """
+        )
+        cur.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_map_translate_name_ch
+            ON map_translate (name_ch)
+            """
+        )
+
         conn.commit()
         return {
             "success": True,
             "count": inserted,
-            "message": f"写入 {inserted} 条映射 ({len(combined_column_mapping)}列+{len(combined_table_mapping)}表)",
+            "message": (
+                f"写入 {inserted} 条映射 "
+                f"({len(combined_column_mapping) + len(CUSTOM_COLUMN_MAPPING)}列+"
+                f"{len(combined_table_mapping) + len(CUSTOM_TABLE_MAPPING)}表)"
+            ),
         }
 
     except Exception as e:
@@ -130,6 +200,8 @@ def refresh_views_task() -> Dict[str, Any]:
     cur = None
     try:
         conn, cur = connect_to_db()
+        table_mapping = {**reverse_combined_table_mapping, **CUSTOM_REVERSE_TABLE_MAPPING}
+        column_mapping = {**reverse_combined_column_mapping, **CUSTOM_REVERSE_COLUMN_MAPPING}
 
         # ---------- 1. 删除现有视图 ----------
         cur.execute(
@@ -170,7 +242,7 @@ def refresh_views_task() -> Dict[str, Any]:
 
         for idx, table_name in enumerate(tables, 1):
             # ---------- 3. 表中文映射检查 ----------
-            table_chinese = reverse_combined_table_mapping.get(table_name)
+            table_chinese = table_mapping.get(table_name)
             if table_chinese is None:
                 skipped += 1
                 skipped_tables.append(table_name)
@@ -193,7 +265,7 @@ def refresh_views_task() -> Dict[str, Any]:
             missing_cols: List[str] = []
             for col in columns:
                 english_name = col[0]
-                chinese_name = reverse_combined_column_mapping.get(english_name)
+                chinese_name = column_mapping.get(english_name)
                 if chinese_name:
                     column_parts.append(f'{english_name} AS "{chinese_name}"')
                 else:

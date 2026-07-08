@@ -1,7 +1,7 @@
 """往来对账 - 对账计算 Tasks
 
 阶段2：从 PostgreSQL excel_account_recon 读取数据，
-加载映射配置表，执行往来/销售/现金流三类核对，保存结果。
+加载数据库映射配置，执行往来/销售/现金流三类核对，保存结果。
 移植自 D:\mac\ExcelToPython\generated_script.py。
 """
 import os
@@ -18,12 +18,94 @@ from prefect import task
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 
-def _get_mapping_path() -> str:
-    """根据操作系统返回映射配置表路径"""
-    if platform.system() == "Windows":
-        return r"Z:\10-内部往来对账\4-配置参数\映射配置表.xlsx"
-    else:
-        return r"/mnt/xgd_share/10-内部往来对账/4-配置参数/映射配置表.xlsx"
+RECON_MAPPING_TRANSLATIONS = {
+    "recon_mapping_config": "往来对账映射配置",
+    "recon_item": "对账映射项目",
+    "recon_unified_name": "对账统一名称",
+}
+
+
+def _ensure_recon_mapping_tables(engine) -> None:
+    """Ensure recon mapping config and map_translate metadata exist."""
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS public.recon_mapping_config (
+                    recon_item VARCHAR(255) PRIMARY KEY,
+                    recon_unified_name VARCHAR(255) NOT NULL DEFAULT ''
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE public.recon_mapping_config
+                ADD COLUMN IF NOT EXISTS recon_item VARCHAR(255)
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                ALTER TABLE public.recon_mapping_config
+                ADD COLUMN IF NOT EXISTS recon_unified_name VARCHAR(255) NOT NULL DEFAULT ''
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_recon_mapping_config_recon_item
+                ON public.recon_mapping_config (recon_item)
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS public.map_translate (
+                    name_en VARCHAR(255),
+                    name_ch VARCHAR(255)
+                )
+                """
+            )
+        )
+
+        for name_en, name_ch in RECON_MAPPING_TRANSLATIONS.items():
+            conflict = conn.execute(
+                text(
+                    """
+                    SELECT name_en, name_ch
+                    FROM public.map_translate
+                    WHERE (name_en = :name_en AND name_ch <> :name_ch)
+                       OR (name_ch = :name_ch AND name_en <> :name_en)
+                    LIMIT 1
+                    """
+                ),
+                {"name_en": name_en, "name_ch": name_ch},
+            ).fetchone()
+            if conflict:
+                raise ValueError(
+                    "map_translate 存在冲突映射: "
+                    f"{conflict[0]} -> {conflict[1]}，无法新增 {name_en} -> {name_ch}"
+                )
+
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO public.map_translate (name_en, name_ch)
+                    SELECT :name_en, :name_ch
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM public.map_translate
+                        WHERE name_en = :name_en OR name_ch = :name_ch
+                    )
+                    """
+                ),
+                {"name_en": name_en, "name_ch": name_ch},
+            )
 
 
 # ──────────────────────────────────────────────
@@ -34,25 +116,36 @@ def _get_mapping_path() -> str:
 @task(name="load_mapping_config", log_prints=True)
 def load_mapping_config_task() -> pd.DataFrame:
     """
-    从共享盘加载映射配置表.xlsx 中的参数表（科目统一名称映射）。
+    从数据库 public.recon_mapping_config 加载科目统一名称映射。
     差异说明不再从 Excel 加载，改为从数据库结果表增量继承。
 
     Returns:
         df_params: 参数表 DataFrame
     """
-    mapping_excel = _get_mapping_path()
-    print(f"--> 加载参数表: {mapping_excel}")
+    from mypackage.utilities import engine_to_db
+
+    print("--> 从数据库加载往来对账映射配置: public.recon_mapping_config")
 
     try:
-        df_params = pd.read_excel(mapping_excel, sheet_name="参数表", usecols=["项目", "统一名称"]).dropna(
-            how="all"
-        )
+        engine = engine_to_db()
+        _ensure_recon_mapping_tables(engine)
+        df_params = pd.read_sql(
+            text(
+                """
+                SELECT recon_item AS "项目", recon_unified_name AS "统一名称"
+                FROM public.recon_mapping_config
+                WHERE recon_item IS NOT NULL
+                ORDER BY recon_item
+                """
+            ),
+            con=engine,
+        ).dropna(how="all")
         df_params["统一名称"] = df_params["统一名称"].fillna("")
-        print(f"--> 参数表加载完成：{len(df_params)} 行")
+        print(f"--> 往来对账映射配置加载完成：{len(df_params)} 行")
         return df_params
     except Exception as e:
-        print(f"[ERROR] 加载参数表失败: {e}，使用空表占位")
-        return pd.DataFrame(columns=["项目", "统一名称"])
+        print(f"[ERROR] 加载往来对账映射配置失败: {e}")
+        raise
 
 
 # ──────────────────────────────────────────────

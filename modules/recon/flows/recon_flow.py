@@ -2,7 +2,7 @@
 
 整合两个阶段：
   阶段1 - 采集：从 MySQL + 共享盘 Excel 获取原始数据，写入 PostgreSQL
-  阶段2 - 核对：从 PostgreSQL 读取数据，加载映射配置表，生成三类对账结果
+  阶段2 - 核对：从 PostgreSQL 读取数据，加载数据库映射配置，生成三类对账结果
 
 默认处理"上个自然月"数据，也可通过 target_date 参数指定月份。
 """
@@ -58,7 +58,7 @@ def recon_flow(target_date: Optional[str] = None, use_fone: bool = False) -> Non
 
         阶段2 - 对账核对与结果输出：
           5. 检测 recon_name 表，如无目标月数据则从上月复制，日期修改为目标月份
-          6. 加载共享盘参数表（科目统一名称映射）
+          6. 加载数据库映射配置（科目统一名称映射）
           7. 从 PostgreSQL 读取目标月原始数据
           8. 往来余额 三向核对（应收 vs 应付）
           9. 销售/采购 发生额核对
@@ -127,7 +127,7 @@ def recon_flow(target_date: Optional[str] = None, use_fone: bool = False) -> Non
         else:
             print(f"[WARN] 自动填充检测异常: {auto_fill_result.get('message')}")
 
-        # Step 6: 加载参数表（差异说明不再从 Excel 加载，改为数据库增量继承）
+        # Step 6: 加载数据库映射配置（差异说明从数据库结果表增量继承）
         df_params = load_mapping_config_task()
 
         # Step 7: 读取原始数据
