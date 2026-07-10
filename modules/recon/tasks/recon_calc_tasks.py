@@ -284,13 +284,13 @@ def reconcile_wanglai_task(
 
     df_merged["金额"] = df_merged["金额"].fillna(0).round(2)
     df_merged["往来核对-应付.金额"] = df_merged["金额_应付"].fillna(0).round(2)
-    df_merged["差异"] = (df_merged["金额"] - df_merged["往来核对-应付.金额"]).round(2)
+    df_merged["差异金额"] = (df_merged["金额"] - df_merged["往来核对-应付.金额"]).round(2)
     df_merged["统一日期"] = df_merged["日期_AR"].combine_first(df_merged["日期_AP"])
 
-    df_result = df_merged[(df_merged["差异"] >= 0.01) | (df_merged["差异"] <= -0.01)].copy()
+    df_result = df_merged[(df_merged["差异金额"] >= 0.01) | (df_merged["差异金额"] <= -0.01)].copy()
     df_result["唯一名称"] = df_result["唯一名称_AR"]
     df_result["往来核对-应付.唯一名称"] = df_result["唯一名称_AP"]
-    out_cols = ["唯一名称", "金额", "往来核对-应付.唯一名称", "往来核对-应付.金额", "差异", "统一日期"]
+    out_cols = ["唯一名称", "金额", "往来核对-应付.唯一名称", "往来核对-应付.金额", "差异金额", "统一日期"]
     df_result = df_result[out_cols].copy()
 
     df_final = df_result.copy()
@@ -302,7 +302,7 @@ def reconcile_wanglai_task(
             | df_final["往来核对-应付.唯一名称"].astype(str).str.strip().astype(bool)
         ]
         # 使用 sort_values 按差异金额绝对值降序排序，同时重置索引
-        df_final = df_final.sort_values(by="差异", key=abs, ascending=False).reset_index(drop=True)
+        df_final = df_final.sort_values(by="差异金额", key=abs, ascending=False).reset_index(drop=True)
 
     print(f"--> 往来核对完成，差异 {len(df_final)} 条")
     return df_final
@@ -339,18 +339,18 @@ def process_sales_purchases_task(
 
     df_merged["金额"] = df_merged["金额"].fillna(0).round(2)
     df_merged["采购核对.金额"] = df_merged["金额_采购"].fillna(0).round(2)
-    df_merged["计算差异"] = (df_merged["金额"] - df_merged["采购核对.金额"]).round(2)
+    df_merged["差异金额"] = (df_merged["金额"] - df_merged["采购核对.金额"]).round(2)
 
     if "日期_x" in df_merged.columns and "日期_y" in df_merged.columns:
         df_merged["唯一日期"] = df_merged["日期_x"].combine_first(df_merged["日期_y"])
     else:
         df_merged["唯一日期"] = df_merged["日期"]
 
-    df_result = df_merged[(df_merged["计算差异"] >= 0.05) | (df_merged["计算差异"] <= -0.05)].copy()
+    df_result = df_merged[(df_merged["差异金额"] >= 0.05) | (df_merged["差异金额"] <= -0.05)].copy()
 
     df_result["采购核对.公司简称"] = df_result["公司简称_采购"]
     df_result["采购核对.对方简称"] = df_result["对方简称_采购"]
-    out_cols = ["公司简称", "对方简称", "金额", "采购核对.公司简称", "采购核对.对方简称", "采购核对.金额", "计算差异", "唯一日期"]
+    out_cols = ["公司简称", "对方简称", "金额", "采购核对.公司简称", "采购核对.对方简称", "采购核对.金额", "差异金额", "唯一日期"]
     for c in out_cols:
         if c not in df_result.columns:
             df_result[c] = None
@@ -367,7 +367,7 @@ def process_sales_purchases_task(
         has_purch_cp = df_final["采购核对.对方简称"].astype(str).str.strip().astype(bool)
         df_final = df_final[has_sales_co | has_sales_cp | has_purch_co | has_purch_cp]
         # 使用 sort_values 按绝对差异降序排序
-        df_final = df_final.sort_values(by="计算差异", key=abs, ascending=False).reset_index(drop=True)
+        df_final = df_final.sort_values(by="差异金额", key=abs, ascending=False).reset_index(drop=True)
 
     print(f"--> 销售/采购核对完成，差异 {len(df_final)} 条")
     return df_final
@@ -433,13 +433,13 @@ def process_cashflow_task(
     )
     df_merged["金额"] = df_merged["金额"].fillna(0).round(2)
     df_merged["现金流量-支付.金额"] = df_merged["金额_支付"].fillna(0).round(2)
-    df_merged["差额"] = (df_merged["金额"] - df_merged["现金流量-支付.金额"]).round(2)
+    df_merged["差异金额"] = (df_merged["金额"] - df_merged["现金流量-支付.金额"]).round(2)
     df_merged["唯一日期"] = df_merged["日期_I"].combine_first(df_merged["日期_P"])
 
-    df_result = df_merged[(df_merged["差额"] >= 0.01) | (df_merged["差额"] <= -0.01)].copy()
+    df_result = df_merged[(df_merged["差异金额"] >= 0.01) | (df_merged["差异金额"] <= -0.01)].copy()
     df_result["唯一名称"] = df_result["唯一名称_I"]
     df_result["现金流量-支付.唯一名称"] = df_result["唯一名称_P"]
-    out_cols = ["唯一名称", "金额", "现金流量-支付.唯一名称", "现金流量-支付.金额", "差额", "唯一日期"]
+    out_cols = ["唯一名称", "金额", "现金流量-支付.唯一名称", "现金流量-支付.金额", "差异金额", "唯一日期"]
     df_result = df_result[out_cols].copy()
 
     df_final = df_result.copy()
@@ -451,7 +451,7 @@ def process_cashflow_task(
             | df_final["现金流量-支付.唯一名称"].astype(str).str.strip().astype(bool)
         ]
         # 按绝对值降序排序
-        df_final = df_final.sort_values(by="差额", key=abs, ascending=False).reset_index(drop=True)
+        df_final = df_final.sort_values(by="差异金额", key=abs, ascending=False).reset_index(drop=True)
 
     print(f"--> 现金流核对完成，差异 {len(df_final)} 条")
     return df_final
@@ -592,7 +592,7 @@ def save_recon_results_task(
                 "统一日期",
                 "金额",
                 "往来核对-应付.金额",
-                "差异",
+                "差异金额",
             ],
             "统一日期",
         ),
@@ -607,7 +607,7 @@ def save_recon_results_task(
                 "唯一日期",
                 "金额",
                 "采购核对.金额",
-                "计算差异",
+                "差异金额",
             ],
             "唯一日期",
         ),
@@ -620,7 +620,7 @@ def save_recon_results_task(
                 "唯一日期",
                 "金额",
                 "现金流量-支付.金额",
-                "差额",
+                "差异金额",
             ],
             "唯一日期",
         ),
