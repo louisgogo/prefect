@@ -26,7 +26,7 @@ Store each active plan at:
 
 Use a stable descriptive slug such as `recon-retry-redesign`, `budget-version-backfill`, or `worker-deployment-migration`. One plan should cover one coherent observable outcome.
 
-Do not create a parallel Spec Kit bundle of `spec.md`, `tasks.md`, `research.md`, and checklists. If the work produces durable business, architecture, database, or operating knowledge, update the appropriate canonical document under `docs/`.
+Never store an ExecPlan in `docs/`. If a completed plan is worth retaining as historical implementation evidence, move it to `.agent/plans/archive/`. Do not create a parallel Spec Kit bundle of `spec.md`, `tasks.md`, `research.md`, and checklists. If the work produces durable business, architecture, database, or operating knowledge, update the appropriate canonical document under `docs/`.
 
 ## Core requirements
 

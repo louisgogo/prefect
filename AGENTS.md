@@ -45,7 +45,7 @@ Keep secrets and environment-specific settings out of git. Use `.env`, `PREFECT_
 ## Execution Plans
 
 - For complex multi-flow features, significant orchestration refactors, database migrations or backfills, reconciliation redesigns, production rollout changes, or investigations that need multiple independently verifiable milestones, create and maintain an ExecPlan following `.agent/PLANS.md`.
-- Store active plans at `.agent/plans/YYYY-MM-DD-<short-slug>.md`. Create the `plans/` directory when the first plan is needed.
+- Store active plans at `.agent/plans/YYYY-MM-DD-<short-slug>.md`; retain completed plans only under `.agent/plans/archive/`. Never store ExecPlan files in `docs/`.
 - Use a normal prompt or Codex Plan mode for small, well-scoped fixes, documentation-only edits, and routine maintenance; do not create an ExecPlan for those tasks.
-- ExecPlans are living implementation documents, not a second requirements system. Do not introduce `.specify/`, `specs/`, or mandatory `spec.md`/`tasks.md` bundles unless the user explicitly requests that workflow.
+- ExecPlans are living implementation documents, not a second requirements system. The plan files themselves remain under `.agent/`; durable workflow and business documentation belongs in `docs/`. Do not introduce `.specify/`, `specs/`, or mandatory `spec.md`/`tasks.md` bundles unless the user explicitly requests that workflow.
 - An ExecPlan does not expand authority: commits, pushes, merges, service restarts, production deployments, Prefect flow triggers, destructive database operations, and external writes still require the authorization implied by the user's request.
