@@ -29,7 +29,32 @@ def _set_expense_source_metadata(df, source_column):
     return result
 
 
-@task(name="1-前中后台费用数据拆分", retries=1, log_prints=True)
+def _deduplicate_wage_rates(df):
+    """Collapse identical renamed-organization rates and reject conflicting duplicates."""
+    key_columns = ["unique_lvl", "bus_line", "date"]
+    missing_columns = [column for column in [*key_columns, "rate"] if column not in df.columns]
+    if missing_columns:
+        raise ValueError(f"预算工资比例缺少字段: {', '.join(missing_columns)}")
+
+    duplicate_mask = df.duplicated(key_columns, keep=False)
+    if not duplicate_mask.any():
+        return df.copy(), 0
+
+    duplicates = df.loc[duplicate_mask, [*key_columns, "rate"]]
+    conflicts = (
+        duplicates.groupby(key_columns, dropna=False)["rate"]
+        .nunique(dropna=False)
+        .loc[lambda counts: counts > 1]
+    )
+    if not conflicts.empty:
+        sample = [" / ".join(map(str, key)) for key in conflicts.index.tolist()[:5]]
+        raise ValueError("预算工资比例存在同期间、同组织、同业务线但比例不一致的重复记录: " + "; ".join(sample))
+
+    result = df.drop_duplicates(key_columns, keep="first").copy()
+    return result, len(df) - len(result)
+
+
+@task(name="1-前中后台费用数据拆分", log_prints=True)
 def run_expense_split_to_staging_task(date_range, batch_id):
     print("开始执行业务线费用数据库拆分入库作业...")
 
@@ -256,8 +281,16 @@ def run_expense_split_to_staging_task(date_range, batch_id):
             "请先更新该表对应月份的数据后再运行本流程。"
         )
 
+    df_labor, duplicate_wage_rate_count = _deduplicate_wage_rates(
+        df_labor.rename(
+            columns={"日期": "date", "业务线": "bus_line", "唯一层级": "unique_lvl", "比例": "rate"}
+        )
+    )
+    if duplicate_wage_rate_count:
+        print(f"预算工资比例检测到并合并 {duplicate_wage_rate_count} 条完全重复记录。")
+
     df_labor.rename(
-        columns={"日期": "会计期间", "bus_line": "业务线", "unique_lvl": "唯一层级", "rate": "比例"},
+        columns={"date": "会计期间", "bus_line": "业务线", "unique_lvl": "唯一层级", "rate": "比例"},
         inplace=True,
     )
 

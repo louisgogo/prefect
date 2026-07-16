@@ -11,9 +11,10 @@ from prefect import task
 # 导入本地配置
 from ..config import get_bus_lines, groups_frontend, groups_middle
 from ..utils import insert_to_staging_table
+from .expense_tasks import _set_expense_source_metadata
 
 
-@task(name="3-无归属业务线拆分", retries=1, log_prints=True)
+@task(name="3-无归属业务线拆分", log_prints=True)
 def run_unassigned_split_task(date_range, batch_id):
     print("开始执行: 3-无归属业务线数据拆分(入库中间表)")
 
@@ -205,7 +206,7 @@ def run_unassigned_split_task(date_range, batch_id):
 
         # 写入费用数据（仅非业务线费用，不含无归属）
         if not df_expense.empty:
-            df_expense["数据来源"] = df_expense["唯一层级"]
+            df_expense = _set_expense_source_metadata(df_expense, "唯一层级")
             insert_to_staging_table(
                 df=df_expense,
                 df_org=df_org_mapping,

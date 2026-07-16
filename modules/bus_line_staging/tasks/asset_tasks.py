@@ -13,7 +13,7 @@ from ..config import get_bus_lines, groups_frontend
 from ..utils import insert_to_staging_table
 
 
-@task(name="4-存货应收拆分", retries=1, log_prints=True)
+@task(name="4-存货应收拆分", log_prints=True)
 def run_inv_ar_split_task(date_range, batch_id):
     print("开始执行: 4-存货、应收账款数据拆分(入库中间表)")
 

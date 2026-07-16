@@ -13,7 +13,7 @@ from ..config import get_bus_lines, groups_frontend
 from ..utils import insert_to_staging_table
 
 
-@task(name="2-特定部门收入及其他拆分", retries=1, log_prints=True)
+@task(name="2-特定部门收入及其他拆分", log_prints=True)
 def run_revenue_other_split_task(date_range, batch_id):
     print("开始执行: 2-特定部门的收入、其他数据拆分(入库中间表)")
 
