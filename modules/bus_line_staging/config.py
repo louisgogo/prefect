@@ -5,11 +5,19 @@ from mypackage.utilities import connect_to_db
 
 
 def get_bus_lines():
-    """从数据库 fact_bus_line 动态获取业务线列表"""
+    """从业务线维表获取完整拆分列，保留历史终止业务线。"""
     try:
         conn, cur = connect_to_db()
         cur.execute(
-            "SELECT DISTINCT bus_line FROM fact_bus_line WHERE bus_line IS NOT NULL AND bus_line != ''"
+            """
+            SELECT bus_line
+            FROM dim_bus_line
+            WHERE bus_line IS NOT NULL
+              AND BTRIM(bus_line) <> ''
+              AND bus_line NOT IN (%s, %s)
+            ORDER BY bus_line_no NULLS LAST, bus_line
+            """,
+            ("无", "抵销数"),
         )
         lines = [row[0] for row in cur.fetchall()]
         cur.close()
@@ -29,11 +37,18 @@ def get_bus_lines():
             "跨境总部",
             "跨境欧洲",
             "跨境新加坡",
+            "web3",
+            "能源硬件",
+            "政府事务",
             "能源运营",
             "AGI",
-            "web3",
+            "本地生活",
+            "数币",
+            "消费电子",
+            "审核业务",
+            "政府消费券",
+            "集团",
             "资产运营",
-            "政府事务",
         ]
 
 
