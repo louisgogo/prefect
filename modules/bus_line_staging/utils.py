@@ -20,6 +20,7 @@ TABLE_SCHEMAS = {
             "项目编码",
             "费用金额",
             "年份",
+            "来源层级",
             "数据来源",
             "分摊业务线",
         ],
@@ -183,6 +184,10 @@ def create_staging_table(cur, table_name, bus_lines):
             (table_name,),
         )
         existing_cols = {row[0] for row in cur.fetchall()}
+        if table_name == "staging_bus_expense" and "来源层级" not in existing_cols:
+            cur.execute(f'ALTER TABLE {table_name} ADD COLUMN "来源层级" VARCHAR(500)')
+            existing_cols.add("来源层级")
+            print(f'Table {table_name}: added missing column "来源层级".')
         missing = [col for col in bus_lines if col not in existing_cols]
         if missing:
             for col in missing:
@@ -378,6 +383,15 @@ def insert_to_staging_table(
 
             # 添加审核状态
             final_df["审核状态"] = "PENDING"
+
+            if table_name == "staging_bus_expense":
+                if "来源层级" not in final_df.columns:
+                    raise ValueError("费用 Staging 数据缺少“来源层级”字段，已终止入库。")
+                source_values = final_df["来源层级"].fillna("").astype(str).str.strip()
+                missing_count = int(source_values.eq("").sum())
+                if missing_count:
+                    raise ValueError(f"费用 Staging 数据有 {missing_count} 条记录的“来源层级”为空，已终止入库。")
+                final_df["来源层级"] = source_values
 
             # 只保留表定义的列
             existing_cols = [col for col in table_columns if col in final_df.columns]

@@ -108,8 +108,9 @@ def build_df_template(date_range, conn, cur):
         df_merged = df_expense.merge(df_rate_group, on=["会计期间"], how="left")
         df_merged["费用金额"] = df_merged["费用金额"].astype(float) * df_merged["比重"].astype(float)
         df_merged = df_merged.drop(["比重"], axis=1).rename(
-            columns={"唯一层级_y": "唯一层级", "唯一层级_x": "数据来源"}
+            columns={"唯一层级_y": "唯一层级", "唯一层级_x": "来源层级"}
         )
+        df_merged["数据来源"] = "费用"
     else:
         df_merged = pd.DataFrame()
 
@@ -124,7 +125,8 @@ def build_df_template(date_range, conn, cur):
     cols = [reverse_combined_column_mapping.get(desc[0], desc[0]) for desc in cur.description]
     df = pd.DataFrame(cur.fetchall(), columns=cols)
     if not df.empty:
-        df["数据来源"] = df["唯一层级"]
+        df["来源层级"] = df["唯一层级"]
+        df["数据来源"] = "费用"
 
     # 5) 合并为 df_template
     df_template = pd.concat([df, df_merged], ignore_index=True) if not df_merged.empty else df
@@ -145,6 +147,7 @@ def build_df_template(date_range, conn, cur):
         "研发项目",
         "项目编码",
         "费用金额",
+        "来源层级",
         "数据来源",
         "分摊业务线",
     ]
@@ -175,6 +178,7 @@ def build_df_template(date_range, conn, cur):
             "项目编码",
             "费用金额",
             "年份",
+            "来源层级",
             "数据来源",
             "分摊业务线",
         ]
@@ -185,8 +189,7 @@ def build_df_template(date_range, conn, cur):
 
     df_template = df_template.dropna(subset=["费用金额"])
     df_template = df_template[df_template["费用金额"] != 0]
-    df_template.rename(columns={"数据来源": "sec_dist_lvl"}, inplace=True)
-    df_template["数据来源"] = df_template["sec_dist_lvl"]
+    df_template["sec_dist_lvl"] = df_template["来源层级"]
 
     for col in bus_lines:
         df_template[col] = np.where(df_template["分摊业务线"] == col, 1, np.nan)
@@ -243,6 +246,7 @@ def build_df_labor_backend(df_template, bus_lines, id_exclude, date_range):
         "费用金额",
         "年份",
         "sec_dist_lvl",
+        "来源层级",
         "数据来源",
         "分摊业务线",
     ]

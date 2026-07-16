@@ -5,12 +5,27 @@ import numpy as np
 import pandas as pd
 from mypackage.mapping import reverse_combined_column_mapping
 from mypackage.utilities import connect_to_db, read_data_bysql
-
 from prefect import task
 
 # 导入本地配置
 from ..config import get_bus_lines, groups_backend, groups_frontend, groups_middle
 from ..utils import insert_to_staging_table
+
+
+def _set_expense_source_metadata(df, source_column):
+    """Keep the pre-allocation organization separate from the source type label."""
+    result = df.copy()
+    if source_column not in result.columns:
+        raise ValueError(f"费用数据缺少来源字段: {source_column}")
+
+    source_values = result[source_column].fillna("").astype(str).str.strip()
+    missing_count = int(source_values.eq("").sum())
+    if missing_count:
+        raise ValueError(f"费用数据有 {missing_count} 条记录缺少来源层级，已终止写入 Staging。")
+
+    result["来源层级"] = source_values
+    result["数据来源"] = "费用"
+    return result
 
 
 @task(name="1-前中后台费用数据拆分", retries=1, log_prints=True)
@@ -94,8 +109,9 @@ def run_expense_split_to_staging_task(date_range):
         df_merged = df_expense.merge(df_rate_group, on=["会计期间"], how="left")
         df_merged["费用金额"] = df_merged["费用金额"].astype(float) * df_merged["比重"].astype(float)
         df_merged = df_merged.drop(["比重"], axis=1).rename(
-            columns={"唯一层级_y": "唯一层级", "唯一层级_x": "数据来源"}
+            columns={"唯一层级_y": "唯一层级", "唯一层级_x": "来源层级"}
         )
+        df_merged = _set_expense_source_metadata(df_merged, "来源层级")
     else:
         df_merged = pd.DataFrame()
 
@@ -111,7 +127,7 @@ def run_expense_split_to_staging_task(date_range):
     df = pd.DataFrame(cur.fetchall(), columns=columns)
 
     if not df.empty:
-        df["数据来源"] = df["唯一层级"]
+        df = _set_expense_source_metadata(df, "唯一层级")
 
     df_template = pd.concat([df, df_merged]) if not df_merged.empty else df
     if df_template.empty:
@@ -133,6 +149,7 @@ def run_expense_split_to_staging_task(date_range):
             "研发项目",
             "项目编码",
             "费用金额",
+            "来源层级",
             "数据来源",
             "分摊业务线",
         ]
@@ -161,6 +178,7 @@ def run_expense_split_to_staging_task(date_range):
             "项目编码",
             "费用金额",
             "年份",
+            "来源层级",
             "数据来源",
             "分摊业务线",
         ]
@@ -172,10 +190,8 @@ def run_expense_split_to_staging_task(date_range):
     df_template = df_template.dropna(subset=["费用金额"])
     df_template = df_template[df_template["费用金额"] != 0]
     # 保留 '费用金额' 列名，与 fact_expense.exp_amt 对齐（通过 combined_column_mapping 映射）
-    # 将 '数据来源' 显式重命名为 sec_dist_lvl（该字段不在 combined_column_mapping 中）
-    df_template.rename(columns={"数据来源": "sec_dist_lvl"}, inplace=True)
-    # 数据库表实际存在 "数据来源" 列，需要保留该列的值
-    df_template["数据来源"] = df_template["sec_dist_lvl"]
+    # sec_dist_lvl 仅供后续 melt/pivot 保留原始来源组织；数据库写入使用“来源层级”。
+    df_template["sec_dist_lvl"] = df_template["来源层级"]
 
     for col in bus_lines:
         df_template[col] = np.where(df_template["分摊业务线"] == col, 1, np.nan)
@@ -268,6 +284,7 @@ def run_expense_split_to_staging_task(date_range):
             "费用金额",
             "年份",
             "sec_dist_lvl",
+            "来源层级",
             "数据来源",
             "分摊业务线",
         ]
@@ -302,6 +319,7 @@ def run_expense_split_to_staging_task(date_range):
                 "费用金额",
                 "年份",
                 "sec_dist_lvl",
+                "来源层级",
                 "数据来源",
                 "分摊业务线",
             ]
