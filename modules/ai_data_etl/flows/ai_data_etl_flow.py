@@ -33,7 +33,7 @@ def ai_data_etl_flow(
 
     负责：
     1. 创建"7-4收入计算表"视图（ai_bus_revenue的依赖）
-    2. 创建6个AI数据视图（ai_bus_*, ai_bud_*）
+    2. 创建9个AI数据视图（ai_*, ai_bus_*, ai_bud_*）
     3. 计算预算利润表（融合收入、成本、费用，重新计算利润指标）
     4. 支持'业务线数据'和'业报数据'两种模式
 
@@ -137,6 +137,81 @@ def ai_data_etl_flow(
 
         # ========== 第二步：定义表转换配置 ==========
         print(f"\n步骤2: 定义数据转换配置（{data_type}模式）")
+
+        company_table_configs = [
+            {
+                "source": "7-4收入计算表",
+                "target": "ai_revenue",
+                "custom_sql": """
+                      SELECT
+                          fr.*,
+                          cg.cust_region AS temp_cust_region,
+                          cg.cust_cat AS temp_cust_cat,
+                          CASE
+                              WHEN fr.unique_lvl IS NOT NULL THEN split_part(fr.unique_lvl, '-', 1)
+                              ELSE NULL
+                          END AS temp_prim_org,
+                          CASE
+                              WHEN fr.unique_lvl IS NOT NULL THEN split_part(fr.unique_lvl, '-', 2)
+                              ELSE NULL
+                          END AS temp_sec_org,
+                          CASE
+                              WHEN fr.unique_lvl IS NOT NULL THEN split_part(fr.unique_lvl, '-', 3)
+                              ELSE NULL
+                          END AS temp_third_org
+                      FROM "7-4收入计算表" fr
+                      LEFT JOIN fone_cust_group cg ON fr.custgp_code = cg.custgp_code
+                  """,
+            },
+            {
+                "source": "fact_profit",
+                "target": "ai_profit",
+                "custom_sql": """
+                      SELECT
+                          fp.*,
+                          CASE
+                              WHEN fp.unique_lvl IS NOT NULL THEN split_part(fp.unique_lvl, '-', 1)
+                              ELSE NULL
+                          END AS temp_prim_org,
+                          CASE
+                              WHEN fp.unique_lvl IS NOT NULL THEN split_part(fp.unique_lvl, '-', 2)
+                              ELSE NULL
+                          END AS temp_sec_org,
+                          CASE
+                              WHEN fp.unique_lvl IS NOT NULL THEN split_part(fp.unique_lvl, '-', 3)
+                              ELSE NULL
+                          END AS temp_third_org
+                      FROM fact_profit fp
+                  """,
+            },
+            {
+                "source": "fact_expense",
+                "target": "ai_expense",
+                "custom_sql": """
+                      SELECT
+                          fe.*,
+                          fe.exp_amt AS amt,
+                          fe.rd_proj AS project,
+                          ei.exp_nature AS temp_exp_nature,
+                          ei.exp_item AS temp_exp_item,
+                          ei.exp_major_cat AS temp_exp_major_cat,
+                          CASE
+                              WHEN fe.unique_lvl IS NOT NULL THEN split_part(fe.unique_lvl, '-', 1)
+                              ELSE NULL
+                          END AS temp_prim_org,
+                          CASE
+                              WHEN fe.unique_lvl IS NOT NULL THEN split_part(fe.unique_lvl, '-', 2)
+                              ELSE NULL
+                          END AS temp_sec_org,
+                          CASE
+                              WHEN fe.unique_lvl IS NOT NULL THEN split_part(fe.unique_lvl, '-', 3)
+                              ELSE NULL
+                          END AS temp_third_org
+                      FROM fact_expense fe
+                      LEFT JOIN dim_exp_item ei ON fe.exp_item_code = ei.encoding
+                  """,
+            },
+        ]
 
         if data_type == "业务线数据":
             table_configs = [
@@ -491,6 +566,8 @@ def ai_data_etl_flow(
                       """,
                 },
             ]
+
+        table_configs.extend(company_table_configs)
 
         print(f"共 {len(table_configs)} 个视图需要创建")
 
