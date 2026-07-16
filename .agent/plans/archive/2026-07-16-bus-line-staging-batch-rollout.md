@@ -12,9 +12,10 @@ Apply the reviewed single-table monthly batch model to the configured PostgreSQL
 - [x] (2026-07-16 03:20Z) Confirmed the repository is on `session/prefect` at `7a30491` with unrelated dirty work that must not be included in the rollout commit.
 - [x] (2026-07-16 04:05Z) Captured read-only metrics for 176,079 staging rows across 6 populated months; all logical keys and required identifiers are valid.
 - [x] (2026-07-16 04:20Z) Added and dry-ran full-history baseline migration: 5 `PUBLISHED`, 1 `FILLING`, all protected checksums unchanged, transaction rolled back.
-- [ ] Apply the migration and compare pre/post row counts, amounts, ratio values, audit states, and null batch identifiers.
-- [ ] Commit only the intended staging-batch rollout changes, push the service branch, and confirm the remote commit.
-- [ ] Restart `prefect-workers.service`, validate registrations, health, and logs, then archive this plan and notify completion.
+- [x] (2026-07-16 04:42Z) Applied the migration to the configured database and verified 176,079 staging rows, protected checksums, audit states, ratio values, and the unchanged 1,814,912-row `fact_bus_line` guard.
+- [x] (2026-07-16 04:55Z) Committed the batch rollout, company AI views, and durable business documentation as `7892f43`, `4363ef6`, and `2ceb5a6`; pushed and confirmed `origin/session/prefect` at `2ceb5a6e798f7c9a1afe9398847b8fec298ca9a7`.
+- [x] (2026-07-16 05:02Z) Restarted `prefect-workers.service`, verified API health and 14 registered deployments, and confirmed the unpaused batch-aware staging deployment `0efda22a-afaf-4eb7-b16d-6878544fa7a3`.
+- [x] (2026-07-16 05:04Z) Reviewed remaining untracked paths, excluded local indexes/check outputs and a document containing a plaintext credential, and prepared this completed plan for archival.
 
 ## Surprises & Discoveries
 
@@ -23,6 +24,8 @@ Apply the reviewed single-table monthly batch model to the configured PostgreSQL
 - Existing source implementation intentionally did not apply the database migration; production staging tables still lack `batch_id`.
 - Staging dates span 2025-04 through 2026-06, but only 6 distinct months currently contain rows: 2025-04 and 2026-02 through 2026-06.
 - The requested expense source-level change is already committed and pushed on `feature/expense-source-level` at `fbd9dca`; its code and tests are included in the combined rollout.
+- Several old `flow.serve()` child processes did not exit within systemd's 90-second graceful-stop window. systemd terminated the residual children and started the replacement worker process successfully; no live Flow Run subprocess was found, and six months-old `RUNNING` states were stale orchestration records.
+- The remaining untracked `docs/caiwu-data-pipeline-api.md` contains a plaintext API credential. It was deliberately excluded from Git and the credential should be rotated before any sanitized version of the document is considered for publication.
 
 ## Decision Log
 
@@ -38,7 +41,9 @@ Apply the reviewed single-table monthly batch model to the configured PostgreSQL
 
 ## Outcomes & Retrospective
 
-To be completed after rollout.
+The configured database now uses one monthly staging-batch table with human-readable baseline batch numbers while preserving all historical filled ratios and audit status. All 176,079 existing staging rows were assigned a non-null baseline `batch_id`; five baselines are `PUBLISHED` and June 2026 is `FILLING`. `fact_bus_line` remained the unversioned final reporting result and its 1,814,912 rows and aggregate ratio guard were unchanged.
+
+The batch-aware Prefect code and the previously requested expense source metadata behavior are pushed to `origin/session/prefect`. The systemd-managed workers restarted successfully, the Prefect API is healthy, and the staging deployment is registered and unpaused. No financial calculation, staging extraction, or final upload flow was triggered during rollout, so verification relied on migration invariants, current-view reconciliation, focused tests, deployment registration, and worker health.
 
 ## Context and Orientation
 
@@ -89,6 +94,15 @@ Preflight evidence:
 - Expense source metadata dry-run covered 56,982 rows across 4 expense months; no source-level backfill remained and `数据来源` was already normalized to `费用`.
 - Batch migration dry-run covered 176,079 rows and left all row-content checksums plus the 1,814,912-row `fact_bus_line` guard unchanged.
 
+Completion evidence:
+
+- Applied migration created six baselines: 2025-04 and 2026-02 through 2026-06; five are `PUBLISHED`, and `BLS-202606-000` is `FILLING`.
+- All six staging tables have non-null `batch_id`. Current June views reconcile exactly to their active-batch rows: expense 13,728; revenue 1,781; profit detail 47; inventory 11,522; receivable 978; in-transit 7,278.
+- Expense metadata guards pass: blank `来源层级` count 0 and `数据来源 != 费用` count 0.
+- Twelve focused unit tests passed; focused pre-commit and compile checks passed.
+- Published commits: `7892f43` (monthly staging batches and source metadata), `4363ef6` (company AI views), and `2ceb5a6` (business-line documentation).
+- `prefect-workers.service` is active with main PID 4136828 since 2026-07-16 13:01:13 CST. Prefect API health succeeded and 14 deployments are registered.
+
 ## Interfaces and Dependencies
 
 - Migration: `modules/bus_line_staging/sql/add_batch_versioning.sql` plus the rollout migration command.
@@ -100,3 +114,4 @@ Preflight evidence:
 ## Revision Notes
 
 - 2026-07-16: Created for authorized database migration and systemd worker rollout, with historical-fill preservation as a hard gate.
+- 2026-07-16: Recorded the applied migration, pushed commits, database reconciliation, worker restart behavior, deployment health, credential exclusion, and final outcome before archival.
