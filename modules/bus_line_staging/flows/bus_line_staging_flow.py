@@ -2,7 +2,14 @@ from prefect import flow, get_run_logger
 from prefect.runtime import flow_run
 
 from ...common.tasks.notify_hermes_task import notify_hermes_task
-from ..batch import batch_summary, complete_batch, fail_batch, inherit_previous_values, start_batch
+from ..batch import (
+    batch_summary,
+    compare_batch_to_previous,
+    complete_batch,
+    fail_batch,
+    inherit_previous_values,
+    start_batch,
+)
 from ..config import get_bus_lines, get_date_range
 from ..tasks.asset_tasks import run_inv_ar_split_task
 from ..tasks.expense_tasks import run_expense_split_to_staging_task
@@ -36,7 +43,11 @@ def bus_line_staging_flow(start_date: str | None = None, end_date: str | None = 
     notify_hermes_task(
         event="started",
         flow_name="业务线Staging抽取",
-        payload={"start_date": start_date, "end_date": end_date, "date_range": date_label},
+        payload={
+            "start_date": start_date,
+            "end_date": end_date,
+            "date_range": date_label,
+        },
     )
 
     batch_id = None
@@ -66,13 +77,33 @@ def bus_line_staging_flow(start_date: str | None = None, end_date: str | None = 
         run_inv_ar_split_task(date_range, batch_id)
         logger.info("第5步：特定存货及应收数据入库已完成。")
 
-        inherited_counts = inherit_previous_values(batch_id, get_bus_lines())
+        bus_lines = get_bus_lines()
+        inherited_counts = inherit_previous_values(batch_id, bus_lines)
         inherited_total = sum(inherited_counts.values())
+        comparison = compare_batch_to_previous(batch_id, bus_lines)
         batch_status = complete_batch(batch_id)
         batch_completed = True
         result = batch_summary(batch_id)
         batch_no = result["batch_no"]
         logger.info(f"批次 {batch_id} 已生成，继承 {inherited_total} 条旧比例/审核状态，" f"当前状态: {batch_status}")
+        comparison_totals = comparison["totals"]
+        logger.info(
+            f"批次对比 {comparison['previous_batch_no'] or '无历史批次'} -> {batch_no}: "
+            f"旧记录 {comparison_totals['old_records']}，"
+            f"新记录 {comparison_totals['new_records']}，"
+            f"新增 {comparison_totals['added']}，"
+            f"删除 {comparison_totals['removed']}，"
+            f"来源变化 {comparison_totals['source_changed']}，"
+            f"未变化 {comparison_totals['unchanged']}"
+        )
+        for table_name, table_comparison in comparison["tables"].items():
+            logger.info(
+                f"批次对比明细 {table_name}: "
+                f"新增 {table_comparison['added']}，"
+                f"删除 {table_comparison['removed']}，"
+                f"来源变化 {table_comparison['source_changed']}，"
+                f"未变化 {table_comparison['unchanged']}"
+            )
 
         logger.info("✅ 所有的业务线Staging数据拆分提取工作流已顺利完成！")
 
@@ -87,11 +118,13 @@ def bus_line_staging_flow(start_date: str | None = None, end_date: str | None = 
                 "batch_no": batch_no,
                 "batch_status": batch_status,
                 "inherited_records": inherited_total,
+                "comparison_totals": comparison_totals,
                 "summary": f"业务线Staging抽取完成，范围: {date_label}，批次: {batch_no}",
             },
         )
         result["inherited_records"] = inherited_total
         result["inherited_by_table"] = inherited_counts
+        result["comparison"] = comparison
         return result
     except Exception as e:
         if batch_id and not batch_completed:

@@ -92,6 +92,46 @@ class FailureCursor:
         pass
 
 
+class ComparisonCursor:
+    def __init__(self):
+        self.last_sql = ""
+        self.executed = []
+
+    def execute(self, sql, params=None):
+        self.last_sql = " ".join(sql.split())
+        self.executed.append((self.last_sql, params))
+
+    def fetchone(self):
+        if "LEFT JOIN bus_line_staging_batch AS previous_batch" in self.last_sql:
+            return (
+                "new-batch",
+                "BLS-202606-001",
+                date(2026, 6, 1),
+                "old-batch",
+                "BLS-202606-000",
+            )
+        if "SELECT to_regclass" in self.last_sql:
+            return ("staging_bus_revenue",)
+        if "FROM ranked" in self.last_sql:
+            return (
+                2,
+                1,
+                3,
+                4,
+                [
+                    {
+                        "change_type": "ADDED",
+                        "source_no": "new-1",
+                        "unique_lvl": "org-1",
+                    }
+                ],
+            )
+        return None
+
+    def close(self):
+        pass
+
+
 class BusLineStagingBatchTests(unittest.TestCase):
     def test_accounting_periods_normalizes_and_deduplicates_months(self):
         periods = batch.accounting_periods([date(2026, 6, 30), date(2026, 6, 1), date(2026, 7, 15)])
@@ -171,6 +211,45 @@ class BusLineStagingBatchTests(unittest.TestCase):
             batch.fail_batch("ready-batch", "notification error")
 
         self.assertFalse(any(sql.startswith("DELETE") for sql, _ in cursor.executed))
+        self.assertTrue(connection.committed)
+
+    def test_batch_comparison_excludes_fill_fields_and_summarizes_source_changes(self):
+        cursor = ComparisonCursor()
+        connection = FakeConnection(cursor)
+        with patch.object(batch, "connect_to_db", return_value=(connection, cursor)), patch.object(
+            batch, "ensure_batch_schema"
+        ), patch.object(
+            batch,
+            "_existing_business_line_columns",
+            return_value=["国际业务", "国内硬件"],
+        ), patch.dict(
+            batch.STAGING_TABLE_DATE_COLUMNS,
+            {"staging_bus_revenue": "会计期间"},
+            clear=True,
+        ):
+            result = batch.compare_batch_to_previous("new-batch", ["国际业务", "国内硬件"], sample_limit=5)
+
+        self.assertEqual(result["previous_batch_no"], "BLS-202606-000")
+        self.assertEqual(
+            result["totals"],
+            {
+                "old_records": 8,
+                "new_records": 9,
+                "added": 2,
+                "removed": 1,
+                "source_changed": 3,
+                "unchanged": 4,
+            },
+        )
+        comparison_params = next(params for sql, params in cursor.executed if "FROM ranked" in sql)
+        comparison_sql = next(sql for sql, _ in cursor.executed if "FROM ranked" in sql)
+        excluded_columns = comparison_params[2]
+        self.assertIn("batch_id", excluded_columns)
+        self.assertIn("审核状态", excluded_columns)
+        self.assertIn("创建时间", excluded_columns)
+        self.assertIn("国际业务", excluded_columns)
+        self.assertIn("JSONB_OBJECT_KEYS", comparison_sql)
+        self.assertEqual(comparison_params[-1], 5)
         self.assertTrue(connection.committed)
 
 

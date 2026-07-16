@@ -107,11 +107,19 @@ flowchart TD
 - 每次Staging抽取生成独立的 `batch_id`，不再删除或覆盖同期间的历史批次。
 - 每个批次只对应一个会计月份，并生成便于识别的 `batch_no`：历史基线为 `BLS-YYYYMM-000`，后续重发依次为 `001`、`002`。
 - 新批次按“来源编号 + 唯一层级”匹配上一填报批次；匹配成功时直接继承全部业务线比例和审核状态，新记录保持空比例和 `PENDING`。
+- 新批次生成后自动与其 `previous_batch_id` 对比，按表统计旧记录、新记录、新增、删除、来源数据变化和未变化数量。业务线比例、审核状态、批次标识、行主键和创建时间不计入“来源数据变化”。Prefect 日志输出汇总，Flow Run 返回结果包含各表统计及少量变化样例；来源发生变化的样例会列出变化字段名，但不在日志中输出逐行数据。
 - 普通填报人员只选择会计期间，不手工选择批次。前端应读取 `vw_staging_bus_*_current_edit` 视图，或查询该月份状态为 `FILLING` 的批次。
 - 新批次生成成功后状态为 `READY`；如果该期间不存在当前填报批次，则自动进入 `FILLING`，否则由管理员确认后启用，避免填报过程中静默切换。
 - 填报请求必须携带页面对应的 `batch_id`，更新时同时校验该批次仍是当前填报批次，避免旧页面写入失效批次。
 - `fact_bus_line` 不保存批次历史。它仍是填报审核完成后上报形成的最终定稿比例表；只有上报成功后，管理员才将对应Staging批次标记为 `PUBLISHED`。
-- 管理员可使用 `python scripts/manage_bus_line_staging_batches.py list|activate|publish` 查询、启用和发布批次。`publish` 必须在 `fact_bus_line` 上报成功后执行。
+- 管理员可使用 `python scripts/manage_bus_line_staging_batches.py list|compare|activate|publish` 查询、对比、启用和发布批次。`publish` 必须在 `fact_bus_line` 上报成功后执行。
+
+重新查看某个批次与上一批次的对比：
+
+```bash
+venv/bin/python scripts/manage_bus_line_staging_batches.py compare <batch_id> \
+  --sample-limit 10
+```
 
 前端默认批次查询：
 

@@ -358,6 +358,196 @@ def inherit_previous_values(batch_id: str, bus_lines: Iterable[str]) -> dict[str
         conn.close()
 
 
+def compare_batch_to_previous(
+    batch_id: str,
+    bus_lines: Iterable[str],
+    sample_limit: int = 10,
+) -> dict[str, object]:
+    """Compare one batch with its predecessor without comparing filled ratios.
+
+    Records are matched by ``来源编号 + 唯一层级``. Source-data fields are compared after
+    excluding row identity, batch identity, fill ratios, audit state, and creation time.
+    """
+    if sample_limit < 0 or sample_limit > 100:
+        raise ValueError("sample_limit must be between 0 and 100")
+
+    conn, cur = connect_to_db()
+    try:
+        ensure_batch_schema(cur)
+        cur.execute(
+            """
+            SELECT current_batch.batch_id, current_batch.batch_no,
+                   current_batch.acct_period, current_batch.previous_batch_id,
+                   previous_batch.batch_no
+            FROM bus_line_staging_batch AS current_batch
+            LEFT JOIN bus_line_staging_batch AS previous_batch
+              ON previous_batch.batch_id = current_batch.previous_batch_id
+            WHERE current_batch.batch_id = %s
+            """,
+            (batch_id,),
+        )
+        batch_row = cur.fetchone()
+        if not batch_row:
+            raise ValueError(f"Unknown batch: {batch_id}")
+
+        (
+            current_batch_id,
+            batch_no,
+            acct_period,
+            previous_batch_id,
+            previous_batch_no,
+        ) = batch_row
+        table_results: dict[str, dict[str, object]] = {}
+        totals = {
+            "old_records": 0,
+            "new_records": 0,
+            "added": 0,
+            "removed": 0,
+            "source_changed": 0,
+            "unchanged": 0,
+        }
+
+        for table_name in STAGING_TABLE_DATE_COLUMNS:
+            cur.execute("SELECT to_regclass(%s)", (table_name,))
+            if cur.fetchone()[0] is None:
+                continue
+
+            ratio_columns = _existing_business_line_columns(cur, table_name, bus_lines)
+            excluded_columns = [
+                "id",
+                "batch_id",
+                "审核状态",
+                "创建时间",
+                *ratio_columns,
+            ]
+            cur.execute(
+                f"""
+                WITH old_rows AS (
+                    SELECT * FROM {table_name} WHERE batch_id = %s
+                ),
+                new_rows AS (
+                    SELECT * FROM {table_name} WHERE batch_id = %s
+                ),
+                paired AS (
+                    SELECT
+                        COALESCE(new_row."来源编号", old_row."来源编号") AS source_no,
+                        COALESCE(new_row."唯一层级", old_row."唯一层级") AS unique_lvl,
+                        to_jsonb(old_row) - %s::text[] AS old_payload,
+                        to_jsonb(new_row) - %s::text[] AS new_payload,
+                        CASE
+                            WHEN old_row.id IS NULL THEN 'ADDED'
+                            WHEN new_row.id IS NULL THEN 'REMOVED'
+                        END AS row_presence
+                    FROM old_rows AS old_row
+                    FULL OUTER JOIN new_rows AS new_row
+                      ON new_row."来源编号" = old_row."来源编号"
+                     AND new_row."唯一层级" = old_row."唯一层级"
+                ),
+                compared AS (
+                    SELECT
+                        source_no,
+                        unique_lvl,
+                        old_payload,
+                        new_payload,
+                        CASE
+                            WHEN row_presence IS NOT NULL THEN row_presence
+                            WHEN new_payload IS DISTINCT FROM old_payload THEN 'SOURCE_CHANGED'
+                            ELSE 'UNCHANGED'
+                        END AS change_type
+                    FROM paired
+                ),
+                ranked AS (
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY change_type ORDER BY source_no, unique_lvl
+                    ) AS change_rank
+                    FROM compared
+                )
+                SELECT
+                    COUNT(*) FILTER (WHERE change_type = 'ADDED') AS added,
+                    COUNT(*) FILTER (WHERE change_type = 'REMOVED') AS removed,
+                    COUNT(*) FILTER (WHERE change_type = 'SOURCE_CHANGED') AS source_changed,
+                    COUNT(*) FILTER (WHERE change_type = 'UNCHANGED') AS unchanged,
+                    COALESCE(
+                        JSONB_AGG(
+                            JSONB_BUILD_OBJECT(
+                                'change_type', change_type,
+                                'source_no', source_no,
+                                'unique_lvl', unique_lvl,
+                                'changed_fields',
+                                CASE
+                                    WHEN change_type = 'SOURCE_CHANGED' THEN (
+                                        SELECT COALESCE(
+                                            JSONB_AGG(field_name ORDER BY field_name),
+                                            '[]'::jsonb
+                                        )
+                                        FROM (
+                                            SELECT JSONB_OBJECT_KEYS(
+                                                COALESCE(old_payload, '{{}}'::jsonb)
+                                            ) AS field_name
+                                            UNION
+                                            SELECT JSONB_OBJECT_KEYS(
+                                                COALESCE(new_payload, '{{}}'::jsonb)
+                                            ) AS field_name
+                                        ) AS payload_fields
+                                        WHERE old_payload -> field_name
+                                              IS DISTINCT FROM new_payload -> field_name
+                                    )
+                                    ELSE '[]'::jsonb
+                                END
+                            ) ORDER BY change_type, source_no, unique_lvl
+                        ) FILTER (
+                            WHERE change_type <> 'UNCHANGED' AND change_rank <= %s
+                        ),
+                        '[]'::jsonb
+                    ) AS samples
+                FROM ranked
+                """,
+                (
+                    previous_batch_id,
+                    current_batch_id,
+                    excluded_columns,
+                    excluded_columns,
+                    sample_limit,
+                ),
+            )
+            added, removed, source_changed, unchanged, samples = cur.fetchone()
+            added = int(added or 0)
+            removed = int(removed or 0)
+            source_changed = int(source_changed or 0)
+            unchanged = int(unchanged or 0)
+            table_result = {
+                "old_records": removed + source_changed + unchanged,
+                "new_records": added + source_changed + unchanged,
+                "added": added,
+                "removed": removed,
+                "source_changed": source_changed,
+                "unchanged": unchanged,
+                "samples": samples or [],
+            }
+            table_results[table_name] = table_result
+            for key in totals:
+                totals[key] += int(table_result[key])
+
+        conn.commit()
+        return {
+            "batch_id": str(current_batch_id),
+            "batch_no": batch_no,
+            "acct_period": acct_period.isoformat(),
+            "previous_batch_id": (
+                str(previous_batch_id) if previous_batch_id is not None else None
+            ),
+            "previous_batch_no": previous_batch_no,
+            "totals": totals,
+            "tables": table_results,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
 def complete_batch(batch_id: str) -> str:
     """Mark a generated batch ready or make it the default editable batch."""
     conn, cur = connect_to_db()

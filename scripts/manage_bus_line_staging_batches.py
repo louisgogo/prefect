@@ -1,4 +1,4 @@
-"""Administrator CLI for business-line staging batch activation and publication."""
+"""Administrator CLI for business-line staging batch comparison and lifecycle management."""
 
 from __future__ import annotations
 
@@ -10,7 +10,13 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from modules.bus_line_staging import activate_batch, list_batches, publish_batch
+from modules.bus_line_staging import (
+    activate_batch,
+    compare_batch_to_previous,
+    list_batches,
+    publish_batch,
+)
+from modules.bus_line_staging.config import get_bus_lines
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,6 +29,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     activate_parser = subparsers.add_parser("activate", help="Set a READY batch as editable")
     activate_parser.add_argument("batch_id")
+
+    compare_parser = subparsers.add_parser("compare", help="Compare a batch with its predecessor")
+    compare_parser.add_argument("batch_id")
+    compare_parser.add_argument("--sample-limit", type=int, default=10)
 
     publish_parser = subparsers.add_parser(
         "publish",
@@ -39,6 +49,13 @@ def main() -> None:
     elif args.command == "activate":
         activate_batch(args.batch_id)
         print(f"Activated batch {args.batch_id}")
+    elif args.command == "compare":
+        comparison = compare_batch_to_previous(
+            args.batch_id,
+            get_bus_lines(),
+            sample_limit=args.sample_limit,
+        )
+        print(json.dumps(comparison, ensure_ascii=False, indent=2))
     elif args.command == "publish":
         publish_batch(args.batch_id)
         print(f"Published batch {args.batch_id}")
