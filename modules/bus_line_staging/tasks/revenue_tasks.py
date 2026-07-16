@@ -14,7 +14,7 @@ from ..utils import insert_to_staging_table
 
 
 @task(name="2-特定部门收入及其他拆分", retries=1, log_prints=True)
-def run_revenue_other_split_task(date_range):
+def run_revenue_other_split_task(date_range, batch_id):
     print("开始执行: 2-特定部门的收入、其他数据拆分(入库中间表)")
 
     bus_lines = get_bus_lines()
@@ -130,6 +130,7 @@ def run_revenue_other_split_task(date_range):
                 date_column="会计期间",
                 table_name="staging_bus_revenue",
                 bus_lines=bus_lines,
+                batch_id=batch_id,
                 is_split_others=False,
                 is_by_df=True,
             )
@@ -142,6 +143,7 @@ def run_revenue_other_split_task(date_range):
                 date_column="日期",
                 table_name="staging_bus_profit_bd",
                 bus_lines=bus_lines,
+                batch_id=batch_id,
                 is_split_others=False,
                 is_by_df=True,
             )

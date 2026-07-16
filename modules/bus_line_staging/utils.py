@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 from mypackage.utilities import connect_to_db, engine_to_db
 
+from .batch import ensure_batch_schema, ensure_staging_table_batch_support
+
 # 表结构定义（中文列名）
 TABLE_SCHEMAS = {
     "staging_bus_expense": {
@@ -20,6 +22,7 @@ TABLE_SCHEMAS = {
             "项目编码",
             "费用金额",
             "年份",
+            "来源层级",
             "数据来源",
             "分摊业务线",
         ],
@@ -157,7 +160,7 @@ TABLE_SCHEMAS = {
 def get_table_columns(table_name, bus_lines):
     """获取表的完整列名列表（含业务线）"""
     schema = TABLE_SCHEMAS.get(table_name, {})
-    columns = []
+    columns = ["batch_id"]
     # 组织列放前面
     if "组织" in schema:
         columns.extend(schema["组织"])
@@ -173,6 +176,7 @@ def get_table_columns(table_name, bus_lines):
 def create_staging_table(cur, table_name, bus_lines):
     """创建staging表（中文列名）。表不存在则创建；已存在则自动补全缺失的业务线列。"""
     schema = TABLE_SCHEMAS.get(table_name, {})
+    ensure_batch_schema(cur)
 
     # 检查表是否已存在
     cur.execute(f"SELECT to_regclass('{table_name}')")
@@ -183,6 +187,10 @@ def create_staging_table(cur, table_name, bus_lines):
             (table_name,),
         )
         existing_cols = {row[0] for row in cur.fetchall()}
+        if table_name == "staging_bus_expense" and "来源层级" not in existing_cols:
+            cur.execute(f'ALTER TABLE {table_name} ADD COLUMN "来源层级" VARCHAR(500)')
+            existing_cols.add("来源层级")
+            print(f'Table {table_name}: added missing column "来源层级".')
         missing = [col for col in bus_lines if col not in existing_cols]
         if missing:
             for col in missing:
@@ -190,10 +198,11 @@ def create_staging_table(cur, table_name, bus_lines):
                 print(f'Table {table_name}: added missing column "{col}".')
         else:
             print(f"Table {table_name} already exists, columns aligned.")
+        ensure_staging_table_batch_support(cur, table_name)
         return
 
     # 表不存在：构建列定义并创建
-    columns_def = ["id SERIAL PRIMARY KEY"]
+    columns_def = ["id SERIAL PRIMARY KEY", "batch_id UUID NOT NULL"]
 
     # 组织列
     if "组织" in schema:
@@ -282,6 +291,7 @@ def create_staging_table(cur, table_name, bus_lines):
     )
     cur.execute(f'CREATE INDEX idx_{table_name}_date ON {table_name}("{date_col}")')
     cur.execute(f'CREATE INDEX idx_{table_name}_lvl ON {table_name}("唯一层级")')
+    ensure_staging_table_batch_support(cur, table_name)
 
     print(f"Table {table_name} created with {len(columns_def)} columns")
 
@@ -305,19 +315,20 @@ def insert_to_staging_table(
     date_column,
     table_name,
     bus_lines,
+    batch_id,
     is_split_others=True,
     is_by_df=True,
 ):
     """
     将数据插入PostgreSQL中间表（宽表格式，业务线直接作为列）。
-    表不存在则创建，存在则直接追加数据。
-    调用方应确保在 flow 级别已清理当月旧数据，避免重复。
+    表不存在则创建，存在则按批次追加数据。不同批次互不覆盖。
     """
     conn, cur = connect_to_db()
 
     try:
         # 表不存在则创建
         create_staging_table(cur, table_name, bus_lines)
+        conn.commit()
 
         if df.empty:
             print(f"No data to insert into {table_name}.")
@@ -370,6 +381,9 @@ def insert_to_staging_table(
             # 获取表的所有列
             table_columns = get_table_columns(table_name, bus_lines)
 
+            # 所有新记录归属于本次抽取批次
+            final_df["batch_id"] = batch_id
+
             # 确保所有业务线列存在（保留已有值，缺失的设为NULL）
             for col in bus_lines:
                 if col not in final_df.columns:
@@ -378,6 +392,15 @@ def insert_to_staging_table(
 
             # 添加审核状态
             final_df["审核状态"] = "PENDING"
+
+            if table_name == "staging_bus_expense":
+                if "来源层级" not in final_df.columns:
+                    raise ValueError("费用 Staging 数据缺少“来源层级”字段，已终止入库。")
+                source_values = final_df["来源层级"].fillna("").astype(str).str.strip()
+                missing_count = int(source_values.eq("").sum())
+                if missing_count:
+                    raise ValueError(f"费用 Staging 数据有 {missing_count} 条记录的“来源层级”为空，已终止入库。")
+                final_df["来源层级"] = source_values
 
             # 只保留表定义的列
             existing_cols = [col for col in table_columns if col in final_df.columns]

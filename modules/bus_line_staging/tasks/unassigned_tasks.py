@@ -14,7 +14,7 @@ from ..utils import insert_to_staging_table
 
 
 @task(name="3-无归属业务线拆分", retries=1, log_prints=True)
-def run_unassigned_split_task(date_range):
+def run_unassigned_split_task(date_range, batch_id):
     print("开始执行: 3-无归属业务线数据拆分(入库中间表)")
 
     bus_lines = get_bus_lines()
@@ -198,6 +198,7 @@ def run_unassigned_split_task(date_range):
                 date_column="会计期间",
                 table_name="staging_bus_revenue",
                 bus_lines=bus_lines,
+                batch_id=batch_id,
                 is_split_others=True,
                 is_by_df=True,
             )
@@ -213,6 +214,7 @@ def run_unassigned_split_task(date_range):
                 date_column="会计期间",
                 table_name="staging_bus_expense",
                 bus_lines=bus_lines,
+                batch_id=batch_id,
                 is_split_others=True,
                 is_by_df=True,
             )
@@ -228,6 +230,7 @@ def run_unassigned_split_task(date_range):
                 date_column="日期",
                 table_name="staging_bus_profit_bd",
                 bus_lines=bus_lines,
+                batch_id=batch_id,
                 is_split_others=True,
                 is_by_df=True,
             )

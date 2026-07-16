@@ -14,7 +14,7 @@ from ..utils import insert_to_staging_table
 
 
 @task(name="4-存货应收拆分", retries=1, log_prints=True)
-def run_inv_ar_split_task(date_range):
+def run_inv_ar_split_task(date_range, batch_id):
     print("开始执行: 4-存货、应收账款数据拆分(入库中间表)")
 
     bus_lines = get_bus_lines()
@@ -296,6 +296,7 @@ def run_inv_ar_split_task(date_range):
                     date_column="会计期间",
                     table_name="staging_bus_inventory",
                     bus_lines=bus_lines,
+                    batch_id=batch_id,
                     is_split_others=True,
                     is_by_df=True,
                 )
@@ -309,6 +310,7 @@ def run_inv_ar_split_task(date_range):
                     date_column="会计期间",
                     table_name="staging_bus_inventory",
                     bus_lines=bus_lines,
+                    batch_id=batch_id,
                     is_split_others=True,
                     is_by_df=True,
                 )
@@ -324,6 +326,7 @@ def run_inv_ar_split_task(date_range):
                     date_column="会计期间",
                     table_name="staging_bus_receivable",
                     bus_lines=bus_lines,
+                    batch_id=batch_id,
                     is_split_others=True,
                     is_by_df=True,
                 )
@@ -336,6 +339,7 @@ def run_inv_ar_split_task(date_range):
                     date_column="会计期间",
                     table_name="staging_bus_receivable",
                     bus_lines=bus_lines,
+                    batch_id=batch_id,
                     is_split_others=True,
                     is_by_df=True,
                 )
@@ -351,6 +355,7 @@ def run_inv_ar_split_task(date_range):
                     date_column="会计期间",
                     table_name="staging_bus_in_transit_inventory",
                     bus_lines=bus_lines,
+                    batch_id=batch_id,
                     is_split_others=True,
                     is_by_df=True,
                 )
@@ -363,6 +368,7 @@ def run_inv_ar_split_task(date_range):
                     date_column="会计期间",
                     table_name="staging_bus_in_transit_inventory",
                     bus_lines=bus_lines,
+                    batch_id=batch_id,
                     is_split_others=True,
                     is_by_df=True,
                 )

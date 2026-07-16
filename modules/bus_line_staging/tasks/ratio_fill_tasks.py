@@ -5,7 +5,7 @@ from prefect import task
 
 
 @task(name="5-收入比例自动填充", retries=1, log_prints=True)
-def run_revenue_ratio_fill_task(date_range):
+def run_revenue_ratio_fill_task(date_range, batch_id):
     """
     计算当月国际业务中心(icbc_center)和国内市场中心(dcmc_center)的收入比例，
     并将该比例批量填入智造事业群-智造管理中心(smmc_center)和国际渠道事业群-运营中心(phoc_center)
@@ -65,10 +65,11 @@ def run_revenue_ratio_fill_task(date_range):
                 SET "国际业务" = %s,
                     "国内硬件" = %s
                 WHERE "会计期间" = %s
+                  AND batch_id = %s
                   AND ("唯一层级" LIKE '%%智造事业群-智造管理中心%%'
                        OR "唯一层级" LIKE '%%国际渠道事业群-运营中心%%')
                 """,
-                (intl_rate, domestic_rate, acct_period),
+                (intl_rate, domestic_rate, acct_period, batch_id),
             )
             update_count_total += cur.rowcount
 

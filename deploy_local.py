@@ -225,7 +225,7 @@ def deploy_bus_line_staging_flow():
     bus_line_staging_flow.serve(
         name="业务线Staging抽取流程-本地测试",
         tags=["本地测试", "Staging", "业务线核算"],
-        description="将业务线拆分1-4步骤数据以EAV格式存入PostgreSQL系统待填报",
+        description="将业务线拆分数据按批次存入PostgreSQL，重跑时继承已有比例和审核状态",
     )
 
 

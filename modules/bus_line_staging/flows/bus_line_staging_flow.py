@@ -1,18 +1,20 @@
-from mypackage.utilities import connect_to_db
-
 from prefect import flow, get_run_logger
+from prefect.runtime import flow_run
 
 from ...common.tasks.notify_hermes_task import notify_hermes_task
-from ..config import get_date_range
+from ..batch import batch_summary, complete_batch, fail_batch, inherit_previous_values, start_batch
+from ..config import get_bus_lines, get_date_range
 from ..tasks.asset_tasks import run_inv_ar_split_task
 from ..tasks.expense_tasks import run_expense_split_to_staging_task
 from ..tasks.ratio_fill_tasks import run_revenue_ratio_fill_task
 from ..tasks.revenue_tasks import run_revenue_other_split_task
 from ..tasks.unassigned_tasks import run_unassigned_split_task
-from ..utils import cleanup_staging_month
 
 
-@flow(name="业务线数据中间库抽取流程(Staging)", description="将业务线拆分1-4步骤数据以EAV格式打平并存入PostgreSQL系统待填报")
+@flow(
+    name="业务线数据中间库抽取流程(Staging)",
+    description="按批次生成业务线拆分底稿，并从上一填报批次继承比例和审核状态",
+)
 def bus_line_staging_flow(start_date: str | None = None, end_date: str | None = None):
     """
     业务线Staging抽取流程。
@@ -37,40 +39,40 @@ def bus_line_staging_flow(start_date: str | None = None, end_date: str | None = 
         payload={"start_date": start_date, "end_date": end_date, "date_range": date_label},
     )
 
+    batch_id = None
+    batch_completed = False
     try:
-        # 前置清理：删除目标月份在各 staging 表中的旧数据，避免 task 间互相覆盖
-        conn, cur = connect_to_db()
-        try:
-            cleanup_staging_month(cur, "staging_bus_expense", "会计期间", date_range)
-            cleanup_staging_month(cur, "staging_bus_revenue", "会计期间", date_range)
-            cleanup_staging_month(cur, "staging_bus_profit_bd", "日期", date_range)
-            cleanup_staging_month(cur, "staging_bus_inventory", "会计期间", date_range)
-            cleanup_staging_month(cur, "staging_bus_receivable", "会计期间", date_range)
-            cleanup_staging_month(cur, "staging_bus_in_transit_inventory", "会计期间", date_range)
-            conn.commit()
-        finally:
-            cur.close()
-            conn.close()
+        runtime_flow_run_id = str(flow_run.id) if flow_run.id else None
+        batch_id = start_batch(date_range, flow_run_id=runtime_flow_run_id)
+        logger.info(f"本次Staging抽取批次: {batch_id}")
 
         # 1. 费用数据拆分
-        run_expense_split_to_staging_task(date_range)
+        run_expense_split_to_staging_task(date_range, batch_id)
         logger.info("第1步：费用数据入库已完成。")
 
         # 2. 特定部门收入及其他拆分
-        run_revenue_other_split_task(date_range)
+        run_revenue_other_split_task(date_range, batch_id)
         logger.info("第2步：特定收入及其他数据入库已完成。")
 
         # 3. 无归属业务线拆分
-        run_unassigned_split_task(date_range)
+        run_unassigned_split_task(date_range, batch_id)
         logger.info("第3步：无归属业务兜底数据入库已完成。")
 
         # 4. 收入比例自动填充
-        run_revenue_ratio_fill_task(date_range)
+        run_revenue_ratio_fill_task(date_range, batch_id)
         logger.info("第4步：收入比例自动填充已完成。")
 
         # 5. 存货应收拆分
-        run_inv_ar_split_task(date_range)
+        run_inv_ar_split_task(date_range, batch_id)
         logger.info("第5步：特定存货及应收数据入库已完成。")
+
+        inherited_counts = inherit_previous_values(batch_id, get_bus_lines())
+        inherited_total = sum(inherited_counts.values())
+        batch_status = complete_batch(batch_id)
+        batch_completed = True
+        result = batch_summary(batch_id)
+        batch_no = result["batch_no"]
+        logger.info(f"批次 {batch_id} 已生成，继承 {inherited_total} 条旧比例/审核状态，" f"当前状态: {batch_status}")
 
         logger.info("✅ 所有的业务线Staging数据拆分提取工作流已顺利完成！")
 
@@ -81,10 +83,22 @@ def bus_line_staging_flow(start_date: str | None = None, end_date: str | None = 
                 "start_date": start_date,
                 "end_date": end_date,
                 "date_range": date_label,
-                "summary": f"业务线Staging抽取完成，范围: {date_label}",
+                "batch_id": batch_id,
+                "batch_no": batch_no,
+                "batch_status": batch_status,
+                "inherited_records": inherited_total,
+                "summary": f"业务线Staging抽取完成，范围: {date_label}，批次: {batch_no}",
             },
         )
+        result["inherited_records"] = inherited_total
+        result["inherited_by_table"] = inherited_counts
+        return result
     except Exception as e:
+        if batch_id and not batch_completed:
+            try:
+                fail_batch(batch_id, e)
+            except Exception as cleanup_error:
+                logger.error(f"标记失败批次 {batch_id} 时发生错误: {cleanup_error}")
         error_msg = f"业务线Staging抽取流程失败: {str(e)}"
         logger.error(f"\n{error_msg}")
         notify_hermes_task(
@@ -96,6 +110,7 @@ def bus_line_staging_flow(start_date: str | None = None, end_date: str | None = 
                 "start_date": start_date,
                 "end_date": end_date,
                 "date_range": date_label,
+                "batch_id": batch_id,
             },
         )
         raise Exception(error_msg) from e
