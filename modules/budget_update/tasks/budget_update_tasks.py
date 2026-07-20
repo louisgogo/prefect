@@ -1,11 +1,14 @@
 """预算更新相关 Tasks：FONE 取数、严格映射检查、清洗、写库"""
+
 import json
 import os
 import sys
-from datetime import datetime
+from calendar import monthrange
+from datetime import date, datetime
 from typing import Any, Dict, Optional
 
 import pandas as pd
+from sqlalchemy import create_engine, text
 
 from prefect import task
 
@@ -13,7 +16,7 @@ from prefect import task
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from mypackage.mapping import combined_column_mapping, reverse_combined_column_mapping
-from mypackage.utilities import connect_to_db, connect_to_fone, update_report_data
+from mypackage.utilities import connect_to_db, connect_to_fone, url_to_db
 
 # 流水映射表（产品名称 -> 编码）
 MAP_AMO = {
@@ -25,6 +28,113 @@ MAP_AMO = {
     "全球收单业务": "3001",
     "全球收款业务": "3002",
 }
+
+BUDGET_VERSION_COLUMNS = {
+    "bud_expense": "report_date",
+    "bud_income": "report_date",
+    "bud_personnel": "report_date",
+    "bud_profit": "report_date",
+    "bud_cash_flow": "bud_version",
+    "bud_bus_shared_rate": "report_date",
+}
+
+
+def _first_unused_archive_date(
+    official_version: pd.Timestamp,
+    existing_versions: set[date],
+) -> date:
+    """返回正式版所在月份中首个未使用的 2 日及以后日期。"""
+    official_date = pd.to_datetime(official_version).date()
+    if official_date.day != 1:
+        raise ValueError(f"正式预算版本必须为每月 1 日，当前值: {official_date}")
+
+    occupied = {pd.to_datetime(value).date() for value in existing_versions}
+    last_day = monthrange(official_date.year, official_date.month)[1]
+    for day in range(2, last_day + 1):
+        candidate = official_date.replace(day=day)
+        if candidate not in occupied:
+            return candidate
+
+    raise ValueError(f"{official_date:%Y-%m} 已没有可用的预算归档日期（2 日至 {last_day} 日均已占用）")
+
+
+def _load_existing_budget_versions(connection, official_version: pd.Timestamp) -> set[date]:
+    """读取六张预算表在正式版所在月份内已使用的全部版本日期。"""
+    month_start = pd.to_datetime(official_version).date()
+    next_month = (pd.Timestamp(month_start) + pd.offsets.MonthBegin(1)).date()
+    existing_versions: set[date] = set()
+
+    for table_name, version_column in BUDGET_VERSION_COLUMNS.items():
+        result = connection.execute(
+            text(
+                f"SELECT DISTINCT {version_column} FROM {table_name} "
+                f"WHERE {version_column} >= :month_start AND {version_column} < :next_month"
+            ),
+            {"month_start": month_start, "next_month": next_month},
+        )
+        existing_versions.update(
+            pd.to_datetime(row[0]).date() for row in result if row[0] is not None
+        )
+
+    return existing_versions
+
+
+def _prepare_budget_version_write(
+    connection,
+    official_version: pd.Timestamp,
+    save_previous_version: bool,
+) -> Optional[date]:
+    """锁定预算月份，并在写入前归档或删除当前正式版。"""
+    official_date = pd.to_datetime(official_version).date()
+    if official_date.day != 1:
+        raise ValueError(f"正式预算版本必须为每月 1 日，当前值: {official_date}")
+
+    connection.execute(
+        text("SELECT pg_advisory_xact_lock(:lock_year, :lock_month)"),
+        {"lock_year": official_date.year, "lock_month": official_date.month},
+    )
+    if save_previous_version:
+        existing_versions = _load_existing_budget_versions(connection, official_version)
+        if official_date in existing_versions:
+            archive_date = _first_unused_archive_date(official_version, existing_versions)
+            archived_counts = {}
+            for table_name, version_column in BUDGET_VERSION_COLUMNS.items():
+                result = connection.execute(
+                    text(
+                        f"UPDATE {table_name} SET {version_column} = :archive_date "
+                        f"WHERE {version_column} = :official_date"
+                    ),
+                    {"archive_date": archive_date, "official_date": official_date},
+                )
+                archived_counts[table_name] = result.rowcount
+            print(
+                f"当前正式版 {official_date} 已统一归档为 {archive_date}: "
+                + ", ".join(f"{table}={count}" for table, count in archived_counts.items())
+            )
+            return archive_date
+
+        print(f"未找到当前正式版 {official_date}，本次作为首稿直接写入")
+        return None
+
+    deleted_counts = {}
+    for table_name, version_column in BUDGET_VERSION_COLUMNS.items():
+        result = connection.execute(
+            text(f"DELETE FROM {table_name} WHERE {version_column} = :official_date"),
+            {"official_date": official_date},
+        )
+        deleted_counts[table_name] = result.rowcount
+
+    print(
+        f"不保留当前正式版 {official_date}，已删除: "
+        + ", ".join(f"{table}={count}" for table, count in deleted_counts.items())
+    )
+    return None
+
+
+def _append_budget_data(connection, table_name: str, df: pd.DataFrame) -> None:
+    """在调用方事务中追加一张预算表。"""
+    df.to_sql(table_name, con=connection, if_exists="append", index=False)
+    print(f"{table_name}: 数据已导入 {len(df)} 条")
 
 
 def _read_data(table_name: str, db_type: str = "FONE") -> pd.DataFrame:
@@ -108,12 +218,14 @@ def _read_psql_data(
         conn.close()
 
 
-def _read_offset_data(date_range_psql: pd.DatetimeIndex, report_date: pd.Timestamp) -> pd.DataFrame:
+def _read_offset_data(
+    date_range_psql: pd.DatetimeIndex, budget_version: pd.Timestamp
+) -> pd.DataFrame:
     """读取月度抵销数，按日期过滤并统一字段。"""
     offset = _read_psql_data(
         "fact_offset_by_month", date_col="acct_period", date_range=date_range_psql
     )
-    offset["填报日期"] = report_date
+    offset["填报日期"] = budget_version
     offset["会计期间"] = pd.to_datetime(offset["会计期间"])
     values = {
         "费用大类": "集团抵销",
@@ -642,8 +754,8 @@ def _normalize_business_line(df: pd.DataFrame) -> pd.DataFrame:
 @task(name="write_budget_to_db", log_prints=True)
 def write_budget_to_db_task(
     budget_type: str,
-    report_date: pd.Timestamp,
-    version: str,
+    budget_version: pd.Timestamp,
+    save_previous_version: bool,
     date_range_psql: pd.DatetimeIndex,
     date_range_fone: pd.DatetimeIndex,
     df_exp: pd.DataFrame,
@@ -652,188 +764,192 @@ def write_budget_to_db_task(
     df_cash: pd.DataFrame,
     df_pro: pd.DataFrame,
     df_shared_rate: pd.DataFrame,
-) -> None:
+) -> Optional[str]:
     """
-    根据 budget_type 写库：年初预算直接写 6 张表；年中预算先取 PSQL 实际数/抵销数拼接后再写。
+    根据 budget_type 生成并写入 6 张预算表。
+
+    六张表共用一个事务：写入前根据 save_previous_version 归档或删除当前 1 日正式版，
+    新数据始终以 budget_version（每月 1 日）写回正式版。
     """
-    try:
-        if budget_type == "年初预算":
-            # 按表顺序写库并释放内存
-            # 费用
-            df = _normalize_business_line(df_exp)
-            df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
-            update_report_data("bud_expense", df, "report_date", report_date)
-            del df
-            # 收入
-            df = _normalize_business_line(df_inc)
-            df = df.rename(columns={"客户群": "客户群名称"})
-            df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
-            update_report_data("bud_income", df, "report_date", report_date)
-            del df
-            # 人员
-            df = _normalize_business_line(df_emp)
-            df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
-            update_report_data("bud_personnel", df, "report_date", report_date)
-            del df
-            # 利润
-            df = _normalize_business_line(df_pro)
-            df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
-            update_report_data("bud_profit", df, "report_date", report_date)
-            del df
-            # 流水
-            df = df_cash.copy()
-            df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
-            update_report_data("bud_cash_flow", df, "bud_version", report_date)
-            del df
-            # 综合比例
-            df = _normalize_business_line(df_shared_rate)
-            df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
-            update_report_data("bud_bus_shared_rate", df, "report_date", report_date)
-            del df
-            print("年初预算写库完成")
-            return
-
-        if budget_type == "年中预算":
-            # 按表顺序处理：SQL 层过滤日期，每处理完一张表就释放内存
-            # 避免一次性把所有 PSQL 大表都加载到内存
-
-            # 1. 费用：FONE 下半年 + PSQL 实际 + 抵销
-            psql_exp = _read_psql_data(
-                "fact_bus_expense", date_col="acct_period", date_range=date_range_psql
-            )
-            psql_exp["填报日期"] = report_date
-            psql_exp["会计期间"] = pd.to_datetime(psql_exp["会计期间"])
-            psql_exp = psql_exp[psql_exp["会计期间"].isin(date_range_psql)]
-            psql_exp = psql_exp.drop(["日期"], axis=1, errors="ignore")
-            psql_exp = psql_exp.rename(
-                columns={
-                    "会计期间": "日期",
-                    "费用金额": "预算系统金额",
-                    "核算项目-费控": "核算项目",
-                    "研发项目": "项目",
-                    "摘要": "费用说明",
-                }
-            )
-
-            offset_exp = _read_offset_data(date_range_psql, report_date)
-            offset_exp = offset_exp[offset_exp["一级科目"].isin(["销售费用", "管理费用", "研发费用", "财务费用"])]
-
-            df = df_exp.copy()
-            df["日期"] = pd.to_datetime(df["日期"])
-            df = df[df["日期"].isin(date_range_fone)]
-            df_con = pd.concat([df, psql_exp, offset_exp], ignore_index=True)
-            df_con = df_con[df.columns]
-            df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
-            update_report_data("bud_expense", df_con, "report_date", report_date)
-            del psql_exp, offset_exp, df, df_con
-
-            # 2. 收入：FONE 下半年 + PSQL 实际 + 抵销
-            psql_inc = _read_psql_data(
-                "fact_bus_revenue", date_col="acct_period", date_range=date_range_psql
-            )
-            psql_inc["填报日期"] = report_date
-            psql_inc["会计期间"] = pd.to_datetime(psql_inc["会计期间"])
-            psql_inc = psql_inc[psql_inc["会计期间"].isin(date_range_psql)]
-            psql_inc = psql_inc.rename(
-                columns={
-                    "会计期间": "日期",
-                    "客户群编码": "客户标识",
-                    "客户群名称": "客户群",
-                }
-            )
-
-            offset_inc = _read_offset_data(date_range_psql, report_date)
-            offset_inc = offset_inc[offset_inc["一级科目"].isin(["营业收入", "营业成本"])].copy()
-            offset_inc = offset_inc.rename(columns={"预算系统金额": "本月金额"})
-
-            df = df_inc.copy()
-            df = df.rename(columns={"客户群": "客户群名称"})
-            df["日期"] = pd.to_datetime(df["日期"])
-            df = df[df["日期"].isin(date_range_fone)]
-            df_con = pd.concat([df, psql_inc, offset_inc], ignore_index=True)
-            df_con = df_con[df.columns]
-            df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
-            update_report_data("bud_income", df_con, "report_date", report_date)
-            del psql_inc, offset_inc, df, df_con
-
-            # 3. 人员
-            psql_emp = _read_psql_data(
-                "fact_personnel", date_col="date", date_range=date_range_psql
-            )
-            psql_emp["填报日期"] = report_date
-            psql_emp["日期"] = pd.to_datetime(psql_emp["日期"])
-            psql_emp = psql_emp.rename(columns={"人数": "预算系统人数"})
-            psql_emp = psql_emp[psql_emp["日期"].isin(date_range_psql)]
-
-            df = df_emp.copy()
-            df["日期"] = pd.to_datetime(df["日期"])
-            df = df[df["日期"].isin(date_range_fone)]
-            df_con = pd.concat([df, psql_emp], ignore_index=True)
-            df_con = df_con[df.columns]
-            df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
-            update_report_data("bud_personnel", df_con, "report_date", report_date)
-            del psql_emp, df, df_con
-
-            # 4. 利润
-            psql_pro = _read_psql_data(
-                "fact_bus_profit", date_col="acct_period", date_range=date_range_psql
-            )
-            psql_pro["填报日期"] = report_date
-            psql_pro["会计期间"] = pd.to_datetime(psql_pro["会计期间"])
-            psql_pro = psql_pro[psql_pro["会计期间"].isin(date_range_psql)]
-            psql_pro = psql_pro.rename(columns={"会计期间": "日期", "金额": "预算系统金额"})
-
-            df = df_pro.copy()
-            df["日期"] = pd.to_datetime(df["日期"])
-            df = df[df["日期"].isin(date_range_fone)]
-            df_con = pd.concat([df, psql_pro], ignore_index=True)
-            df_con = df_con[df.columns]
-            df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
-            update_report_data("bud_profit", df_con, "report_date", report_date)
-            del psql_pro, df, df_con
-
-            # 5. 流水
-            psql_cash = _read_psql_data(
-                "T_JL_AREA_TRADE",
-                date_col="stat_month",
-                date_range=date_range_psql,
-                date_format="%Y%m",
-            )
-            psql_cash["填报日期"] = report_date
-            psql_cash["日期"] = pd.to_datetime(psql_cash["统计月份"], format="%Y%m").dt.strftime(
-                "%Y-%m-01"
-            )
-            psql_cash["日期"] = pd.to_datetime(psql_cash["日期"])
-            psql_cash = psql_cash[psql_cash["日期"].isin(date_range_psql)]
-            psql_cash["金额"] = psql_cash["金额"] / 100
-            psql_cash = psql_cash.rename(
-                columns={
-                    "总交易金额": "金额",
-                    "产品类型名称_中间库": "产品类型名称",
-                    "产品类型_中间库": "产品类型",
-                    "填报日期": "预算版本",
-                }
-            )
-
-            df = df_cash.copy()
-            df["日期"] = pd.to_datetime(df["日期"])
-            df = df[df["日期"].isin(date_range_fone)]
-            df_con = pd.concat([df, psql_cash], ignore_index=True)
-            df_con = df_con[df.columns]
-            df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
-            update_report_data("bud_cash_flow", df_con, "bud_version", report_date)
-            del psql_cash, df, df_con
-
-            # 6. 综合比例
-            df = df_shared_rate.copy()
-            df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
-            update_report_data("bud_bus_shared_rate", df, "report_date", report_date)
-            del df
-
-            print("年中预算写库完成")
-            return
-
+    if budget_type not in ("年初预算", "年中预算"):
         raise ValueError(f"不支持的 budget_type: {budget_type}，应为「年初预算」或「年中预算」")
+
+    engine = create_engine(url_to_db())
+    try:
+        with engine.begin() as connection:
+            archive_date = _prepare_budget_version_write(
+                connection=connection,
+                official_version=budget_version,
+                save_previous_version=save_previous_version,
+            )
+
+            if budget_type == "年初预算":
+                # 按表顺序写库并释放内存
+                df = _normalize_business_line(df_exp)
+                df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
+                _append_budget_data(connection, "bud_expense", df)
+                del df
+
+                df = _normalize_business_line(df_inc)
+                df = df.rename(columns={"客户群": "客户群名称"})
+                df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
+                _append_budget_data(connection, "bud_income", df)
+                del df
+
+                df = _normalize_business_line(df_emp)
+                df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
+                _append_budget_data(connection, "bud_personnel", df)
+                del df
+
+                df = _normalize_business_line(df_pro)
+                df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
+                _append_budget_data(connection, "bud_profit", df)
+                del df
+
+                df = df_cash.copy()
+                df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
+                _append_budget_data(connection, "bud_cash_flow", df)
+                del df
+
+                df = _normalize_business_line(df_shared_rate)
+                df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
+                _append_budget_data(connection, "bud_bus_shared_rate", df)
+                del df
+
+            else:
+                # SQL 层过滤日期，每处理完一张表就释放内存，避免同时加载多张 PSQL 大表。
+
+                # 1. 费用：FONE 剩余月份 + PSQL 实际 + 抵销
+                psql_exp = _read_psql_data(
+                    "fact_bus_expense", date_col="acct_period", date_range=date_range_psql
+                )
+                psql_exp["填报日期"] = budget_version
+                psql_exp["会计期间"] = pd.to_datetime(psql_exp["会计期间"])
+                psql_exp = psql_exp[psql_exp["会计期间"].isin(date_range_psql)]
+                psql_exp = psql_exp.drop(["日期"], axis=1, errors="ignore")
+                psql_exp = psql_exp.rename(
+                    columns={
+                        "会计期间": "日期",
+                        "费用金额": "预算系统金额",
+                        "核算项目-费控": "核算项目",
+                        "研发项目": "项目",
+                        "摘要": "费用说明",
+                    }
+                )
+                offset_exp = _read_offset_data(date_range_psql, budget_version)
+                offset_exp = offset_exp[offset_exp["一级科目"].isin(["销售费用", "管理费用", "研发费用", "财务费用"])]
+                df = df_exp.copy()
+                df["日期"] = pd.to_datetime(df["日期"])
+                df = df[df["日期"].isin(date_range_fone)]
+                df_con = pd.concat([df, psql_exp, offset_exp], ignore_index=True)
+                df_con = df_con[df.columns]
+                df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
+                _append_budget_data(connection, "bud_expense", df_con)
+                del psql_exp, offset_exp, df, df_con
+
+                # 2. 收入：FONE 剩余月份 + PSQL 实际 + 抵销
+                psql_inc = _read_psql_data(
+                    "fact_bus_revenue", date_col="acct_period", date_range=date_range_psql
+                )
+                psql_inc["填报日期"] = budget_version
+                psql_inc["会计期间"] = pd.to_datetime(psql_inc["会计期间"])
+                psql_inc = psql_inc[psql_inc["会计期间"].isin(date_range_psql)]
+                psql_inc = psql_inc.rename(
+                    columns={
+                        "会计期间": "日期",
+                        "客户群编码": "客户标识",
+                        "客户群名称": "客户群",
+                    }
+                )
+                offset_inc = _read_offset_data(date_range_psql, budget_version)
+                offset_inc = offset_inc[offset_inc["一级科目"].isin(["营业收入", "营业成本"])].copy()
+                offset_inc = offset_inc.rename(columns={"预算系统金额": "本月金额"})
+                df = df_inc.copy()
+                df = df.rename(columns={"客户群": "客户群名称"})
+                df["日期"] = pd.to_datetime(df["日期"])
+                df = df[df["日期"].isin(date_range_fone)]
+                df_con = pd.concat([df, psql_inc, offset_inc], ignore_index=True)
+                df_con = df_con[df.columns]
+                df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
+                _append_budget_data(connection, "bud_income", df_con)
+                del psql_inc, offset_inc, df, df_con
+
+                # 3. 人员
+                psql_emp = _read_psql_data(
+                    "fact_personnel", date_col="date", date_range=date_range_psql
+                )
+                psql_emp["填报日期"] = budget_version
+                psql_emp["日期"] = pd.to_datetime(psql_emp["日期"])
+                psql_emp = psql_emp.rename(columns={"人数": "预算系统人数"})
+                psql_emp = psql_emp[psql_emp["日期"].isin(date_range_psql)]
+                df = df_emp.copy()
+                df["日期"] = pd.to_datetime(df["日期"])
+                df = df[df["日期"].isin(date_range_fone)]
+                df_con = pd.concat([df, psql_emp], ignore_index=True)
+                df_con = df_con[df.columns]
+                df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
+                _append_budget_data(connection, "bud_personnel", df_con)
+                del psql_emp, df, df_con
+
+                # 4. 利润
+                psql_pro = _read_psql_data(
+                    "fact_bus_profit", date_col="acct_period", date_range=date_range_psql
+                )
+                psql_pro["填报日期"] = budget_version
+                psql_pro["会计期间"] = pd.to_datetime(psql_pro["会计期间"])
+                psql_pro = psql_pro[psql_pro["会计期间"].isin(date_range_psql)]
+                psql_pro = psql_pro.rename(columns={"会计期间": "日期", "金额": "预算系统金额"})
+                df = df_pro.copy()
+                df["日期"] = pd.to_datetime(df["日期"])
+                df = df[df["日期"].isin(date_range_fone)]
+                df_con = pd.concat([df, psql_pro], ignore_index=True)
+                df_con = df_con[df.columns]
+                df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
+                _append_budget_data(connection, "bud_profit", df_con)
+                del psql_pro, df, df_con
+
+                # 5. 流水
+                psql_cash = _read_psql_data(
+                    "T_JL_AREA_TRADE",
+                    date_col="stat_month",
+                    date_range=date_range_psql,
+                    date_format="%Y%m",
+                )
+                psql_cash["填报日期"] = budget_version
+                psql_cash["日期"] = pd.to_datetime(psql_cash["统计月份"], format="%Y%m").dt.strftime(
+                    "%Y-%m-01"
+                )
+                psql_cash["日期"] = pd.to_datetime(psql_cash["日期"])
+                psql_cash = psql_cash[psql_cash["日期"].isin(date_range_psql)]
+                psql_cash["金额"] = psql_cash["金额"] / 100
+                psql_cash = psql_cash.rename(
+                    columns={
+                        "总交易金额": "金额",
+                        "产品类型名称_中间库": "产品类型名称",
+                        "产品类型_中间库": "产品类型",
+                        "填报日期": "预算版本",
+                    }
+                )
+                df = df_cash.copy()
+                df["日期"] = pd.to_datetime(df["日期"])
+                df = df[df["日期"].isin(date_range_fone)]
+                df_con = pd.concat([df, psql_cash], ignore_index=True)
+                df_con = df_con[df.columns]
+                df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
+                _append_budget_data(connection, "bud_cash_flow", df_con)
+                del psql_cash, df, df_con
+
+                # 6. 综合比例
+                df = df_shared_rate.copy()
+                df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
+                _append_budget_data(connection, "bud_bus_shared_rate", df)
+                del df
+
+        archive_summary = f"，上一稿归档为 {archive_date}" if archive_date else ""
+        print(f"{budget_type}写库完成，正式版 {pd.to_datetime(budget_version).date()}{archive_summary}")
+        return archive_date.isoformat() if archive_date else None
     except Exception as e:
         print(f"预算写库时发生错误: {str(e)}")
         raise
+    finally:
+        engine.dispose()

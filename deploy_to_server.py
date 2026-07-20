@@ -85,7 +85,10 @@ def _serve_budget_update():
     budget_update_flow.serve(
         name="主流程-预算更新",
         tags=["预算更新", "手动触发"],
-        description="从 FONE 拉取预算、严格映射检查、写库；未映射则中断并导出 CSV。参数可留空，按运行时的当前月份自动填默认值。",
+        description=(
+            "从 FONE 拉取预算、严格映射检查并写库。正式版日期自动生成：年初为 YYYY-01-01，"
+            "年中为 YYYY-07-01。save_previous_version 默认关闭并直接覆盖；手动开启时归档当前正式版。"
+        ),
         parameters=budget_defaults,
     )
 

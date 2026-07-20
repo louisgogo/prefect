@@ -145,14 +145,20 @@ def deploy_budget_update_flow():
     print("当前默认参数：")
     for k, v in defaults.items():
         print(f"  - {k}: {v}")
-    print("  - output_dir: 不填则使用当前工作目录")
-    print("\n易混点：report_date=要替换的那批日期；version=本批新数据的填报日期标签。")
+    print("  - output_dir: 不填则使用 /root/prefect/check/budget_unmapped")
+    print("\n预算版本保存规则：")
+    print("  - 正式版日期自动生成：年初预算为 YYYY-01-01，年中预算为 YYYY-07-01")
+    print("  - save_previous_version=false（默认）：快速执行直接覆盖1日正式版")
+    print("  - save_previous_version=true：当前正式版自动归档到同月2日、3日等空闲日期")
     print("\n注意：任一映射检查点存在未映射将中断执行并导出 CSV")
 
     budget_update_flow.serve(
         name="预算更新流程-本地测试",
         tags=["本地测试", "预算更新"],
-        description="从 FONE 拉取预算、严格映射检查、写库；未映射则中断并导出 CSV。参数可留空，按运行时的当前月份自动填默认值。",
+        description=(
+            "从 FONE 拉取预算、严格映射检查并写库。正式版日期自动生成：年初为 YYYY-01-01，"
+            "年中为 YYYY-07-01。save_previous_version 默认关闭并直接覆盖；手动开启时归档当前正式版。"
+        ),
         parameters=defaults,
     )
 

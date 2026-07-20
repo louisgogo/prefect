@@ -104,11 +104,17 @@ if __name__ == "__main__":
 
     budget_defaults = _get_budget_defaults_by_date()
     print("说明：预算更新为手动触发；参数已按当前月份设默认值（11月～2月→年初预算，4月～7月→年中预算）")
-    print("易混点：report_date=要替换的那批日期；version=本批新数据的填报日期标签。")
+    print("预算版本保存规则：")
+    print("  - 正式版日期自动生成：年初预算为 YYYY-01-01，年中预算为 YYYY-07-01")
+    print("  - save_previous_version=false（默认）：快速执行直接覆盖1日正式版")
+    print("  - save_previous_version=true：当前正式版自动归档到同月2日、3日等空闲日期")
     budget_update_flow.serve(
         name="主流程-预算更新",
         tags=["预算更新", "手动触发"],
-        description="从 FONE 拉取预算、严格映射检查、写库；未映射则中断并导出 CSV。参数可留空，按运行时的当前月份自动填默认值。",
+        description=(
+            "从 FONE 拉取预算、严格映射检查并写库。正式版日期自动生成：年初为 YYYY-01-01，"
+            "年中为 YYYY-07-01。save_previous_version 默认关闭并直接覆盖；手动开启时归档当前正式版。"
+        ),
         parameters=budget_defaults,
     )
 

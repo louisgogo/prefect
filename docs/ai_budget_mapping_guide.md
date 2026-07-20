@@ -11,7 +11,17 @@
 
 - Flow 名称：`budget_update_flow` / `主流程-预算更新`
 - 默认参数已按当前月份自动填充（年初/年中预算规则）。
-- 也可手动指定参数：`budget_year`, `fone_version`, `version`, `budget_type`, `report_date`。
+- 也可手动指定参数：`budget_year`, `fone_version`, `budget_type`, `save_previous_version`,
+  `actual_through_month`, `refresh_ai_data_etl`。
+
+预算版本保存规则：
+
+- 正式版日期不再手工填写：年初预算自动使用 `budget_year-01-01`，年中预算自动使用
+  `budget_year-07-01`。
+- `save_previous_version=false`（默认）：不保存当前稿，快速执行会直接删除并覆盖 1 日正式版。
+- `save_previous_version=true`：把当前 1 日正式版统一归档到同月第一个未使用日期，
+  例如先归档到 2 日，下一稿归档到 3 日；新数据仍写回 1 日正式版。
+- 六张预算表使用相同归档日期；写库过程中任一表失败时，整次预算写库回滚。
 
 流程运行后：
 - 成功：会收到 Hermes `completed` 通知。
