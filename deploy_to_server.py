@@ -64,7 +64,7 @@ def _serve_data_import(last_month_year: int, last_month: int):
             "replace_existing": False,
         },
         tags=["数据导入", "月度任务", "自动执行"],
-        description="数据导入流程：从 Excel 文件导入数据到数据库（业务数据板块默认替换已存在数据，其他板块默认不替换）",
+        description="数据导入流程：从 Excel 文件导入数据到数据库（业务数据板块和汇率表默认替换已存在数据，其他板块默认不替换）",
     )
 
 

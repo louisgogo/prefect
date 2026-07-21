@@ -803,7 +803,11 @@ def update_personnel_data_task(
 
 @task(name="update_manual_refresh_data", log_prints=True)
 def update_manual_refresh_data_task(
-    dfs: Dict[str, pd.DataFrame], start_date: str, end_date: str, replace_existing: bool = True
+    dfs: Dict[str, pd.DataFrame],
+    start_date: str,
+    end_date: str,
+    replace_existing: bool = True,
+    replace_exchange_rates: Optional[bool] = None,
 ) -> None:
     """
     更新手工刷新数据
@@ -813,6 +817,7 @@ def update_manual_refresh_data_task(
         start_date: 开始日期
         end_date: 结束日期
         replace_existing: 是否替换已存在的数据
+        replace_exchange_rates: 汇率表是否替换已存数据。不指定时跟随 replace_existing
     """
     print("=" * 60)
     print("开始更新手工刷新数据")
@@ -820,6 +825,9 @@ def update_manual_refresh_data_task(
 
     updated_count = 0
     skipped_count = 0
+
+    if replace_exchange_rates is None:
+        replace_exchange_rates = replace_existing
 
     # 更新汇率表
     table_name = "excel_exchange_rates"
@@ -830,7 +838,7 @@ def update_manual_refresh_data_task(
             print(f"⊘ 跳过 {table_name}（DataFrame 为空，无数据需要更新）")
             skipped_count += 1
         else:
-            if not replace_existing:
+            if not replace_exchange_rates:
                 exists = _check_data_exists(table_name, "effective_date", start_date, end_date)
                 if exists:
                     print(f"⊘ 跳过 {table_name}（已存在数据）")
@@ -843,7 +851,7 @@ def update_manual_refresh_data_task(
                         "effective_date",
                         start_date,
                         end_date,
-                        replace_existing,
+                        replace_exchange_rates,
                     )
                     updated_count += 1
             else:
@@ -854,7 +862,7 @@ def update_manual_refresh_data_task(
                     "effective_date",
                     start_date,
                     end_date,
-                    replace_existing,
+                    replace_exchange_rates,
                 )
                 updated_count += 1
     else:

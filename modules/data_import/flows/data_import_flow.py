@@ -70,7 +70,7 @@ def data_import_flow(
         month: 单个月份（1-12），如果提供则只处理该月
         months: 月份列表（1-12），如果提供则按月循环处理多个月份，例如 [10, 11, 12]
         replace_existing: 是否替换已存在的数据，默认 False（不替换）。如果为 True，则替换已存在的数据
-        replace_business_data: 业务数据板块是否替换已存在的数据，默认 True（替换）。仅影响业务数据板块
+        replace_business_data: 业务数据板块和汇率表是否替换已存在的数据，默认 True（替换）
         root_directory: Excel 文件根目录路径；不传则按系统自动选择（Windows: Z:\\11-业务报表\\1.补充数据，Rocky: /mnt/业务报表/1.补充数据）
 
     Examples:
@@ -157,7 +157,7 @@ def data_import_flow(
         if not replace_existing:
             print("注意: 除业务数据板块外，如果数据已存在，将跳过更新")
         if replace_business_data:
-            print("注意: 业务数据板块默认使用替换更新模式")
+            print("注意: 业务数据板块和汇率表默认使用替换更新模式")
         print(f"Excel 文件目录: {root_directory}")
         print("=" * 60)
 
@@ -200,7 +200,13 @@ def data_import_flow(
                 update_personnel_data_task(dfs, start_date, end_date, replace_existing)
 
                 # 8. 更新手工刷新数据
-                update_manual_refresh_data_task(dfs, start_date, end_date, replace_existing)
+                update_manual_refresh_data_task(
+                    dfs,
+                    start_date,
+                    end_date,
+                    replace_existing,
+                    replace_exchange_rates=replace_business_data,
+                )
 
                 print(f"\n✓ {process_year}年{process_month}月 数据导入完成")
             except Exception as e:
