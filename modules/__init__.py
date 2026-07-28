@@ -1,4 +1,5 @@
 """Prefect 模块包 - 统一导出所有 flows"""
+
 # AI数据ETL流程
 from .ai_data_etl.flows.ai_data_etl_flow import ai_data_etl_flow
 
@@ -15,6 +16,11 @@ from .org_sync.flows.org_sync_flow import org_sync_flow
 
 # 利润表刷新流程
 from .profit_refresh.flows.profit_refresh_flow import profit_refresh_flow
+
+# 研发项目收益分析流程
+from .rd_project_profitability.flows.rd_project_profitability_flow import (
+    rd_project_profitability_flow,
+)
 
 # 往来对账流程
 from .recon.flows.fone_recon_flow import fone_recon_flow
@@ -41,6 +47,7 @@ __all__ = [
     "budget_update_flow",
     "org_sync_flow",
     "profit_refresh_flow",
+    "rd_project_profitability_flow",
     "fone_recon_flow",
     "recon_flow",
     "staging_recon_flow",

@@ -17,6 +17,7 @@ from modules import (
     org_sync_flow,
     profit_refresh_flow,
     profit_report_flow,
+    rd_project_profitability_flow,
     recon_flow,
     staging_recon_flow,
     view_update_flow,
@@ -301,6 +302,27 @@ def deploy_org_sync_flow():
     )
 
 
+def deploy_rd_project_profitability_flow():
+    """部署研发项目收益分析流程。"""
+    from modules.rd_project_profitability.flows.rd_project_profitability_flow import (
+        _get_rd_project_profitability_defaults_by_date,
+    )
+
+    defaults = _get_rd_project_profitability_defaults_by_date()
+    defaults["notify_frontend"] = False
+    print("=" * 60)
+    print("研发项目收益分析流程 - 本地测试部署")
+    print("=" * 60)
+    print(f"默认期间：{defaults['start_date']} 至 {defaults['end_date']}；" "本地默认生成 Excel、不写数据库、不发送前端回调。")
+
+    rd_project_profitability_flow.serve(
+        name="研发项目收益分析-本地测试",
+        tags=["本地测试", "研发项目", "收益分析", "Excel输出"],
+        description="按显式期间计算研发项目收入、成本、费用和剩余收益，生成可下载 Excel。",
+        parameters=defaults,
+    )
+
+
 if __name__ == "__main__":
     print("开始部署流程...")
     print("确保已启动 Prefect Server：prefect server start")
@@ -322,6 +344,7 @@ if __name__ == "__main__":
     process12 = Process(target=deploy_fone_recon_flow)
     process13 = Process(target=deploy_view_update_flow)
     process14 = Process(target=deploy_org_sync_flow)
+    process15 = Process(target=deploy_rd_project_profitability_flow)
 
     process1.start()
     time.sleep(1)
@@ -350,6 +373,8 @@ if __name__ == "__main__":
     process13.start()
     time.sleep(1)
     process14.start()
+    time.sleep(1)
+    process15.start()
 
     # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
@@ -377,6 +402,7 @@ if __name__ == "__main__":
             process12,
             process13,
             process14,
+            process15,
         ]:
             p.terminate()
             p.join()

@@ -11,6 +11,7 @@ from modules import (
     data_import_flow,
     fetch_budget_shared_rate_flow,
     profit_refresh_flow,
+    rd_project_profitability_flow,
 )
 from modules.bus_line_staging import bus_line_staging_flow
 
@@ -127,6 +128,25 @@ if __name__ == "__main__":
         name="子流程-利润表刷新",
         tags=["业务线核算", "手动触发", "自动执行"],
         description="利润表刷新流程：处理所有已计算的月份数据，生成 fact_profit 和 fact_bus_profit 表",
+    )
+
+    print("\n" + "=" * 60)
+    print("研发项目收益分析流程 - 生产环境注册")
+    print("=" * 60)
+    from modules.rd_project_profitability.flows.rd_project_profitability_flow import (
+        _get_rd_project_profitability_defaults_by_date,
+    )
+
+    rd_defaults = _get_rd_project_profitability_defaults_by_date()
+    print(
+        f"默认期间：{rd_defaults['start_date']} 至 {rd_defaults['end_date']}；"
+        "手动触发后生成 Excel 并回调文件信息，默认不写数据库。"
+    )
+    rd_project_profitability_flow.serve(
+        name="主流程-研发项目收益分析",
+        tags=["研发项目", "收益分析", "手动触发", "Excel输出", "前端回调"],
+        description="按显式期间计算研发项目收益，生成 Excel，并将文件路径或下载链接回调给前端。",
+        parameters=rd_defaults,
     )
 
     print("\n" + "=" * 60)

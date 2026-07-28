@@ -17,6 +17,7 @@ from modules import (
     org_sync_flow,
     profit_refresh_flow,
     profit_report_flow,
+    rd_project_profitability_flow,
     recon_flow,
     staging_recon_flow,
     view_update_flow,
@@ -178,6 +179,21 @@ def _serve_org_sync():
     )
 
 
+def _serve_rd_project_profitability():
+    """模块级函数，供 Process 调用。"""
+    from modules.rd_project_profitability.flows.rd_project_profitability_flow import (
+        _get_rd_project_profitability_defaults_by_date,
+    )
+
+    defaults = _get_rd_project_profitability_defaults_by_date()
+    rd_project_profitability_flow.serve(
+        name="主流程-研发项目收益分析",
+        tags=["研发项目", "收益分析", "手动触发", "Excel输出", "前端回调"],
+        description="按显式期间计算研发项目收益，生成 Excel，并将文件路径或下载链接回调给前端。",
+        parameters=defaults,
+    )
+
+
 def deploy_to_remote_server():
     """
     从本地推送流程到远程 Prefect Server
@@ -238,6 +254,7 @@ def deploy_to_remote_server():
     process12 = Process(target=_serve_profit_report)
     process13 = Process(target=_serve_view_update)
     process14 = Process(target=_serve_org_sync)
+    process15 = Process(target=_serve_rd_project_profitability)
 
     process1.start()
     time.sleep(1)
@@ -266,6 +283,8 @@ def deploy_to_remote_server():
     process13.start()
     time.sleep(1)
     process14.start()
+    time.sleep(1)
+    process15.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -297,6 +316,7 @@ def deploy_to_remote_server():
             process12,
             process13,
             process14,
+            process15,
         ]:
             p.terminate()
             p.join()
