@@ -16,7 +16,7 @@ from prefect import task
 
 UNMAPPED_PRODUCT = "未映射产品"
 TARGET_TABLE_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*$")
-BUSINESS_LINES = ("国际业务", "国内硬件", "美国业务")
+EXPENSE_BASE_BUSINESS_LINE = "国际业务"
 RD_REVENUE_SECONDARY_ORG = "国际业务中心"
 DEFAULT_OUTPUT_DIR = "/root/prefect/check/rd_project_profitability"
 
@@ -236,11 +236,11 @@ def load_rd_project_profitability_sources_task(
                 WHERE e.acct_period >= %s
                   AND e.acct_period <= %s
                   AND e.prim_subj IN ('研发费用', '管理费用', '销售费用')
-                  AND e.bus_line IN ('国际业务', '国内硬件', '美国业务')
+                  AND e.bus_line = %s
                   AND o.prim_org_map IS DISTINCT FROM '无归属'
                 GROUP BY e.prim_subj
                 """,
-                date_params,
+                date_params + (EXPENSE_BASE_BUSINESS_LINE,),
             ),
         }
     finally:
@@ -460,10 +460,8 @@ def calculate_rd_project_profitability(
     )
     rd_cost_rows = pd.concat(
         [
-            electronic_payment,
-            technical_service[
-                technical_service["prim_org"].fillna("").str.contains("渠道", regex=False)
-            ],
+            electronic_payment[electronic_payment["sec_org"].eq(RD_REVENUE_SECONDARY_ORG)],
+            technical_service[technical_service["sec_org"].eq(RD_REVENUE_SECONDARY_ORG)],
         ],
         ignore_index=True,
     )
@@ -944,10 +942,10 @@ def export_rd_project_profitability_excel(
     rules_export = pd.DataFrame(
         [
             ("研发相关收入", "二级组织为国际业务中心的电子支付收入和技术服务收入"),
-            ("研发相关成本", "电子支付成本 + 一级组织名称含“渠道”的技术服务成本"),
-            ("研发费用分摊", "研发费用基数扣除选中产品OA/领料/模具后，按研发工时占比分摊"),
-            ("销售费用分摊", "销售费用基数扣除技术维护费后，按电子支付收入占比分摊"),
-            ("管理费用分摊", "管理费用基数按电子支付成本占比分摊"),
+            ("研发相关成本", "二级组织为国际业务中心的电子支付成本和技术服务成本"),
+            ("研发费用分摊", "国际业务研发费用基数扣除选中产品OA/领料/模具后，按研发工时占比分摊"),
+            ("销售费用分摊", "国际业务销售费用基数扣除技术维护费后，按电子支付收入占比分摊"),
+            ("管理费用分摊", "国际业务管理费用基数按电子支付成本占比分摊"),
             ("费用总额", "OA + 领料 + 模具 + 研发分摊 + 技术维护 + 销售分摊 + 管理分摊"),
             ("剩余收益（规范口径）", "研发相关毛利 - 费用总额"),
             ("剩余收益（Power BI口径）", "电子支付毛利 - 费用总额，用于对账当前Power BI度量值"),

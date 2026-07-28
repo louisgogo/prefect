@@ -7,6 +7,7 @@ import pandas as pd
 from openpyxl import load_workbook
 
 from modules.rd_project_profitability.tasks.rd_project_profitability_tasks import (
+    EXPENSE_BASE_BUSINESS_LINE,
     UNMAPPED_PRODUCT,
     calculate_rd_project_profitability,
     export_rd_project_profitability_excel,
@@ -139,6 +140,9 @@ def _sources():
 
 
 class RdProjectProfitabilityTests(unittest.TestCase):
+    def test_expense_bases_use_international_business_only(self):
+        self.assertEqual(EXPENSE_BASE_BUSINESS_LINE, "国际业务")
+
     def test_default_period_is_year_to_most_recent_completed_month(self):
         start, end = get_default_rd_project_period(date(2026, 7, 28))
 
@@ -172,16 +176,18 @@ class RdProjectProfitabilityTests(unittest.TestCase):
         self.assertAlmostEqual(validation["total_expense"], 460.0)
         self.assertAlmostEqual(validation["power_bi_grand_total_expense"], 410.0)
         self.assertAlmostEqual(validation["power_bi_non_additive_expense_gap"], 50.0)
-        self.assertAlmostEqual(validation["remaining_profit_total"], -610.0)
+        self.assertAlmostEqual(validation["remaining_profit_total"], -390.0)
         self.assertAlmostEqual(validation["power_bi_remaining_profit_total"], -120.0)
-        self.assertAlmostEqual(validation["remaining_profit_gap_total"], -490.0)
+        self.assertAlmostEqual(validation["remaining_profit_gap_total"], -270.0)
         self.assertAlmostEqual(detail.loc["A", "rd_related_revenue"], 120.0)
         self.assertAlmostEqual(detail.loc["A", "electronic_payment_revenue"], 180.0)
-        self.assertAlmostEqual(detail.loc["A", "rd_related_cost"], 130.0)
-        self.assertAlmostEqual(detail.loc["A", "rd_related_gross_margin"], -10 / 120)
+        self.assertAlmostEqual(detail.loc["A", "rd_related_cost"], 50.0)
+        self.assertAlmostEqual(detail.loc["A", "rd_related_gross_margin"], 70 / 120)
         self.assertAlmostEqual(detail.loc["A", "power_bi_gross_margin"], 80 / 180)
         self.assertAlmostEqual(detail.loc["B", "rd_related_revenue"], 0.0)
+        self.assertAlmostEqual(detail.loc["B", "rd_related_cost"], 0.0)
         self.assertAlmostEqual(detail.loc[UNMAPPED_PRODUCT, "rd_related_revenue"], 0.0)
+        self.assertAlmostEqual(detail.loc[UNMAPPED_PRODUCT, "rd_related_cost"], 0.0)
 
     def test_excel_export_returns_frontend_file_metadata(self):
         result = calculate_rd_project_profitability(
