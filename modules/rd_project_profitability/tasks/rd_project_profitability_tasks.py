@@ -17,7 +17,7 @@ from prefect import task
 UNMAPPED_PRODUCT = "未映射产品"
 TARGET_TABLE_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*$")
 BUSINESS_LINES = ("国际业务", "国内硬件", "美国业务")
-MARKET_CENTERS = ("国内市场中心", "国际业务中心")
+RD_REVENUE_SECONDARY_ORG = "国际业务中心"
 DEFAULT_OUTPUT_DIR = "/root/prefect/check/rd_project_profitability"
 
 RESULT_COLUMNS = [
@@ -453,8 +453,8 @@ def calculate_rd_project_profitability(
     technical_service = revenue[revenue["inc_major_cat"].eq("技术服务")]
     rd_revenue_rows = pd.concat(
         [
-            electronic_payment,
-            technical_service[technical_service["sec_org"].isin(MARKET_CENTERS)],
+            electronic_payment[electronic_payment["sec_org"].eq(RD_REVENUE_SECONDARY_ORG)],
+            technical_service[technical_service["sec_org"].eq(RD_REVENUE_SECONDARY_ORG)],
         ],
         ignore_index=True,
     )
@@ -943,7 +943,7 @@ def export_rd_project_profitability_excel(
     summary_export = pd.DataFrame(summary_rows, columns=["指标", "值"])
     rules_export = pd.DataFrame(
         [
-            ("研发相关收入", "电子支付收入 + 国内市场中心/国际业务中心的技术服务收入"),
+            ("研发相关收入", "二级组织为国际业务中心的电子支付收入和技术服务收入"),
             ("研发相关成本", "电子支付成本 + 一级组织名称含“渠道”的技术服务成本"),
             ("研发费用分摊", "研发费用基数扣除选中产品OA/领料/模具后，按研发工时占比分摊"),
             ("销售费用分摊", "销售费用基数扣除技术维护费后，按电子支付收入占比分摊"),

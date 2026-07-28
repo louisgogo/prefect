@@ -69,6 +69,24 @@ def _sources():
                     "cost": 20,
                 },
                 {
+                    "mat_code": "m1",
+                    "inc_major_cat": "电子支付",
+                    "prim_org": "硬件事业群",
+                    "sec_org": "国际业务中心",
+                    "sales_quantity": 8,
+                    "revenue": 80,
+                    "cost": 40,
+                },
+                {
+                    "mat_code": "m1",
+                    "inc_major_cat": "技术服务",
+                    "prim_org": "渠道事业群",
+                    "sec_org": "国际业务中心",
+                    "sales_quantity": 0,
+                    "revenue": 40,
+                    "cost": 10,
+                },
+                {
                     "mat_code": "m2",
                     "inc_major_cat": "电子支付",
                     "prim_org": "硬件事业群",
@@ -154,11 +172,16 @@ class RdProjectProfitabilityTests(unittest.TestCase):
         self.assertAlmostEqual(validation["total_expense"], 460.0)
         self.assertAlmostEqual(validation["power_bi_grand_total_expense"], 410.0)
         self.assertAlmostEqual(validation["power_bi_non_additive_expense_gap"], 50.0)
-        self.assertAlmostEqual(validation["remaining_profit_total"], -130.0)
-        self.assertAlmostEqual(validation["power_bi_remaining_profit_total"], -160.0)
-        self.assertAlmostEqual(validation["remaining_profit_gap_total"], 30.0)
-        self.assertAlmostEqual(detail.loc["A", "rd_related_gross_margin"], 70 / 150)
-        self.assertAlmostEqual(detail.loc["A", "power_bi_gross_margin"], 40 / 100)
+        self.assertAlmostEqual(validation["remaining_profit_total"], -610.0)
+        self.assertAlmostEqual(validation["power_bi_remaining_profit_total"], -120.0)
+        self.assertAlmostEqual(validation["remaining_profit_gap_total"], -490.0)
+        self.assertAlmostEqual(detail.loc["A", "rd_related_revenue"], 120.0)
+        self.assertAlmostEqual(detail.loc["A", "electronic_payment_revenue"], 180.0)
+        self.assertAlmostEqual(detail.loc["A", "rd_related_cost"], 130.0)
+        self.assertAlmostEqual(detail.loc["A", "rd_related_gross_margin"], -10 / 120)
+        self.assertAlmostEqual(detail.loc["A", "power_bi_gross_margin"], 80 / 180)
+        self.assertAlmostEqual(detail.loc["B", "rd_related_revenue"], 0.0)
+        self.assertAlmostEqual(detail.loc[UNMAPPED_PRODUCT, "rd_related_revenue"], 0.0)
 
     def test_excel_export_returns_frontend_file_metadata(self):
         result = calculate_rd_project_profitability(
