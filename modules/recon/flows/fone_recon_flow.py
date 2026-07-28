@@ -15,7 +15,7 @@ from prefect import flow
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from ...common.tasks.notify_hermes_task import notify_hermes_task
-from ..tasks.fone_recon_tasks import execute_fone_recon_script_task, get_fone_token_task
+from ..tasks.fone_recon_tasks import execute_fone_recon_script_task
 
 
 def _get_last_month():
@@ -46,9 +46,8 @@ def fone_recon_flow(
 
     流程说明：
       1. 计算目标月份的起止日期（1号 ~ 月末）
-      2. 调用 FONE 登录接口获取 ticket（使用 /api/login/prod）
-      3. 调用执行脚本接口，触发 0501-获取ERP科目余额表-WebApi
-      4. 校验脚本执行结果，失败则抛出异常
+      2. 使用 worker 环境变量中的 AIHub Bearer token 调用 FONE 代理
+      3. 触发 0501-获取ERP科目余额表-WebApi 并校验执行结果
     """
     print("=" * 60)
     print("从 FONE 获取往来数据流程启动")
@@ -73,15 +72,8 @@ def fone_recon_flow(
         print(f"目标月份: {year}年{month}月")
         print(f"日期范围: {start_date} ~ {end_date}")
 
-        # Step 1: 获取 token
-        print("\n【步骤1】获取 FONE 认证凭证...")
-        login_result = get_fone_token_task()
-        ticket = login_result["ticket"]
-
-        # Step 2: 执行脚本
-        print("\n【步骤2】执行从 FONE 获取往来数据脚本...")
+        print("\n【步骤1】通过 AIHub FONE 代理执行往来数据脚本...")
         result = execute_fone_recon_script_task(
-            ticket=ticket,
             start_date=start_date,
             end_date=end_date,
         )
@@ -89,7 +81,7 @@ def fone_recon_flow(
         print("\n" + "=" * 60)
         print("从 FONE 获取往来数据流程完成！")
         print(f"  脚本状态: {result['script_status']}")
-        print(f"  控制台日志: {len(result['console_logs'])} 条")
+        print(f"  控制台日志: {result['console_log_count']} 条")
         print("=" * 60)
 
         notify_hermes_task(

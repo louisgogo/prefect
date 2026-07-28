@@ -13,6 +13,7 @@ from modules import (
     calculate_shared_rate_flow,
     data_import_flow,
     fetch_budget_shared_rate_flow,
+    fone_income_expense_refresh_flow,
     fone_recon_flow,
     org_sync_flow,
     profit_refresh_flow,
@@ -143,6 +144,15 @@ def _serve_fone_recon():
     )
 
 
+def _serve_fone_income_expense_refresh():
+    """模块级函数，供 Process 调用。"""
+    fone_income_expense_refresh_flow.serve(
+        name="子流程-FONE收入费用明细刷新",
+        tags=["FONE", "收入明细", "费用明细", "财务刷新", "手动触发"],
+        description="按显式年月顺序刷新 FONE 收入、费用明细，并回读数据库验证非空、期间和刷新状态。",
+    )
+
+
 def _serve_bus_line_staging():
     """模块级函数，供 Process 调用"""
     bus_line_staging_flow.serve(
@@ -255,6 +265,7 @@ def deploy_to_remote_server():
     process13 = Process(target=_serve_view_update)
     process14 = Process(target=_serve_org_sync)
     process15 = Process(target=_serve_rd_project_profitability)
+    process16 = Process(target=_serve_fone_income_expense_refresh)
 
     process1.start()
     time.sleep(1)
@@ -285,6 +296,8 @@ def deploy_to_remote_server():
     process14.start()
     time.sleep(1)
     process15.start()
+    time.sleep(1)
+    process16.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -317,6 +330,7 @@ def deploy_to_remote_server():
             process13,
             process14,
             process15,
+            process16,
         ]:
             p.terminate()
             p.join()

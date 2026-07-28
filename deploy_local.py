@@ -13,6 +13,7 @@ from modules import (
     calculate_shared_rate_flow,
     data_import_flow,
     fetch_budget_shared_rate_flow,
+    fone_income_expense_refresh_flow,
     fone_recon_flow,
     org_sync_flow,
     profit_refresh_flow,
@@ -182,6 +183,20 @@ def deploy_fone_recon_flow():
     )
 
 
+def deploy_fone_income_expense_refresh_flow():
+    """部署 FONE 收入费用明细刷新子流程。"""
+    print("=" * 60)
+    print("FONE 收入费用明细刷新子流程 - 本地测试部署")
+    print("=" * 60)
+    print("year、month 必须显式填写；permission_user 可传参或由环境变量提供。")
+
+    fone_income_expense_refresh_flow.serve(
+        name="FONE收入费用明细刷新-本地测试",
+        tags=["本地测试", "FONE", "收入明细", "费用明细", "财务刷新"],
+        description="按显式年月顺序刷新 FONE 收入、费用明细，并回读数据库验证非空、期间和刷新状态。",
+    )
+
+
 def deploy_recon_flow():
     """部署内部往来对账流程（Excel 数据源）"""
     print("=" * 60)
@@ -345,6 +360,7 @@ if __name__ == "__main__":
     process13 = Process(target=deploy_view_update_flow)
     process14 = Process(target=deploy_org_sync_flow)
     process15 = Process(target=deploy_rd_project_profitability_flow)
+    process16 = Process(target=deploy_fone_income_expense_refresh_flow)
 
     process1.start()
     time.sleep(1)
@@ -375,6 +391,8 @@ if __name__ == "__main__":
     process14.start()
     time.sleep(1)
     process15.start()
+    time.sleep(1)
+    process16.start()
 
     # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
@@ -403,6 +421,7 @@ if __name__ == "__main__":
             process13,
             process14,
             process15,
+            process16,
         ]:
             p.terminate()
             p.join()

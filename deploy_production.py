@@ -10,6 +10,7 @@ from modules import (
     calculate_shared_rate_flow,
     data_import_flow,
     fetch_budget_shared_rate_flow,
+    fone_income_expense_refresh_flow,
     profit_refresh_flow,
     rd_project_profitability_flow,
 )
@@ -117,6 +118,16 @@ if __name__ == "__main__":
             "年中为 YYYY-07-01。save_previous_version 默认关闭并直接覆盖；手动开启时归档当前正式版。"
         ),
         parameters=budget_defaults,
+    )
+
+    print("\n" + "=" * 60)
+    print("FONE 收入费用明细刷新子流程 - 生产环境注册")
+    print("=" * 60)
+    print("说明：仅手工触发；year、month 必须显式填写，权限用户必须通过参数或环境变量提供。")
+    fone_income_expense_refresh_flow.serve(
+        name="子流程-FONE收入费用明细刷新",
+        tags=["FONE", "收入明细", "费用明细", "财务刷新", "手动触发"],
+        description="按显式年月顺序刷新 FONE 收入、费用明细，并回读数据库验证非空、期间和刷新状态。",
     )
 
     print("\n" + "=" * 60)

@@ -23,6 +23,7 @@ from .rd_project_profitability.flows.rd_project_profitability_flow import (
 )
 
 # 往来对账流程
+from .recon.flows.fone_income_expense_refresh_flow import fone_income_expense_refresh_flow
 from .recon.flows.fone_recon_flow import fone_recon_flow
 from .recon.flows.recon_flow import recon_flow
 from .recon.flows.staging_recon_flow import staging_recon_flow
@@ -48,6 +49,7 @@ __all__ = [
     "org_sync_flow",
     "profit_refresh_flow",
     "rd_project_profitability_flow",
+    "fone_income_expense_refresh_flow",
     "fone_recon_flow",
     "recon_flow",
     "staging_recon_flow",
