@@ -12,10 +12,10 @@ Promote the already verified `rd_project_profitability_flow` update and the quar
 - [x] (2026-07-29 02:40Z) Identified the intended R&D profitability changes and separated unrelated inventory-impairment worktree changes.
 - [x] (2026-07-29 02:42Z) Passed five focused unit tests, `git diff --check`, and focused pre-commit hooks.
 - [x] (2026-07-29 03:06Z) Passed the combined 22-test inventory impairment and R&D profitability suite.
-- [ ] Run a local read-only Q2 2026 inventory impairment smoke test.
-- [ ] Commit and push the intended inventory impairment and R&D profitability revisions.
-- [ ] Restart `prefect-workers.service` from the pushed commit.
-- [ ] Verify both deployments and explicit production read-only flow executions.
+- [x] (2026-07-29 02:33Z) Completed a local read-only Q2 2026 inventory impairment smoke test: 6 calculated rows totaling 3,444,244.79, with no writeback.
+- [x] (2026-07-29 02:35Z) Pushed R&D commit `0dcafcb` and inventory impairment commit `9d3ab7f` to `origin/session/prefect`.
+- [x] (2026-07-29 02:35Z) Restarted `prefect-workers.service` through systemd from commit `9d3ab7f`.
+- [x] (2026-07-29 02:37Z) Verified both deployments are unpaused and READY and both production read-only runs completed.
 
 ## Surprises & Discoveries
 
@@ -37,7 +37,7 @@ Promote the already verified `rd_project_profitability_flow` update and the quar
 
 ## Outcomes & Retrospective
 
-Pending production rollout and verification.
+The rollout completed successfully. `prefect-workers.service` is active and both `子流程-季度存货跌价计算` and `主流程-研发项目收益分析` are polling as READY deployments. Inventory verification run `9e4c6d0c-d9d3-4ae3-8da4-eab7865f9073` completed for 2026 Q2 with writeback disabled. R&D verification run `6c4074f0-1d4a-4faf-bb1a-4ea9d66e765c` completed for 2026 H1 with database writes and frontend notification disabled, producing 176 result rows, 1,149 backup rows, and the expected four-sheet workbook. The inventory comparison still contains one 327,117.64 historical difference caused by the documented delivery-date-first ageing rule; this was not written back.
 
 ## Context and Orientation
 
@@ -70,6 +70,8 @@ Tests and verification runs are safe to repeat because inventory `write_to_fact_
 
 Failed personal-workbench run: `d88bd3a0-8607-4c5b-9014-d2bf6bb6c976`. Prior verified implementation run: `804c2916-7060-4621-9ba0-72827aa988a1`. Expected period totals remain revenue 736,636,078.99, cost 474,249,880.54, expense 115,636,794.82, and remaining profit 146,749,403.63.
 
+Production inventory verification run: `9e4c6d0c-d9d3-4ae3-8da4-eab7865f9073`; calculated total 3,444,244.79, status counts 5 matched and 1 different, no writeback. Production R&D verification run: `6c4074f0-1d4a-4faf-bb1a-4ea9d66e765c`; workbook sheets are `研发项目收益`, `汇总与校验`, `计算口径`, and `收入成本备查`.
+
 ## Interfaces and Dependencies
 
 Public flow parameters remain `start_date`, `end_date`, `write_to_db`, `target_table`, `output_dir`, `download_base_url`, `notify_frontend`, `callback_url`, and `tolerance`. The flow uses the existing pandas/openpyxl environment and current production source systems. No schema migration or database row copy is part of this rollout.
@@ -78,3 +80,4 @@ Public flow parameters remain `start_date`, `end_date`, `write_to_db`, `target_t
 
 - 2026-07-29: Created after the user authorized production promotion of the verified single-basis R&D report.
 - 2026-07-29: Expanded to include the quarterly inventory impairment flow after the user authorized submission and service restart in the context of its grey deployment.
+- 2026-07-29: Recorded successful commits, systemd restart, deployment readiness, and read-only production verification; plan is complete and ready for archive.
