@@ -12,9 +12,10 @@ The manually triggered `fone_income_expense_refresh_flow` currently executes FON
 - [x] (2026-07-29 06:59Z) Identified pushed commit `b49d9d7` that implements refresh-only script compilation but is not yet loaded by the production worker, whose last served deployment used `4233aed8`.
 - [x] (2026-07-29 07:02Z) Audited both live FONE definitions: each has exactly one ordered delivery, unlock, operation-log, and catch marker; compiled refresh-only scripts retain period/user substitution and both lock-release paths while removing delivery and operation-log sections.
 - [x] (2026-07-29 07:07Z) Passed 20 focused FONE tests, all 72 repository tests, compile/import checks, `git diff --check`, and scoped Black/isort/flake8 hooks; updated the proxy-auth fixture to exercise refresh-only compilation.
-- [ ] Restart `prefect-workers.service` from the pushed branch and verify the target deployment is READY at the intended commit.
-- [ ] Trigger the explicit `2026/6` production verification run, inspect Prefect logs, and independently validate all three target tables.
-- [ ] Update durable documentation and this plan with evidence, archive the plan, and send the WeCom completion notification.
+- [x] (2026-07-29 07:06Z) Pushed commit `5163435`, restarted `prefect-workers.service`, confirmed the worker loaded token plus permission user `songsong`, and verified the target deployment READY at version `51634350`.
+- [x] (2026-07-29 07:08Z) Completed production verification run `1d6fd60b-27ad-4bd0-9f88-86dad4867c4f` for explicit period `2026/6`; both stages returned script status 0 and passed database validation.
+- [x] (2026-07-29 07:09Z) Independently verified 11,666 income rows, 3,953 expense-format rows, and 2,924 expense-detail rows with the requested periods and advanced ID ranges; documentation was already updated in `b49d9d7`.
+- [x] (2026-07-29 07:10Z) Sent the WeCom completion notification and prepared this completed plan for archival.
 
 ## Surprises & Discoveries
 
@@ -22,6 +23,7 @@ The manually triggered `fone_income_expense_refresh_flow` currently executes FON
 - The branch advanced from deployed commit `4233aed8` to pushed commit `b49d9d7` while the worker remained active from 2026-07-29 14:37 CST. The current production deployment therefore does not yet use the committed refresh-only behavior.
 - Both live content definitions matched the committed structural assumptions on 2026-07-29: income was reduced from 292 to 212 script lines and expense from 303 to 200, with delivery/log markers absent and unlock/catch markers retained after compilation.
 - `pre-commit run --all-files` found and reformatted three unrelated historical files. Those mechanical changes were restored exactly from `HEAD`; scoped checks for all FONE paths pass. The repository-wide run therefore remains non-clean only because of unrelated pre-existing formatting, not this change.
+- The restart completed successfully and quickly, but old Prefect runner shutdown still emitted asyncio tracebacks. The new service remained active and registered all deployments; these shutdown traces did not indicate an import or registration failure.
 
 ## Decision Log
 
@@ -37,7 +39,9 @@ The manually triggered `fone_income_expense_refresh_flow` currently executes FON
 
 ## Outcomes & Retrospective
 
-Pending implementation audit, rollout, and production verification.
+The production button now executes only the FONE data-refresh portions and lock cleanup, not Excel generation, WeCom delivery, or delivery-log writes. The deployed version `51634350` completed the explicit June 2026 flow in about 35 seconds. Income and expense each returned `script_status=0`, zero warnings, and zero errors; each emitted only two compact console entries instead of the previous eight delivery-oriented entries. All three target tables were rebuilt and independently verified for the requested period.
+
+The original misleading failure mode is removed rather than merely reclassified: delivery services can no longer fail inside this database-refresh flow. The authoritative FONE scripts remain dynamic, but marker validation fails closed before execution if their structure changes. No new dependency or public flow parameter was introduced.
 
 ## Context and Orientation
 
@@ -82,6 +86,11 @@ If a run fails after execution begins, inspect the three aggregate table signatu
 - Previous successful run: `1d86e948-0e77-485e-acdd-1e44a17db720`, completed for June 2026.
 - Misclassified user-triggered run: `84aceb0d-6a77-495b-bbaf-7378a94ae4de`; income refreshed to 11,666 rows but post-refresh delivery returned two errors and expense was skipped.
 - Intended code commit at plan creation: `b49d9d723958b797c114249e8685368ae6ab0a30`, already present on `origin/session/prefect`.
+- Deployed commit: `51634350d2854e47c8c3410c3dea74079bcb4838`, synchronized with `origin/session/prefect`.
+- Production verification run: `1d6fd60b-27ad-4bd0-9f88-86dad4867c4f`, state `Completed`, deployment version `51634350`, total runtime about 35 seconds.
+- Final income state: 11,666 rows, IDs 412452-424117, one period `2026-06-01`.
+- Final expense-format state: 3,953 rows, IDs 477281-481233, one period `2026-06-01`.
+- Final expense-detail state: 2,924 rows, IDs 768532-771455, one period `2026-M6`.
 
 ## Interfaces and Dependencies
 
@@ -90,3 +99,5 @@ No new Python dependency is expected. The implementation depends on Prefect task
 ## Revision Notes
 
 - 2026-07-29: Created the plan after discovering that the exact delivery-decoupling fix is already committed and pushed but not yet deployed to the active production worker.
+- 2026-07-29: Recorded live-content audit, regression-test repair, pushed test evidence, production restart, successful June verification, and final database aggregates before archival.
+- 2026-07-29: Sent the completion notification and archived the completed ExecPlan.
