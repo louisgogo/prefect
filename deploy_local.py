@@ -15,6 +15,7 @@ from modules import (
     fetch_budget_shared_rate_flow,
     fone_income_expense_refresh_flow,
     fone_recon_flow,
+    inventory_impairment_flow,
     org_sync_flow,
     profit_refresh_flow,
     profit_report_flow,
@@ -317,6 +318,27 @@ def deploy_org_sync_flow():
     )
 
 
+def deploy_inventory_impairment_flow():
+    """部署季度存货跌价计算子流程。"""
+    from modules.inventory_impairment.flows.inventory_impairment_flow import (
+        _get_inventory_impairment_defaults_by_date,
+    )
+
+    defaults = _get_inventory_impairment_defaults_by_date()
+    defaults["write_to_fact_profit_bd"] = False
+    print("=" * 60)
+    print("季度存货跌价计算子流程 - 本地测试部署")
+    print("=" * 60)
+    print(f"默认期间：{defaults['year']}年第{defaults['quarter']}季度；" "本地测试默认只读，可在 UI 中显式开启写入。")
+
+    inventory_impairment_flow.serve(
+        name="季度存货跌价计算-本地测试",
+        tags=["本地测试", "存货跌价", "季度任务", "只读校验"],
+        description="默认计算最近已结束季度；本地默认只读，可选择替换 fact_profit_bd 的业报资产减值损失。",
+        parameters=defaults,
+    )
+
+
 def deploy_rd_project_profitability_flow():
     """部署研发项目收益分析流程。"""
     from modules.rd_project_profitability.flows.rd_project_profitability_flow import (
@@ -359,8 +381,9 @@ if __name__ == "__main__":
     process12 = Process(target=deploy_fone_recon_flow)
     process13 = Process(target=deploy_view_update_flow)
     process14 = Process(target=deploy_org_sync_flow)
-    process15 = Process(target=deploy_rd_project_profitability_flow)
-    process16 = Process(target=deploy_fone_income_expense_refresh_flow)
+    process15 = Process(target=deploy_inventory_impairment_flow)
+    process16 = Process(target=deploy_rd_project_profitability_flow)
+    process17 = Process(target=deploy_fone_income_expense_refresh_flow)
 
     process1.start()
     time.sleep(1)
@@ -393,6 +416,8 @@ if __name__ == "__main__":
     process15.start()
     time.sleep(1)
     process16.start()
+    time.sleep(1)
+    process17.start()
 
     # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
@@ -422,6 +447,7 @@ if __name__ == "__main__":
             process14,
             process15,
             process16,
+            process17,
         ]:
             p.terminate()
             p.join()

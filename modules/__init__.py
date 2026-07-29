@@ -11,6 +11,9 @@ from .bus_line_cal.flows.business_line_profit_flow import business_line_profit_f
 # 数据导入流程
 from .data_import.flows.data_import_flow import data_import_flow
 
+# 存货跌价季度计算子流程
+from .inventory_impairment.flows.inventory_impairment_flow import inventory_impairment_flow
+
 # 组织架构同步对比流程
 from .org_sync.flows.org_sync_flow import org_sync_flow
 
@@ -45,6 +48,7 @@ __all__ = [
     "calculate_shared_rate_flow",
     "fetch_budget_shared_rate_flow",
     "data_import_flow",
+    "inventory_impairment_flow",
     "budget_update_flow",
     "org_sync_flow",
     "profit_refresh_flow",

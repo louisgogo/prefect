@@ -15,6 +15,7 @@ from modules import (
     fetch_budget_shared_rate_flow,
     fone_income_expense_refresh_flow,
     fone_recon_flow,
+    inventory_impairment_flow,
     org_sync_flow,
     profit_refresh_flow,
     profit_report_flow,
@@ -189,6 +190,21 @@ def _serve_org_sync():
     )
 
 
+def _serve_inventory_impairment():
+    """模块级函数，供 Process 调用。"""
+    from modules.inventory_impairment.flows.inventory_impairment_flow import (
+        _get_inventory_impairment_defaults_by_date,
+    )
+
+    defaults = _get_inventory_impairment_defaults_by_date()
+    inventory_impairment_flow.serve(
+        name="子流程-季度存货跌价计算",
+        tags=["存货跌价", "季度任务", "手动触发", "财务写入"],
+        description="默认计算最近已结束季度，事务替换 fact_profit_bd 的业报资产减值损失并回读核对。",
+        parameters=defaults,
+    )
+
+
 def _serve_rd_project_profitability():
     """模块级函数，供 Process 调用。"""
     from modules.rd_project_profitability.flows.rd_project_profitability_flow import (
@@ -264,8 +280,9 @@ def deploy_to_remote_server():
     process12 = Process(target=_serve_profit_report)
     process13 = Process(target=_serve_view_update)
     process14 = Process(target=_serve_org_sync)
-    process15 = Process(target=_serve_rd_project_profitability)
-    process16 = Process(target=_serve_fone_income_expense_refresh)
+    process15 = Process(target=_serve_inventory_impairment)
+    process16 = Process(target=_serve_rd_project_profitability)
+    process17 = Process(target=_serve_fone_income_expense_refresh)
 
     process1.start()
     time.sleep(1)
@@ -298,6 +315,8 @@ def deploy_to_remote_server():
     process15.start()
     time.sleep(1)
     process16.start()
+    time.sleep(1)
+    process17.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -331,6 +350,7 @@ def deploy_to_remote_server():
             process14,
             process15,
             process16,
+            process17,
         ]:
             p.terminate()
             p.join()

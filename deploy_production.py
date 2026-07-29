@@ -11,6 +11,7 @@ from modules import (
     data_import_flow,
     fetch_budget_shared_rate_flow,
     fone_income_expense_refresh_flow,
+    inventory_impairment_flow,
     profit_refresh_flow,
     rd_project_profitability_flow,
 )
@@ -139,6 +140,25 @@ if __name__ == "__main__":
         name="子流程-利润表刷新",
         tags=["业务线核算", "手动触发", "自动执行"],
         description="利润表刷新流程：处理所有已计算的月份数据，生成 fact_profit 和 fact_bus_profit 表",
+    )
+
+    print("\n" + "=" * 60)
+    print("季度存货跌价计算子流程 - 生产环境注册")
+    print("=" * 60)
+    from modules.inventory_impairment.flows.inventory_impairment_flow import (
+        _get_inventory_impairment_defaults_by_date,
+    )
+
+    impairment_defaults = _get_inventory_impairment_defaults_by_date()
+    print(
+        f"默认期间：{impairment_defaults['year']}年第{impairment_defaults['quarter']}季度；"
+        "默认事务替换 fact_profit_bd 后回读核对。"
+    )
+    inventory_impairment_flow.serve(
+        name="子流程-季度存货跌价计算",
+        tags=["存货跌价", "季度任务", "手动触发", "财务写入"],
+        description="默认计算最近已结束季度，事务替换 fact_profit_bd 的业报资产减值损失并回读核对。",
+        parameters=impairment_defaults,
     )
 
     print("\n" + "=" * 60)
