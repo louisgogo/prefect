@@ -82,7 +82,20 @@ class FoneProxyAuthTests(unittest.TestCase):
                 {"name": "实际数年"},
                 {"name": "数据流", "id": "stream-id"},
             ],
-            "scriptText": ("run(@实际数月@, @实际数年@, @数据流@);" "var userID = user.account;"),
+            "scriptText": """var userID = user.account;
+try{
+run(@实际数月@, @实际数年@, @数据流@);
+//08-通过数据中心生成Excel-Beg
+generateExcel();
+//10-程序锁-解锁，清空表数据
+releaseLock();
+//11-生成操作日志
+writeDeliveryLog();
+}catch(e){//异常捕获End
+releaseLock();
+throw e;
+}
+""",
         }
         content_response = _Response(
             {
@@ -130,6 +143,11 @@ class FoneProxyAuthTests(unittest.TestCase):
         )
         for call in post_mock.call_args_list:
             self.assertEqual(call.kwargs["headers"]["Authorization"], "Bearer proxy-token")
+        executed_script = post_mock.call_args_list[1].kwargs["json"]["scriptText"]
+        self.assertIn("run(实际数月, 实际数年, 数据流);", executed_script)
+        self.assertIn("releaseLock();", executed_script)
+        self.assertNotIn("generateExcel();", executed_script)
+        self.assertNotIn("writeDeliveryLog();", executed_script)
         self.assertEqual(result["detail_type"], "income")
         self.assertEqual(result["script_status"], 0)
         self.assertEqual(FONE_DETAIL_SCRIPTS["income"]["content_id"], "661b866863556863c96d4bbf")
