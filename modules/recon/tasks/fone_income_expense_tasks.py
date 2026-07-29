@@ -34,6 +34,10 @@ FONE_DETAIL_SCRIPTS = {
 
 _PERMISSION_USER_ASSIGNMENT = "var userID = user.account;"
 _VARIABLE_MARKER_PATTERN = re.compile(r"@([A-Za-z0-9_\u3400-\u9fff]+)@")
+_DELIVERY_START_MARKER = "//08-\u901a\u8fc7\u6570\u636e\u4e2d\u5fc3\u751f\u6210Excel-Beg"
+_UNLOCK_START_MARKER = "//10-\u7a0b\u5e8f\u9501-\u89e3\u9501\uff0c\u6e05\u7a7a\u8868\u6570\u636e"
+_OPERATION_LOG_MARKER = "//11-\u751f\u6210\u64cd\u4f5c\u65e5\u5fd7"
+_CATCH_MARKER = "}catch(e){//\u5f02\u5e38\u6355\u83b7End"
 
 _TABLE_QUERIES = {
     "income": {
@@ -103,6 +107,44 @@ def _parse_fone_content_response(response_data: Dict[str, Any]) -> Dict[str, Any
     if not isinstance(definition.get("scriptText"), str) or not definition["scriptText"]:
         raise RuntimeError("FONE 脚本定义缺少 scriptText")
     return definition
+
+
+def _build_refresh_only_script(script_text: str) -> str:
+    """Remove Excel/WeCom delivery steps from a FONE detail refresh script.
+
+    The business-report button only needs the MySQL detail tables. The source
+    FONE contents are notification scripts whose later Excel and WeCom steps
+    can fail after the tables have already been rebuilt. Keep the data refresh,
+    normal lock release, and exception cleanup while removing those unrelated
+    delivery side effects.
+    """
+    marker_positions = {
+        "delivery": script_text.count(_DELIVERY_START_MARKER),
+        "unlock": script_text.count(_UNLOCK_START_MARKER),
+        "operation_log": script_text.count(_OPERATION_LOG_MARKER),
+        "catch": script_text.count(_CATCH_MARKER),
+    }
+    invalid_markers = [name for name, count in marker_positions.items() if count != 1]
+    if invalid_markers:
+        details = ", ".join(f"{name}={marker_positions[name]}" for name in invalid_markers)
+        raise RuntimeError(
+            f"FONE \u660e\u7ec6\u811a\u672c\u7ed3\u6784\u5df2\u53d8\u66f4\uff0c\u65e0\u6cd5\u5b89\u5168\u5207\u6362\u4e3a\u4ec5\u5237\u65b0\u6a21\u5f0f: {details}"
+        )
+
+    delivery_start = script_text.index(_DELIVERY_START_MARKER)
+    unlock_start = script_text.index(_UNLOCK_START_MARKER)
+    operation_log_start = script_text.index(_OPERATION_LOG_MARKER)
+    catch_start = script_text.index(_CATCH_MARKER)
+    if not delivery_start < unlock_start < operation_log_start < catch_start:
+        raise RuntimeError(
+            "FONE \u660e\u7ec6\u811a\u672c\u9636\u6bb5\u987a\u5e8f\u5f02\u5e38\uff0c\u62d2\u7edd\u6267\u884c"
+        )
+
+    return (
+        script_text[:delivery_start]
+        + script_text[unlock_start:operation_log_start]
+        + script_text[catch_start:]
+    )
 
 
 def _compile_fone_detail_script(
@@ -243,7 +285,11 @@ def _validate_fone_detail_table_state(
 
         prior = previous_tables.get(table_name)
         if prior:
-            before_signature = (prior.get("row_count"), prior.get("id_min"), prior.get("id_max"))
+            before_signature = (
+                prior.get("row_count"),
+                prior.get("id_min"),
+                prior.get("id_max"),
+            )
             after_signature = (
                 table_state.get("row_count"),
                 table_state.get("id_min"),
@@ -293,8 +339,10 @@ def execute_fone_income_expense_script_task(
         definition = _parse_fone_content_response(content_response.json())
     except ValueError as exc:
         raise RuntimeError("FONE 内容读取响应不是有效 JSON") from exc
+    refresh_definition = dict(definition)
+    refresh_definition["scriptText"] = _build_refresh_only_script(definition["scriptText"])
     script_text = _compile_fone_detail_script(
-        definition=definition,
+        definition=refresh_definition,
         year=year,
         month=month,
         permission_user=permission_user,

@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from modules.recon.tasks.fone_income_expense_tasks import (
+    _build_refresh_only_script,
     _compile_fone_detail_script,
     _parse_fone_content_response,
     _validate_fone_detail_table_state,
@@ -64,6 +65,35 @@ def _expense_state():
 
 
 class FoneContentCompilationTests(unittest.TestCase):
+    def test_refresh_only_script_removes_delivery_and_operation_log(self):
+        script = """try{
+refreshTables();
+//08-\u901a\u8fc7\u6570\u636e\u4e2d\u5fc3\u751f\u6210Excel-Beg
+generateExcel();
+sendWeCom();
+//10-\u7a0b\u5e8f\u9501-\u89e3\u9501\uff0c\u6e05\u7a7a\u8868\u6570\u636e
+releaseLock();
+//11-\u751f\u6210\u64cd\u4f5c\u65e5\u5fd7
+writeDeliveryLog();
+}catch(e){//\u5f02\u5e38\u6355\u83b7End
+releaseLock();
+throw e;
+}
+"""
+
+        result = _build_refresh_only_script(script)
+
+        self.assertIn("refreshTables();", result)
+        self.assertIn("releaseLock();", result)
+        self.assertIn("}catch(e){//\u5f02\u5e38\u6355\u83b7End", result)
+        self.assertNotIn("generateExcel();", result)
+        self.assertNotIn("sendWeCom();", result)
+        self.assertNotIn("writeDeliveryLog();", result)
+
+    def test_refresh_only_script_rejects_changed_source_structure(self):
+        with self.assertRaisesRegex(RuntimeError, "\u811a\u672c\u7ed3\u6784\u5df2\u53d8\u66f4"):
+            _build_refresh_only_script("refreshTables();")
+
     def test_parse_nested_fone_content_definition(self):
         definition = _script_definition()
         response = {"isSuccess": True, "data": {"data": json.dumps(definition)}}
