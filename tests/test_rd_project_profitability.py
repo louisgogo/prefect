@@ -161,6 +161,7 @@ class RdProjectProfitabilityTests(unittest.TestCase):
         )
         validation = validate_rd_project_profitability(result)
         detail = result["detail"].set_index("product_sub_category")
+        revenue_cost_backup = result["revenue_cost_backup"]
 
         self.assertEqual(result["metrics"]["selected_product_count"], 2)
         self.assertIn(UNMAPPED_PRODUCT, detail.index)
@@ -174,20 +175,21 @@ class RdProjectProfitabilityTests(unittest.TestCase):
         self.assertAlmostEqual(detail["allocated_management_expense"].sum(), 80.0)
         self.assertAlmostEqual(validation["excluded_oa_amount"], 60.0)
         self.assertAlmostEqual(validation["total_expense"], 460.0)
-        self.assertAlmostEqual(validation["power_bi_grand_total_expense"], 410.0)
-        self.assertAlmostEqual(validation["power_bi_non_additive_expense_gap"], 50.0)
         self.assertAlmostEqual(validation["remaining_profit_total"], -390.0)
-        self.assertAlmostEqual(validation["power_bi_remaining_profit_total"], -120.0)
-        self.assertAlmostEqual(validation["remaining_profit_gap_total"], -270.0)
+        self.assertEqual(validation["revenue_cost_backup_row_count"], 2)
+        self.assertAlmostEqual(validation["revenue_cost_backup_revenue_total"], 120.0)
+        self.assertAlmostEqual(validation["revenue_cost_backup_cost_total"], 50.0)
         self.assertAlmostEqual(detail.loc["A", "rd_related_revenue"], 120.0)
-        self.assertAlmostEqual(detail.loc["A", "electronic_payment_revenue"], 180.0)
         self.assertAlmostEqual(detail.loc["A", "rd_related_cost"], 50.0)
         self.assertAlmostEqual(detail.loc["A", "rd_related_gross_margin"], 70 / 120)
-        self.assertAlmostEqual(detail.loc["A", "power_bi_gross_margin"], 80 / 180)
         self.assertAlmostEqual(detail.loc["B", "rd_related_revenue"], 0.0)
         self.assertAlmostEqual(detail.loc["B", "rd_related_cost"], 0.0)
         self.assertAlmostEqual(detail.loc[UNMAPPED_PRODUCT, "rd_related_revenue"], 0.0)
         self.assertAlmostEqual(detail.loc[UNMAPPED_PRODUCT, "rd_related_cost"], 0.0)
+        self.assertNotIn("power_bi_gross_margin", detail.columns)
+        self.assertNotIn("power_bi_remaining_profit", detail.columns)
+        self.assertEqual(set(revenue_cost_backup["revenue_category"]), {"电子支付", "技术服务"})
+        self.assertEqual(set(revenue_cost_backup["secondary_org"]), {"国际业务中心"})
 
     def test_excel_export_returns_frontend_file_metadata(self):
         result = calculate_rd_project_profitability(
@@ -207,7 +209,35 @@ class RdProjectProfitabilityTests(unittest.TestCase):
 
             self.assertTrue(output_path.exists())
             self.assertEqual(report["row_count"], 3)
-            self.assertEqual(workbook.sheetnames, ["研发项目收益", "汇总与校验", "计算口径"])
+            self.assertEqual(report["backup_row_count"], 2)
+            self.assertEqual(
+                workbook.sheetnames,
+                ["研发项目收益", "汇总与校验", "计算口径", "收入成本备查"],
+            )
+            detail_headers = [cell.value for cell in workbook["研发项目收益"][1]]
+            backup_headers = [cell.value for cell in workbook["收入成本备查"][1]]
+            self.assertIn("研发相关毛利率", detail_headers)
+            self.assertIn("剩余收益", detail_headers)
+            self.assertNotIn("毛利率（Power BI口径）", detail_headers)
+            self.assertNotIn("剩余收益（Power BI口径）", detail_headers)
+            self.assertEqual(
+                backup_headers,
+                [
+                    "开始日期",
+                    "结束日期",
+                    "产品细类",
+                    "主数据产品细类",
+                    "映射状态",
+                    "物料编码",
+                    "收入大类",
+                    "一级组织",
+                    "二级组织",
+                    "收入",
+                    "成本",
+                    "毛利",
+                ],
+            )
+            self.assertEqual(workbook["收入成本备查"].max_row, 3)
             self.assertTrue(report["download_url"].startswith("https://reports.example/rd/"))
             self.assertGreater(report["size_bytes"], 0)
 

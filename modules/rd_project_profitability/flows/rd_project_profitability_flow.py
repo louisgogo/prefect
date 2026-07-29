@@ -112,11 +112,12 @@ def rd_project_profitability_flow(
                     "download_url": report["download_url"],
                     "file_name": report["file_name"],
                     "row_count": report["row_count"],
+                    "backup_row_count": report["backup_row_count"],
                     "remaining_profit": validation["remaining_profit_total"],
-                    "power_bi_remaining_profit": validation["power_bi_remaining_profit_total"],
                     "summary": (
                         f"生成研发项目收益 Excel，共 {report['row_count']} 行；"
-                        f"规范口径剩余收益 {validation['remaining_profit_total']:.2f} 元"
+                        f"收入成本备查 {report['backup_row_count']} 行；"
+                        f"剩余收益 {validation['remaining_profit_total']:.2f} 元"
                     ),
                 },
             )
@@ -124,8 +125,8 @@ def rd_project_profitability_flow(
         print(
             "研发项目收益计算完成："
             f"rows={len(result['detail'])}, "
-            f"remaining_profit={validation['remaining_profit_total']:.2f}, "
-            f"power_bi_remaining_profit={validation['power_bi_remaining_profit_total']:.2f}"
+            f"backup_rows={report['backup_row_count']}, "
+            f"remaining_profit={validation['remaining_profit_total']:.2f}"
         )
         return response
     except Exception as exc:

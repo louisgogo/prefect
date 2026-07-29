@@ -31,14 +31,8 @@ RESULT_COLUMNS = [
     "rd_related_cost",
     "rd_related_gross_profit",
     "rd_related_gross_margin",
-    "power_bi_gross_margin",
-    "electronic_payment_revenue",
-    "electronic_payment_cost",
-    "electronic_payment_gross_profit",
     "total_expense",
     "remaining_profit",
-    "power_bi_remaining_profit",
-    "remaining_profit_gap",
     "oa_expense",
     "material_expense",
     "mold_expense",
@@ -56,6 +50,21 @@ RESULT_COLUMNS = [
     "sales_allocatable_pool",
     "source_no",
     "calculated_at",
+]
+
+REVENUE_COST_BACKUP_COLUMNS = [
+    "period_start",
+    "period_end",
+    "product_sub_category",
+    "mapped_product_sub_category",
+    "mapping_status",
+    "material_code",
+    "revenue_category",
+    "primary_org",
+    "secondary_org",
+    "revenue",
+    "cost",
+    "gross_profit",
 ]
 
 
@@ -403,7 +412,7 @@ def calculate_rd_project_profitability(
     period_start: pd.Timestamp,
     period_end: pd.Timestamp,
 ) -> Dict[str, object]:
-    """按 Power BI 明细口径计算产品收益，并显式保留总计差异。"""
+    """按统一研发项目口径计算产品收益和收入成本备查明细。"""
     required_sources = {
         "project_stages",
         "material_master",
@@ -451,14 +460,7 @@ def calculate_rd_project_profitability(
 
     electronic_payment = revenue[revenue["inc_major_cat"].eq("电子支付")]
     technical_service = revenue[revenue["inc_major_cat"].eq("技术服务")]
-    rd_revenue_rows = pd.concat(
-        [
-            electronic_payment[electronic_payment["sec_org"].eq(RD_REVENUE_SECONDARY_ORG)],
-            technical_service[technical_service["sec_org"].eq(RD_REVENUE_SECONDARY_ORG)],
-        ],
-        ignore_index=True,
-    )
-    rd_cost_rows = pd.concat(
+    rd_income_cost_rows = pd.concat(
         [
             electronic_payment[electronic_payment["sec_org"].eq(RD_REVENUE_SECONDARY_ORG)],
             technical_service[technical_service["sec_org"].eq(RD_REVENUE_SECONDARY_ORG)],
@@ -466,11 +468,47 @@ def calculate_rd_project_profitability(
         ignore_index=True,
     )
 
-    rd_revenue = rd_revenue_rows.groupby("bucket")["revenue"].sum()
-    rd_cost = rd_cost_rows.groupby("bucket")["cost"].sum()
+    rd_revenue = rd_income_cost_rows.groupby("bucket")["revenue"].sum()
+    rd_cost = rd_income_cost_rows.groupby("bucket")["cost"].sum()
     electronic_revenue = electronic_payment.groupby("bucket")["revenue"].sum()
     electronic_cost = electronic_payment.groupby("bucket")["cost"].sum()
     sales_quantity = electronic_payment.groupby("bucket")["sales_quantity"].sum()
+
+    revenue_cost_backup = rd_income_cost_rows[
+        [
+            "bucket",
+            "mapped_product",
+            "mat_code",
+            "inc_major_cat",
+            "prim_org",
+            "sec_org",
+            "revenue",
+            "cost",
+        ]
+    ].copy()
+    revenue_cost_backup = revenue_cost_backup.rename(
+        columns={
+            "bucket": "product_sub_category",
+            "mapped_product": "mapped_product_sub_category",
+            "mat_code": "material_code",
+            "inc_major_cat": "revenue_category",
+            "prim_org": "primary_org",
+            "sec_org": "secondary_org",
+        }
+    )
+    revenue_cost_backup["mapping_status"] = np.where(
+        revenue_cost_backup["product_sub_category"].eq(UNMAPPED_PRODUCT), "unmapped", "mapped"
+    )
+    revenue_cost_backup["gross_profit"] = (
+        revenue_cost_backup["revenue"] - revenue_cost_backup["cost"]
+    )
+    revenue_cost_backup["period_start"] = pd.Timestamp(period_start).normalize()
+    revenue_cost_backup["period_end"] = pd.Timestamp(period_end).normalize()
+    revenue_cost_backup = revenue_cost_backup[REVENUE_COST_BACKUP_COLUMNS].sort_values(
+        ["product_sub_category", "revenue_category", "material_code"],
+        kind="stable",
+        na_position="last",
+    )
 
     labor = _group_amount_by_bucket(
         sources["labor_hours"], selected_product_lookup, "excel_labor_hours"
@@ -538,15 +576,6 @@ def calculate_rd_project_profitability(
     )
     detail["electronic_payment_revenue"] = _series_to_column(detail, electronic_revenue)
     detail["electronic_payment_cost"] = _series_to_column(detail, electronic_cost)
-    detail["electronic_payment_gross_profit"] = (
-        detail["electronic_payment_revenue"] - detail["electronic_payment_cost"]
-    )
-    detail["power_bi_gross_margin"] = np.divide(
-        detail["electronic_payment_gross_profit"],
-        detail["electronic_payment_revenue"],
-        out=np.zeros(len(detail), dtype=float),
-        where=~np.isclose(detail["electronic_payment_revenue"], 0.0),
-    )
     detail["oa_expense"] = _series_to_column(detail, oa)
     detail["material_expense"] = _series_to_column(detail, material)
     detail["mold_expense"] = _series_to_column(detail, mold)
@@ -575,14 +604,17 @@ def calculate_rd_project_profitability(
     management_expense_base = float(base_map.get("管理费用", 0.0))
     sales_expense_base = float(base_map.get("销售费用", 0.0))
 
-    # Power BI 的 ALLSELECTED 在三个直接费用表上的总计行为不同：领料、模具、
-    # 技术维护包含空白成员，而 OA 总计排除空白成员。这也是当前报表非加总差异的来源。
+    # 保持已经核对通过的分摊池口径：领料、模具、技术维护包含未映射成员，
+    # OA 在计算研发费用可分摊池时排除未映射成员。
     selected_material_total = float(material.sum())
     selected_mold_total = float(mold.sum())
-    selected_oa_total = float(oa.drop(labels=[UNMAPPED_PRODUCT], errors="ignore").sum())
+    selected_oa_for_rd_pool_total = float(oa.drop(labels=[UNMAPPED_PRODUCT], errors="ignore").sum())
     selected_tech_total = float(tech.sum())
     rd_allocatable_pool = (
-        rd_expense_base - selected_material_total - selected_mold_total - selected_oa_total
+        rd_expense_base
+        - selected_material_total
+        - selected_mold_total
+        - selected_oa_for_rd_pool_total
     )
     sales_allocatable_pool = sales_expense_base - selected_tech_total
 
@@ -600,12 +632,6 @@ def calculate_rd_project_profitability(
     ]
     detail["total_expense"] = detail[expense_components].sum(axis=1)
     detail["remaining_profit"] = detail["rd_related_gross_profit"] - detail["total_expense"]
-    detail["power_bi_remaining_profit"] = (
-        detail["electronic_payment_gross_profit"] - detail["total_expense"]
-    )
-    detail["remaining_profit_gap"] = (
-        detail["remaining_profit"] - detail["power_bi_remaining_profit"]
-    )
 
     detail["period_start"] = pd.Timestamp(period_start).normalize()
     detail["period_end"] = pd.Timestamp(period_end).normalize()
@@ -625,34 +651,22 @@ def calculate_rd_project_profitability(
     detail["calculated_at"] = pd.Timestamp.now(tz="Asia/Shanghai").tz_localize(None)
     detail = detail[RESULT_COLUMNS].copy()
 
-    power_bi_grand_total_expense = float(
-        selected_oa_total
-        + selected_material_total
-        + selected_mold_total
-        + detail["allocated_rd_expense"].sum()
-        + selected_tech_total
-        + detail["allocated_sales_expense"].sum()
-        + detail["allocated_management_expense"].sum()
-    )
     metrics = {
         "selected_product_count": len(products),
         "result_row_count": len(detail),
+        "revenue_cost_backup_row_count": len(revenue_cost_backup),
         "has_unmapped_product": has_unmapped,
         "excluded_oa_amount": excluded_oa_amount,
         "unmapped_oa_amount": float(oa.get(UNMAPPED_PRODUCT, 0.0)),
         "income_share_total": float(detail["income_share"].sum()),
         "labor_share_total": float(detail["labor_share"].sum()),
         "cost_share_total": float(detail["cost_share"].sum()),
-        "power_bi_detail_total_expense": float(detail["total_expense"].sum()),
-        "power_bi_grand_total_expense": power_bi_grand_total_expense,
-        "power_bi_non_additive_expense_gap": float(
-            detail["total_expense"].sum() - power_bi_grand_total_expense
-        ),
-        "power_bi_grand_total_remaining_profit": float(
-            detail["electronic_payment_gross_profit"].sum() - power_bi_grand_total_expense
-        ),
     }
-    return {"detail": detail, "metrics": metrics}
+    return {
+        "detail": detail,
+        "revenue_cost_backup": revenue_cost_backup,
+        "metrics": metrics,
+    }
 
 
 @task(name="calculate_rd_project_profitability", log_prints=True)
@@ -676,17 +690,25 @@ def validate_rd_project_profitability(
     result: Mapping[str, object],
     tolerance: float = 0.01,
 ) -> Dict[str, object]:
-    """校验分摊闭合、行级公式和 Power BI 总计差异。"""
+    """校验分摊闭合、行级公式和收入成本备查表合计。"""
     if tolerance < 0:
         raise ValueError("tolerance 不能为负数")
-    if "detail" not in result or "metrics" not in result:
-        raise ValueError("研发项目收益结果必须包含 detail 和 metrics")
+    if not {"detail", "revenue_cost_backup", "metrics"}.issubset(result):
+        raise ValueError("研发项目收益结果必须包含 detail、revenue_cost_backup 和 metrics")
 
     detail = result["detail"]
+    revenue_cost_backup = result["revenue_cost_backup"]
     metrics = result["metrics"]
     if not isinstance(detail, pd.DataFrame) or detail.empty:
         raise ValueError("研发项目收益明细为空")
+    if not isinstance(revenue_cost_backup, pd.DataFrame):
+        raise ValueError("收入成本备查数据必须是 DataFrame")
     _require_columns(detail, RESULT_COLUMNS, "研发项目收益结果")
+    _require_columns(
+        revenue_cost_backup,
+        REVENUE_COST_BACKUP_COLUMNS,
+        "研发项目收益收入成本备查数据",
+    )
 
     component_sum = detail[
         [
@@ -719,14 +741,6 @@ def validate_rd_project_profitability(
             .abs()
             .max()
         ),
-        "power_bi_remaining_profit_max_residual": float(
-            (
-                detail["power_bi_remaining_profit"]
-                - (detail["electronic_payment_gross_profit"] - detail["total_expense"])
-            )
-            .abs()
-            .max()
-        ),
         "rd_allocation_residual": float(
             detail["allocated_rd_expense"].sum() - detail["rd_allocatable_pool"].iloc[0]
         ),
@@ -735,6 +749,12 @@ def validate_rd_project_profitability(
         ),
         "management_allocation_residual": float(
             detail["allocated_management_expense"].sum() - detail["management_expense_base"].iloc[0]
+        ),
+        "backup_revenue_residual": float(
+            revenue_cost_backup["revenue"].sum() - detail["rd_related_revenue"].sum()
+        ),
+        "backup_cost_residual": float(
+            revenue_cost_backup["cost"].sum() - detail["rd_related_cost"].sum()
         ),
     }
     failed_residuals = {name: value for name, value in residuals.items() if abs(value) > tolerance}
@@ -755,14 +775,10 @@ def validate_rd_project_profitability(
         "rd_related_gross_profit_total": float(detail["rd_related_gross_profit"].sum()),
         "total_expense": float(detail["total_expense"].sum()),
         "remaining_profit_total": float(detail["remaining_profit"].sum()),
-        "power_bi_remaining_profit_total": float(detail["power_bi_remaining_profit"].sum()),
-        "remaining_profit_gap_total": float(detail["remaining_profit_gap"].sum()),
+        "revenue_cost_backup_row_count": len(revenue_cost_backup),
+        "revenue_cost_backup_revenue_total": float(revenue_cost_backup["revenue"].sum()),
+        "revenue_cost_backup_cost_total": float(revenue_cost_backup["cost"].sum()),
         "excluded_oa_amount": float(metrics["excluded_oa_amount"]),
-        "power_bi_non_additive_expense_gap": float(metrics["power_bi_non_additive_expense_gap"]),
-        "power_bi_grand_total_expense": float(metrics["power_bi_grand_total_expense"]),
-        "power_bi_grand_total_remaining_profit": float(
-            metrics["power_bi_grand_total_remaining_profit"]
-        ),
     }
 
 
@@ -777,12 +793,18 @@ def validate_rd_project_profitability_task(
         "研发项目收益校验通过："
         f"rows={validation['row_count']}, "
         f"expense={validation['total_expense']:.2f}, "
-        f"power_bi_total_gap={validation['power_bi_non_additive_expense_gap']:.2f}"
+        f"backup_rows={validation['revenue_cost_backup_row_count']}"
     )
     return validation
 
 
-def _format_excel_workbook(writer, detail_sheet: str, summary_sheet: str, rules_sheet: str) -> None:
+def _format_excel_workbook(
+    writer,
+    detail_sheet: str,
+    summary_sheet: str,
+    rules_sheet: str,
+    backup_sheet: str,
+) -> None:
     """为前端下载的 Excel 添加基础可读性格式。"""
     from openpyxl.styles import Alignment, Font, PatternFill
 
@@ -790,8 +812,7 @@ def _format_excel_workbook(writer, detail_sheet: str, summary_sheet: str, rules_
     header_fill = PatternFill("solid", fgColor="1F4E78")
     header_font = Font(color="FFFFFF", bold=True)
     percentage_headers = {
-        "研发相关毛利率（规范口径）",
-        "毛利率（Power BI口径）",
+        "研发相关毛利率",
         "收入占比",
         "工时占比",
         "成本占比",
@@ -800,13 +821,8 @@ def _format_excel_workbook(writer, detail_sheet: str, summary_sheet: str, rules_
         "本期研发相关收入",
         "本期研发相关成本",
         "研发相关毛利",
-        "电子支付收入",
-        "电子支付成本",
-        "电子支付毛利",
         "费用总额",
-        "剩余收益（规范口径）",
-        "剩余收益（Power BI口径）",
-        "口径差额",
+        "剩余收益",
         "OA费用",
         "领料费用",
         "模具费用",
@@ -817,9 +833,12 @@ def _format_excel_workbook(writer, detail_sheet: str, summary_sheet: str, rules_
         "研发费用基数",
         "管理费用基数",
         "销售费用基数",
+        "收入",
+        "成本",
+        "毛利",
     }
 
-    for sheet_name in [detail_sheet, summary_sheet, rules_sheet]:
+    for sheet_name in [detail_sheet, summary_sheet, rules_sheet, backup_sheet]:
         worksheet = workbook[sheet_name]
         worksheet.freeze_panes = "A2"
         worksheet.auto_filter.ref = worksheet.dimensions
@@ -833,17 +852,28 @@ def _format_excel_workbook(writer, detail_sheet: str, summary_sheet: str, rules_
             worksheet.column_dimensions[column_cells[0].column_letter].width = width
 
     detail_worksheet = workbook[detail_sheet]
-    headers = {cell.value: cell.column for cell in detail_worksheet[1]}
+    detail_headers = {cell.value: cell.column for cell in detail_worksheet[1]}
     for header in percentage_headers:
-        column = headers.get(header)
+        column = detail_headers.get(header)
         if column:
             for row in range(2, detail_worksheet.max_row + 1):
                 detail_worksheet.cell(row=row, column=column).number_format = "0.00%"
-    for header in amount_headers:
-        column = headers.get(header)
+    for sheet_name in [detail_sheet, backup_sheet]:
+        worksheet = workbook[sheet_name]
+        headers = {cell.value: cell.column for cell in worksheet[1]}
+        for header in amount_headers:
+            column = headers.get(header)
+            if column:
+                for row in range(2, worksheet.max_row + 1):
+                    worksheet.cell(row=row, column=column).number_format = "#,##0.00"
+
+    backup_worksheet = workbook[backup_sheet]
+    backup_headers = {cell.value: cell.column for cell in backup_worksheet[1]}
+    for header in ["开始日期", "结束日期"]:
+        column = backup_headers.get(header)
         if column:
-            for row in range(2, detail_worksheet.max_row + 1):
-                detail_worksheet.cell(row=row, column=column).number_format = "#,##0.00"
+            for row in range(2, backup_worksheet.max_row + 1):
+                backup_worksheet.cell(row=row, column=column).number_format = "yyyy-mm-dd"
 
 
 def _safe_excel_text(value: object) -> object:
@@ -861,9 +891,17 @@ def export_rd_project_profitability_excel(
 ) -> Dict[str, object]:
     """生成可供前端下载的研发项目收益 Excel，并返回文件元数据。"""
     detail = result.get("detail")
+    revenue_cost_backup = result.get("revenue_cost_backup")
     if not isinstance(detail, pd.DataFrame) or detail.empty:
         raise ValueError("没有可导出的研发项目收益明细")
+    if not isinstance(revenue_cost_backup, pd.DataFrame):
+        raise ValueError("没有可导出的收入成本备查数据")
     _require_columns(detail, RESULT_COLUMNS, "研发项目收益导出数据")
+    _require_columns(
+        revenue_cost_backup,
+        REVENUE_COST_BACKUP_COLUMNS,
+        "研发项目收益收入成本备查数据",
+    )
 
     configured_output_dir = output_dir or os.environ.get(
         "RD_PROJECT_OUTPUT_DIR", DEFAULT_OUTPUT_DIR
@@ -891,15 +929,9 @@ def export_rd_project_profitability_excel(
         "rd_related_revenue": "本期研发相关收入",
         "rd_related_cost": "本期研发相关成本",
         "rd_related_gross_profit": "研发相关毛利",
-        "rd_related_gross_margin": "研发相关毛利率（规范口径）",
-        "power_bi_gross_margin": "毛利率（Power BI口径）",
-        "electronic_payment_revenue": "电子支付收入",
-        "electronic_payment_cost": "电子支付成本",
-        "electronic_payment_gross_profit": "电子支付毛利",
+        "rd_related_gross_margin": "研发相关毛利率",
         "total_expense": "费用总额",
-        "remaining_profit": "剩余收益（规范口径）",
-        "power_bi_remaining_profit": "剩余收益（Power BI口径）",
-        "remaining_profit_gap": "口径差额",
+        "remaining_profit": "剩余收益",
         "oa_expense": "OA费用",
         "material_expense": "领料费用",
         "mold_expense": "模具费用",
@@ -919,6 +951,33 @@ def export_rd_project_profitability_excel(
     for text_column in ["产品细类", "项目所属阶段", "映射状态"]:
         detail_export[text_column] = detail_export[text_column].map(_safe_excel_text)
 
+    backup_columns = {
+        "period_start": "开始日期",
+        "period_end": "结束日期",
+        "product_sub_category": "产品细类",
+        "mapped_product_sub_category": "主数据产品细类",
+        "mapping_status": "映射状态",
+        "material_code": "物料编码",
+        "revenue_category": "收入大类",
+        "primary_org": "一级组织",
+        "secondary_org": "二级组织",
+        "revenue": "收入",
+        "cost": "成本",
+        "gross_profit": "毛利",
+    }
+    backup_export = revenue_cost_backup[list(backup_columns)].rename(columns=backup_columns)
+    backup_export["映射状态"] = backup_export["映射状态"].replace({"mapped": "已映射", "unmapped": "未映射"})
+    for text_column in [
+        "产品细类",
+        "主数据产品细类",
+        "映射状态",
+        "物料编码",
+        "收入大类",
+        "一级组织",
+        "二级组织",
+    ]:
+        backup_export[text_column] = backup_export[text_column].map(_safe_excel_text)
+
     summary_rows = [
         ("开始日期", period_start.strftime("%Y-%m-%d")),
         ("结束日期", period_end.strftime("%Y-%m-%d")),
@@ -927,15 +986,11 @@ def export_rd_project_profitability_excel(
         ("研发相关收入", float(validation["rd_related_revenue_total"])),
         ("研发相关成本", float(validation["rd_related_cost_total"])),
         ("研发相关毛利", float(validation["rd_related_gross_profit_total"])),
-        ("费用总额（明细汇总）", float(validation["total_expense"])),
-        ("剩余收益（规范口径）", float(validation["remaining_profit_total"])),
-        ("剩余收益（Power BI口径）", float(validation["power_bi_remaining_profit_total"])),
-        ("两种剩余收益口径差额", float(validation["remaining_profit_gap_total"])),
-        ("Power BI总计费用", float(validation["power_bi_grand_total_expense"])),
-        (
-            "Power BI费用非加总差异",
-            float(validation["power_bi_non_additive_expense_gap"]),
-        ),
+        ("费用总额", float(validation["total_expense"])),
+        ("剩余收益", float(validation["remaining_profit_total"])),
+        ("收入成本备查行数", int(validation["revenue_cost_backup_row_count"])),
+        ("备查收入合计", float(validation["revenue_cost_backup_revenue_total"])),
+        ("备查成本合计", float(validation["revenue_cost_backup_cost_total"])),
         ("产品主数据未承接OA费用", float(validation["excluded_oa_amount"])),
     ]
     summary_export = pd.DataFrame(summary_rows, columns=["指标", "值"])
@@ -947,9 +1002,10 @@ def export_rd_project_profitability_excel(
             ("销售费用分摊", "国际业务销售费用基数扣除技术维护费后，按电子支付收入占比分摊"),
             ("管理费用分摊", "国际业务管理费用基数按电子支付成本占比分摊"),
             ("费用总额", "OA + 领料 + 模具 + 研发分摊 + 技术维护 + 销售分摊 + 管理分摊"),
-            ("剩余收益（规范口径）", "研发相关毛利 - 费用总额"),
-            ("剩余收益（Power BI口径）", "电子支付毛利 - 费用总额，用于对账当前Power BI度量值"),
-            ("未映射产品", "Power BI空白成员显式化，表示产品主数据或研发项目阶段未完整映射"),
+            ("研发相关毛利率", "研发相关毛利除以研发相关收入"),
+            ("剩余收益", "研发相关毛利 - 费用总额"),
+            ("收入成本备查", "仅包含国际业务中心的电子支付和技术服务收入成本明细"),
+            ("未映射产品", "表示产品主数据或研发项目阶段未完整映射的数据"),
         ],
         columns=["指标", "计算口径"],
     )
@@ -958,7 +1014,14 @@ def export_rd_project_profitability_excel(
         detail_export.to_excel(writer, sheet_name="研发项目收益", index=False)
         summary_export.to_excel(writer, sheet_name="汇总与校验", index=False)
         rules_export.to_excel(writer, sheet_name="计算口径", index=False)
-        _format_excel_workbook(writer, "研发项目收益", "汇总与校验", "计算口径")
+        backup_export.to_excel(writer, sheet_name="收入成本备查", index=False)
+        _format_excel_workbook(
+            writer,
+            "研发项目收益",
+            "汇总与校验",
+            "计算口径",
+            "收入成本备查",
+        )
 
     configured_base_url = download_base_url or os.environ.get("RD_PROJECT_DOWNLOAD_BASE_URL")
     download_url = None
@@ -971,7 +1034,8 @@ def export_rd_project_profitability_excel(
         "media_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "size_bytes": output_path.stat().st_size,
         "row_count": len(detail_export),
-        "sheet_names": ["研发项目收益", "汇总与校验", "计算口径"],
+        "backup_row_count": len(backup_export),
+        "sheet_names": ["研发项目收益", "汇总与校验", "计算口径", "收入成本备查"],
     }
 
 
@@ -1052,14 +1116,8 @@ def replace_rd_project_profitability_snapshot_task(
                 rd_related_cost NUMERIC,
                 rd_related_gross_profit NUMERIC,
                 rd_related_gross_margin NUMERIC,
-                electronic_payment_revenue NUMERIC,
-                electronic_payment_cost NUMERIC,
-                electronic_payment_gross_profit NUMERIC,
                 total_expense NUMERIC,
                 remaining_profit NUMERIC,
-                power_bi_remaining_profit NUMERIC,
-                remaining_profit_gap NUMERIC,
-                power_bi_gross_margin NUMERIC,
                 oa_expense NUMERIC,
                 material_expense NUMERIC,
                 mold_expense NUMERIC,
@@ -1080,9 +1138,6 @@ def replace_rd_project_profitability_snapshot_task(
                 PRIMARY KEY (period_start, period_end, product_sub_category)
             )
             """
-        )
-        cur.execute(
-            f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS power_bi_gross_margin NUMERIC"
         )
         cur.execute(
             f"DELETE FROM {table_name} WHERE period_start = %s AND period_end = %s",
