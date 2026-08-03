@@ -223,10 +223,16 @@ def _serve_rd_project_profitability():
 
 def _serve_kingdee_voucher_journal():
     """模块级函数，供 Process 调用。"""
+    from modules.kingdee_voucher.flows.kingdee_voucher_journal_flow import (
+        _get_kingdee_voucher_defaults_by_date,
+    )
+
+    defaults = _get_kingdee_voucher_defaults_by_date()
     kingdee_voucher_journal_flow.serve(
         name="子流程-金蝶凭证序时簿同步",
         tags=["金蝶", "凭证序时簿", "月度任务", "手动触发", "财务写入"],
-        description="按显式年度和单月或月份列表分页同步金蝶凭证序时簿，按分录稳定标识幂等写库。",
+        description="快速执行默认同步上个自然月；也可自定义单月或月份列表，按分录稳定标识幂等写库。",
+        parameters=defaults,
     )
 
 

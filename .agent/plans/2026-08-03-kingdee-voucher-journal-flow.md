@@ -4,7 +4,7 @@ This ExecPlan is a living document maintained according to `.agent/PLANS.md`.
 
 ## Purpose / Big Picture
 
-The Kingdee `GL_VOUCHER` journal prototype currently runs as a local FastAPI-repository command. After this work, Prefect will own the operational synchronization. A finance operator can open Prefect UI, enter an explicit accounting year and either one month or a list of months, and run a monitored, retryable workflow. Each month appears as an independently retryable task and writes idempotently into `mydb.public.fact_gl_voucher_journal`; `kingdee_gl_voucher_sync_runs` retains source counts, insert/update counts, timestamps, and errors.
+The Kingdee `GL_VOUCHER` journal prototype currently runs as a local FastAPI-repository command. After this work, Prefect will own the operational synchronization. A finance operator can use Quick Run to synchronize the previous completed calendar month, or customize the accounting year and one month or a list of months. Each month appears as an independently retryable task and writes idempotently into `mydb.public.fact_gl_voucher_journal`; `kingdee_gl_voucher_sync_runs` retains source counts, insert/update counts, timestamps, and errors.
 
 FastAPI continues to own the manifest-managed table migrations. The unshipped FastAPI command and service are removed as a clean replacement so there is one production synchronization implementation.
 
@@ -18,6 +18,7 @@ FastAPI continues to own the manifest-managed table migrations. The unshipped Fa
 - [x] (2026-08-03 05:23Z) Ran the real Prefect flow for 2026 period 8 against `test_mydb`: 30 source rows, 0 inserts, 30 updates, and 30 distinct stored entry IDs.
 - [x] (2026-08-03 05:25Z) Focused pre-commit hooks and final whitespace checks pass for every changed Prefect file.
 - [x] (2026-08-03 05:41Z) Committed and pushed the Prefect feature, merged PR #3 into `session/prefect`, configured the ignored worker credential, restarted `prefect-workers.service`, and verified the deployment is READY.
+- [ ] Add previous-month Quick Run defaults and make pagination continue until an empty source page, then publish and re-register the deployment.
 - [ ] Merge and release the paired FastAPI migration PR before any production voucher synchronization is triggered.
 - [ ] Trigger and reconcile the authorized production periods after the schema release.
 
@@ -27,6 +28,7 @@ FastAPI continues to own the manifest-managed table migrations. The unshipped Fa
 - The Prefect `.env` currently exposes an FONE proxy token but no dedicated `XGD_TOKEN` or voucher database URL. The flow must prefer `XGD_TOKEN` and `KINGDEE_VOUCHER_DATABASE_URL`, with a compatibility fallback to `AIHUB_FONE_API_TOKEN` and the established `mypackage.utilities.connect_to_db()` production connection.
 - The production Prefect worker is systemd-managed and pulls the checked-out `/root/prefect` branch before starting `deploy_to_server.py`. Registration or restart must wait for an authorized pushed commit.
 - The first live Prefect run exposed that psycopg2 does not adapt Python `uuid.UUID` values automatically in this environment. Passing the run ID as canonical UUID text fixes the insert without changing the PostgreSQL UUID column, and a regression test now covers this boundary.
+- Treating any page shorter than `page_size` as the final page depends on the external API always honoring the requested limit. Continuing until an empty page costs one final request but prevents silent data loss if Kingdee applies a smaller server-side page cap.
 
 ## Decision Log
 
@@ -35,7 +37,7 @@ FastAPI continues to own the manifest-managed table migrations. The unshipped Fa
   Date/Author: 2026-08-03 / Codex.
 
 - Decision: Flow parameters are `year`, optional `month`, optional `months`, and `page_size`; exactly one of `month` or `months` is required.
-  Rationale: A single month is simple in Prefect UI, while a month list supports annual backfills. Explicit periods prevent accidental implicit financial writes.
+  Rationale: A single month is simple in Prefect UI, while a month list supports annual backfills. The deployment supplies the previous calendar month as explicit Quick Run defaults; customized runs must still keep `month` and `months` mutually exclusive.
   Date/Author: 2026-08-03 / Codex.
 
 - Decision: One Prefect task synchronizes one accounting month and is retried independently.
@@ -60,7 +62,7 @@ Create `modules/kingdee_voucher/tasks/kingdee_voucher_tasks.py` with parameter v
 
 Create `modules/kingdee_voucher/flows/kingdee_voucher_journal_flow.py`. Resolve explicit month selection, notify Hermes at start/completion/failure, and call the monthly task sequentially so the external API and finance database are not overloaded.
 
-Export and register the flow in every deployment script. The deployment is manual-trigger only and has no hidden last-month default. Add tests covering parameter exclusivity, page progression, boolean normalization, idempotent upsert decisions, token redaction, and month task ordering.
+Export and register the flow in every deployment script. The deployment is manual-trigger only, with registration-time defaults for the previous completed calendar month. Add tests covering the previous-month and year-boundary defaults, parameter exclusivity, page progression through a short page to an empty page, boolean normalization, idempotent upsert decisions, token redaction, and month task ordering.
 
 Run focused tests and formatting. For integration verification, set `XGD_TOKEN` and a temporary `KINGDEE_VOUCHER_DATABASE_URL` derived from the test environment only for the command, run period 8, and confirm it updates the existing 30 test rows without inserting duplicates.
 
@@ -77,7 +79,7 @@ All commands run in `/root/prefect-kingdee-voucher-sync` using `/root/prefect/ve
 
 ## Validation and Acceptance
 
-Unit tests must pass. The flow schema must expose explicit `year`, `month`, `months`, and `page_size` parameters. Package exports and all three deployment scripts must reference the new flow.
+Unit tests must pass. The flow schema must expose `year`, `month`, `months`, and `page_size`; the registered deployment must prefill the previous calendar year/month and page size 5000. Package exports and all three deployment scripts must reference the new flow.
 
 The test flow is accepted when period 8 completes through Prefect task orchestration and remains idempotent. Production acceptance requires the FastAPI migrations to be present in `main`, both target tables to exist, the worker to run the intended pushed Prefect commit, every requested month to complete, and row uniqueness/reconciliation checks to pass.
 
@@ -106,3 +108,4 @@ The public flow is `kingdee_voucher_journal_flow`, registered as `子流程-金�
 - 2026-08-03: Initial plan created after the user selected Prefect orchestration and explicit month parameters.
 - 2026-08-03: Recorded completed implementation, deployment registration, focused test results, the psycopg2 UUID adaptation fix, and the successful period-8 Prefect test run.
 - 2026-08-03: Recorded the merged Prefect release, worker credential configuration, systemd restart, and READY manual-trigger deployment evidence.
+- 2026-08-03: Added the user-requested previous-month Quick Run behavior and documented empty-page termination as the safer pagination contract.
