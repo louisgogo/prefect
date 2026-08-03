@@ -22,7 +22,7 @@ FastAPI continues to own the manifest-managed table migrations. The unshipped Fa
 - [x] (2026-08-03 06:38Z) Released FastAPI schema and tool-panel PR #23 to production, applied the two finance migrations, and backported PR #25 to `develop`.
 - [x] (2026-08-03 06:38Z) Synchronized production periods 1 through 7: seven completed month records, 457,120 unique rows, zero null source IDs, and exact per-period source/stored counts.
 - [x] (2026-08-03 06:40Z) Converted the monthly task result timestamp to ISO 8601 text and added a regression assertion; all 12 focused tests and changed-file pre-commit hooks pass.
-- [ ] Publish a new deployment version and verify a safe idempotent rerun reaches Prefect `Completed`.
+- [x] (2026-08-03 06:44Z) Merged Prefect PR #7, restarted `prefect-workers.service`, verified deployment version `e59da18d` READY, and completed production tool-panel rerun `d2aba519-2e39-404d-953e-c5155fd2c1f9`.
 
 ## Surprises & Discoveries
 
@@ -33,6 +33,7 @@ FastAPI continues to own the manifest-managed table migrations. The unshipped Fa
 - Treating any page shorter than `page_size` as the final page depends on the external API always honoring the requested limit. Continuing until an empty page costs one final request but prevents silent data loss if Kingdee applies a smaller server-side page cap.
 - The authorized production backfill committed all seven months successfully, but the completion notification received `max_source_modified_at` as a Python `datetime`. `httpx` could not JSON-encode it, so flow run `7e340323-cbee-4151-912d-47d46f9ba65a` was marked `Failed` after 457,120 rows and all seven month records were already completed.
 - Production reconciliation found one July voucher in document status `A` whose raw Kingdee entry amounts are unbalanced; all typed stored amounts match the raw payload. This is a source-side unapproved voucher condition, not a paging, duplication, or normalization defect. Completed/approved voucher reconciliation remains clean when the source draft is excluded.
+- The July source continued changing during verification. The successful rerun read 14,351 rows, inserted 214, and updated 14,137; a later read-only comparison saw 14,359 current source IDs versus 14,422 stored IDs, with 8 new source IDs not yet stored and 71 retained IDs no longer returned. The current safe upsert contract is therefore not a strict source mirror and intentionally performs no physical deletion.
 
 ## Decision Log
 
@@ -54,7 +55,7 @@ FastAPI continues to own the manifest-managed table migrations. The unshipped Fa
 
 ## Outcomes & Retrospective
 
-The implementation, test rollout, Git release, worker configuration, deployment registration, FastAPI schema/tool release, and production January-through-July data load are complete. Seven month records completed with 457,120 unique rows and exact source/stored counts. The remaining defect is confined to the post-load Hermes completion notification: a non-JSON-safe timestamp caused Prefect to mark the otherwise successful aggregate flow as failed. The hotfix converts that result field to ISO text and will be verified through an idempotent closed-month rerun.
+The implementation, test rollout, Git releases, worker configuration, deployment registration, FastAPI schema/tool release, and production January-through-July data load are complete. The initial seven month records completed with 457,120 unique rows and exact source/stored counts. Prefect PR #7 fixed the completion-notification timestamp, and the production tool-panel rerun reached `Completed` with Hermes completion notification success. The current table has 457,334 unique rows and zero null source IDs; all current stored vouchers reconcile debit, credit, and header totals. Because Kingdee changed July during validation and the sync intentionally does not delete absent rows, the table is an idempotent retained history rather than a transactionally consistent source mirror.
 
 ## Context and Orientation
 
@@ -108,7 +109,7 @@ Registration evidence: Prefect PR #3 merged as `67f6e0a2746758725481d8ce56f0cd1e
 
 Default-period evidence: Prefect PR #5 merged as `9ecef7e12eb949c1af7ff3d137458d4abd7b57ee`; deployment defaults are `year=2026`, `month=7`, `page_size=5000` on 2026-08-03. Test flow `thistle-shrew` completed period 8 with a 30-row short page followed by an empty page, reporting zero inserts and 30 updates.
 
-Production evidence: run `7e340323-cbee-4151-912d-47d46f9ba65a` completed month tasks for periods 1 through 7 with 457,120 inserted rows and exact per-period stored counts. The flow then failed only in `notify_hermes_task` because `datetime` was not JSON serializable. Identity checks found 457,120 distinct source IDs and zero null IDs. One unapproved July source voucher is unbalanced in the raw Kingdee payload; no typed/raw normalization discrepancy was found.
+Production evidence: run `7e340323-cbee-4151-912d-47d46f9ba65a` completed month tasks for periods 1 through 7 with 457,120 inserted rows and exact per-period stored counts, then failed only in `notify_hermes_task` because `datetime` was not JSON serializable. Prefect PR #7 merged as `e59da18df576a961e75541ef3a291c1655920f9d`; tool-panel run `d2aba519-2e39-404d-953e-c5155fd2c1f9` completed period 7 with 14,351 source rows, 214 inserts, 14,137 updates, and a successful Hermes completion notification. Final stored identity was 457,334 distinct source IDs with zero null IDs and zero voucher reconciliation exceptions. A subsequent live-source ID comparison documented 8 not-yet-stored and 71 retained absent IDs while July continued changing.
 
 ## Interfaces and Dependencies
 
@@ -124,3 +125,4 @@ The public flow is `kingdee_voucher_journal_flow`, registered as `子流程-金�
 - 2026-08-03: Added the user-requested previous-month Quick Run behavior and documented empty-page termination as the safer pagination contract.
 - 2026-08-03: Recorded merged PR #5, deployment version `9ecef7e1`, verified previous-month defaults, and the successful short-page integration run.
 - 2026-08-03: Recorded the production January-through-July load, the post-completion notification serialization defect, the source-side unapproved-voucher reconciliation exception, and the ISO timestamp hotfix plan.
+- 2026-08-03: Recorded Prefect PR #7, READY deployment version `e59da18d`, successful tool-panel rerun, final data reconciliation, and the non-mirroring behavior observed while July source data continued changing; marked the rollout complete for archival.
