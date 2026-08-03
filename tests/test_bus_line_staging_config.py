@@ -33,7 +33,9 @@ class FakeConnection:
 
 
 class BusLineStagingConfigTests(unittest.TestCase):
-    def test_business_lines_come_from_dimension_without_filtering_terminated_lines(self):
+    def test_business_lines_come_from_dimension_without_filtering_terminated_lines(
+        self,
+    ):
         cursor = FakeCursor([("集团",), ("web3",), ("审核业务",)])
         connection = FakeConnection()
 
@@ -50,17 +52,13 @@ class BusLineStagingConfigTests(unittest.TestCase):
         self.assertTrue(cursor.closed)
         self.assertTrue(connection.closed)
 
-    def test_fallback_keeps_group_and_web3(self):
+    def test_dimension_failure_stops_staging_generation(self):
         with patch(
             "modules.bus_line_staging.config.connect_to_db",
             side_effect=RuntimeError("database unavailable"),
         ):
-            result = get_bus_lines()
-
-        self.assertIn("集团", result)
-        self.assertIn("web3", result)
-        self.assertNotIn("无", result)
-        self.assertNotIn("抵销数", result)
+            with self.assertRaisesRegex(RuntimeError, "已停止生成 Staging 数据"):
+                get_bus_lines()
 
 
 if __name__ == "__main__":

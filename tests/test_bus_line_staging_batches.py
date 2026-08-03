@@ -44,11 +44,6 @@ class InheritanceCursor:
             return ("staging_bus_revenue",)
         return None
 
-    def fetchall(self):
-        if "FROM information_schema.columns" in self.last_sql:
-            return [("国际业务",), ("国内硬件",), ("审核状态",)]
-        return []
-
     def close(self):
         self.closed = True
 
@@ -140,8 +135,9 @@ class BusLineStagingBatchTests(unittest.TestCase):
     def test_runtime_table_columns_include_batch_id(self):
         columns = get_table_columns("staging_bus_revenue", ["国际业务"])
         self.assertEqual(columns[0], "batch_id")
+        self.assertEqual(columns[1], "record_id")
         self.assertIn("来源编号", columns)
-        self.assertIn("国际业务", columns)
+        self.assertNotIn("国际业务", columns)
 
     def test_inheritance_uses_batch_source_and_target_level(self):
         cursor = InheritanceCursor()
@@ -159,6 +155,13 @@ class BusLineStagingBatchTests(unittest.TestCase):
         self.assertIn('previous."唯一层级" = new_row."唯一层级"', update_sql)
         self.assertIn('"审核状态" = previous."审核状态"', update_sql)
         self.assertNotIn("不存在的业务线", update_sql)
+        ratio_sql = next(
+            sql
+            for sql, _ in cursor.executed
+            if sql.startswith("INSERT INTO staging_bus_line_ratio")
+        )
+        self.assertIn("new_row.record_id", ratio_sql)
+        self.assertIn("ratio.record_id = previous.record_id", ratio_sql)
         self.assertTrue(connection.committed)
 
     def test_current_edit_batch_is_resolved_by_month_not_latest_id(self):
@@ -218,10 +221,6 @@ class BusLineStagingBatchTests(unittest.TestCase):
         connection = FakeConnection(cursor)
         with patch.object(batch, "connect_to_db", return_value=(connection, cursor)), patch.object(
             batch, "ensure_batch_schema"
-        ), patch.object(
-            batch,
-            "_existing_business_line_columns",
-            return_value=["国际业务", "国内硬件"],
         ), patch.dict(
             batch.STAGING_TABLE_DATE_COLUMNS,
             {"staging_bus_revenue": "会计期间"},
@@ -247,6 +246,7 @@ class BusLineStagingBatchTests(unittest.TestCase):
         self.assertIn("batch_id", excluded_columns)
         self.assertIn("审核状态", excluded_columns)
         self.assertIn("创建时间", excluded_columns)
+        self.assertIn("record_id", excluded_columns)
         self.assertIn("国际业务", excluded_columns)
         self.assertIn("JSONB_OBJECT_KEYS", comparison_sql)
         self.assertEqual(comparison_params[-1], 5)
