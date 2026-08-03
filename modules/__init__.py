@@ -14,6 +14,9 @@ from .data_import.flows.data_import_flow import data_import_flow
 # 存货跌价季度计算子流程
 from .inventory_impairment.flows.inventory_impairment_flow import inventory_impairment_flow
 
+# 金蝶凭证序时簿同步流程
+from .kingdee_voucher.flows.kingdee_voucher_journal_flow import kingdee_voucher_journal_flow
+
 # 组织架构同步对比流程
 from .org_sync.flows.org_sync_flow import org_sync_flow
 
@@ -49,6 +52,7 @@ __all__ = [
     "fetch_budget_shared_rate_flow",
     "data_import_flow",
     "inventory_impairment_flow",
+    "kingdee_voucher_journal_flow",
     "budget_update_flow",
     "org_sync_flow",
     "profit_refresh_flow",

@@ -16,6 +16,7 @@ from modules import (
     fone_income_expense_refresh_flow,
     fone_recon_flow,
     inventory_impairment_flow,
+    kingdee_voucher_journal_flow,
     org_sync_flow,
     profit_refresh_flow,
     profit_report_flow,
@@ -360,6 +361,15 @@ def deploy_rd_project_profitability_flow():
     )
 
 
+def deploy_kingdee_voucher_journal_flow():
+    """部署可显式选择月份的金蝶凭证序时簿同步流程。"""
+    kingdee_voucher_journal_flow.serve(
+        name="金蝶凭证序时簿同步-本地测试",
+        tags=["本地测试", "金蝶", "凭证序时簿", "月度任务", "财务写入"],
+        description="按显式年度和单月或月份列表分页同步金蝶凭证序时簿，按分录稳定标识幂等写库。",
+    )
+
+
 if __name__ == "__main__":
     print("开始部署流程...")
     print("确保已启动 Prefect Server：prefect server start")
@@ -384,6 +394,7 @@ if __name__ == "__main__":
     process15 = Process(target=deploy_inventory_impairment_flow)
     process16 = Process(target=deploy_rd_project_profitability_flow)
     process17 = Process(target=deploy_fone_income_expense_refresh_flow)
+    process18 = Process(target=deploy_kingdee_voucher_journal_flow)
 
     process1.start()
     time.sleep(1)
@@ -418,6 +429,8 @@ if __name__ == "__main__":
     process16.start()
     time.sleep(1)
     process17.start()
+    time.sleep(1)
+    process18.start()
 
     # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
@@ -448,6 +461,7 @@ if __name__ == "__main__":
             process15,
             process16,
             process17,
+            process18,
         ]:
             p.terminate()
             p.join()
