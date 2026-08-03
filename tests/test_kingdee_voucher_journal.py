@@ -1,6 +1,7 @@
 import importlib
 import unittest
 import uuid
+from datetime import date
 from unittest.mock import MagicMock, call, patch
 
 import requests
@@ -16,6 +17,8 @@ from modules.kingdee_voucher.tasks.kingdee_voucher_tasks import (
     resolve_voucher_months,
     sync_kingdee_voucher_period_task,
 )
+
+flow_module = importlib.import_module("modules.kingdee_voucher.flows.kingdee_voucher_journal_flow")
 
 
 def _source_row(entry_id, month=8):
@@ -35,6 +38,18 @@ def _source_row(entry_id, month=8):
 
 
 class VoucherParameterTests(unittest.TestCase):
+    def test_quick_run_defaults_to_previous_calendar_month(self):
+        self.assertEqual(
+            flow_module._get_kingdee_voucher_defaults_by_date(date(2026, 8, 3)),
+            {"year": 2026, "month": 7, "page_size": 5000},
+        )
+
+    def test_quick_run_defaults_cross_year_boundary(self):
+        self.assertEqual(
+            flow_module._get_kingdee_voucher_defaults_by_date(date(2026, 1, 15)),
+            {"year": 2025, "month": 12, "page_size": 5000},
+        )
+
     def test_requires_exactly_one_month_input(self):
         with self.assertRaisesRegex(ValueError, "必须显式填写"):
             resolve_voucher_months(year=2026)
@@ -149,7 +164,7 @@ class VoucherPeriodTaskTests(unittest.TestCase):
             patch.object(
                 task_module,
                 "_request_page",
-                side_effect=[first_page, second_page],
+                side_effect=[first_page, second_page, []],
             ) as request_page,
             patch.object(task_module, "_upsert_page", side_effect=[(2, 0), (1, 0)]),
             patch.object(task_module, "_update_run_progress") as update_progress,
@@ -163,7 +178,7 @@ class VoucherPeriodTaskTests(unittest.TestCase):
 
         self.assertEqual(
             [item.kwargs["start_row"] for item in request_page.call_args_list],
-            [0, 2],
+            [0, 2, 3],
         )
         self.assertEqual(result["source_rows"], 3)
         self.assertEqual(result["inserted_rows"], 3)
@@ -176,9 +191,6 @@ class VoucherPeriodTaskTests(unittest.TestCase):
 
 class VoucherFlowTests(unittest.TestCase):
     def test_flow_runs_month_tasks_in_sorted_order(self):
-        flow_module = importlib.import_module(
-            "modules.kingdee_voucher.flows.kingdee_voucher_journal_flow"
-        )
         logger = MagicMock()
 
         def result_for_month(year, month, page_size):

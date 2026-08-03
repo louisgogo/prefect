@@ -1,5 +1,6 @@
 """Prefect flow for synchronizing the Kingdee GL voucher journal."""
 
+from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
 
 from prefect import flow, get_run_logger
@@ -7,6 +8,20 @@ from prefect import flow, get_run_logger
 from modules.common.tasks.notify_hermes_task import notify_hermes_task
 
 from ..tasks.kingdee_voucher_tasks import resolve_voucher_months, sync_kingdee_voucher_period_task
+
+
+def _get_kingdee_voucher_defaults_by_date(
+    reference_date: Optional[date] = None,
+) -> Dict[str, int]:
+    """Return deployment defaults for the previous completed calendar month."""
+
+    current_date = reference_date or date.today()
+    previous_month = current_date.replace(day=1) - timedelta(days=1)
+    return {
+        "year": previous_month.year,
+        "month": previous_month.month,
+        "page_size": 5000,
+    }
 
 
 @flow(name="kingdee_voucher_journal_flow", log_prints=True)

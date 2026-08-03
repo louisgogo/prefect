@@ -633,6 +633,7 @@ def sync_kingdee_voucher_period_task(
     inserted_rows = 0
     updated_rows = 0
     max_source_modified_at: Optional[datetime] = None
+    last_source_entry_id: Optional[int] = None
     try:
         run_id = _start_run(connection, year, month, page_size)
         while True:
@@ -646,44 +647,50 @@ def sync_kingdee_voucher_period_task(
                 timeout_seconds=timeout_seconds,
                 max_retries=max_retries,
             )
+            if not rows:
+                break
+
             records = [normalize_voucher_row(row) for row in rows]
             if any(
                 record["fiscal_year"] != year or record["fiscal_period"] != month
                 for record in records
             ):
                 raise KingdeeVoucherSyncError(f"金蝶返回了不属于 {year} 年第 {month} 期的分录")
+            if (
+                last_source_entry_id is not None
+                and records[0]["source_entry_id"] <= last_source_entry_id
+            ):
+                raise KingdeeVoucherSyncError(
+                    f"金蝶分页未继续前进：第 {month} 期分录标识 "
+                    f"{records[0]['source_entry_id']} 不大于上一页末尾 {last_source_entry_id}"
+                )
+            last_source_entry_id = records[-1]["source_entry_id"]
 
             inserted, updated = _upsert_page(connection, records)
-            if rows:
-                pages_completed += 1
-                source_rows += len(rows)
-                inserted_rows += inserted
-                updated_rows += updated
-                page_max = max(
-                    (record["modify_date"] for record in records if record["modify_date"]),
-                    default=None,
-                )
-                if page_max and (
-                    max_source_modified_at is None or page_max > max_source_modified_at
-                ):
-                    max_source_modified_at = page_max
-                _update_run_progress(
-                    connection,
-                    run_id,
-                    pages_completed=pages_completed,
-                    source_rows=source_rows,
-                    inserted_rows=inserted_rows,
-                    updated_rows=updated_rows,
-                    max_source_modified_at=max_source_modified_at,
-                )
-                connection.commit()
-                logger.info(
-                    f"{year} 年第 {month} 期已完成 {source_rows} 行，"
-                    f"新增 {inserted_rows}，更新 {updated_rows}"
-                )
+            pages_completed += 1
+            source_rows += len(rows)
+            inserted_rows += inserted
+            updated_rows += updated
+            page_max = max(
+                (record["modify_date"] for record in records if record["modify_date"]),
+                default=None,
+            )
+            if page_max and (max_source_modified_at is None or page_max > max_source_modified_at):
+                max_source_modified_at = page_max
+            _update_run_progress(
+                connection,
+                run_id,
+                pages_completed=pages_completed,
+                source_rows=source_rows,
+                inserted_rows=inserted_rows,
+                updated_rows=updated_rows,
+                max_source_modified_at=max_source_modified_at,
+            )
+            connection.commit()
+            logger.info(
+                f"{year} 年第 {month} 期已完成 {source_rows} 行，" f"新增 {inserted_rows}，更新 {updated_rows}"
+            )
 
-            if len(rows) < page_size:
-                break
             start_row += len(rows)
 
         _complete_run(connection, run_id)

@@ -362,11 +362,17 @@ def deploy_rd_project_profitability_flow():
 
 
 def deploy_kingdee_voucher_journal_flow():
-    """部署可显式选择月份的金蝶凭证序时簿同步流程。"""
+    """部署默认同步上月、并允许显式选择月份的金蝶凭证流程。"""
+    from modules.kingdee_voucher.flows.kingdee_voucher_journal_flow import (
+        _get_kingdee_voucher_defaults_by_date,
+    )
+
+    defaults = _get_kingdee_voucher_defaults_by_date()
     kingdee_voucher_journal_flow.serve(
         name="金蝶凭证序时簿同步-本地测试",
         tags=["本地测试", "金蝶", "凭证序时簿", "月度任务", "财务写入"],
-        description="按显式年度和单月或月份列表分页同步金蝶凭证序时簿，按分录稳定标识幂等写库。",
+        description="快速执行默认同步上个自然月；也可自定义单月或月份列表，按分录稳定标识幂等写库。",
+        parameters=defaults,
     )
 
 

@@ -135,11 +135,20 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("金蝶凭证序时簿同步子流程 - 生产环境注册")
     print("=" * 60)
-    print("说明：仅手工触发；year 必填，month 和 months 必须且只能填写一个。")
+    from modules.kingdee_voucher.flows.kingdee_voucher_journal_flow import (
+        _get_kingdee_voucher_defaults_by_date,
+    )
+
+    voucher_defaults = _get_kingdee_voucher_defaults_by_date()
+    print(
+        f"说明：快速执行默认同步 {voucher_defaults['year']} 年第 "
+        f"{voucher_defaults['month']} 期；自定义时 month 和 months 必须且只能填写一个。"
+    )
     kingdee_voucher_journal_flow.serve(
         name="子流程-金蝶凭证序时簿同步",
         tags=["金蝶", "凭证序时簿", "月度任务", "手动触发", "财务写入"],
-        description="按显式年度和单月或月份列表分页同步金蝶凭证序时簿，按分录稳定标识幂等写库。",
+        description="快速执行默认同步上个自然月；也可自定义单月或月份列表，按分录稳定标识幂等写库。",
+        parameters=voucher_defaults,
     )
 
     print("\n" + "=" * 60)
