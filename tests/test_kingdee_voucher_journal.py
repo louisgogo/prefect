@@ -182,6 +182,7 @@ class VoucherPeriodTaskTests(unittest.TestCase):
         )
         self.assertEqual(result["source_rows"], 3)
         self.assertEqual(result["inserted_rows"], 3)
+        self.assertEqual(result["max_source_modified_at"], "2026-08-31T12:00:00")
         self.assertEqual(update_progress.call_count, 2)
         complete_run.assert_called_once_with(connection, "run-id")
         self.assertEqual(connection.commit.call_count, 2)

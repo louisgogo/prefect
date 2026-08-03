@@ -702,7 +702,9 @@ def sync_kingdee_voucher_period_task(
             "source_rows": source_rows,
             "inserted_rows": inserted_rows,
             "updated_rows": updated_rows,
-            "max_source_modified_at": max_source_modified_at,
+            "max_source_modified_at": (
+                max_source_modified_at.isoformat() if max_source_modified_at else None
+            ),
         }
     except Exception as exc:
         if run_id is not None:
