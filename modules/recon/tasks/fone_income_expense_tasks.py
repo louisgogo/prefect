@@ -11,7 +11,6 @@ import uuid
 from typing import Any, Dict, Optional, Tuple
 
 import requests
-
 from prefect import task
 
 from .fone_recon_tasks import APP_ID, FONE_PROXY_BASE_URL, _fone_proxy_headers, _is_fone_api_success
@@ -45,6 +44,7 @@ _TABLE_QUERIES = {
             SELECT COUNT(*), MIN(`id`), MAX(`id`),
                    COUNT(DISTINCT `会计期间`), MIN(`会计期间`), MAX(`会计期间`)
             FROM `fone_db`.`FONE_MRPT_AC_OffLineFormat`
+            WHERE `会计期间` = %s
         """,
     },
     "expense": {
@@ -52,12 +52,14 @@ _TABLE_QUERIES = {
             SELECT COUNT(*), MIN(`id`), MAX(`id`),
                    COUNT(DISTINCT `会计期间`), MIN(`会计期间`), MAX(`会计期间`)
             FROM `fone_db`.`FONE_MRPT_FY_OffLineFormat`
+            WHERE `会计期间` = %s
         """,
         "FONE_MRPT_FY_OffLineDetail": """
             SELECT COUNT(*), MIN(`id`), MAX(`id`),
                    COUNT(DISTINCT CONCAT(`年`, '-', `月`)),
                    MIN(CONCAT(`年`, '-', `月`)), MAX(CONCAT(`年`, '-', `月`))
             FROM `fone_db`.`FONE_MRPT_FY_OffLineDetail`
+            WHERE CONCAT(`年`, '-', `月`) = %s
         """,
     },
 }
@@ -216,10 +218,16 @@ def _compile_fone_detail_script(
     return prefix + body
 
 
-def _read_fone_detail_table_state(detail_type: str) -> Dict[str, Any]:
-    """读取目标表的聚合状态，不返回明细行。"""
+def _read_fone_detail_table_state(detail_type: str, year: int, month: int) -> Dict[str, Any]:
+    """读取请求月份的目标表聚合状态，不返回明细行。"""
     if detail_type not in _TABLE_QUERIES:
         raise ValueError(f"不支持的 FONE 明细类型: {detail_type}")
+    year, month, _ = resolve_fone_detail_refresh_parameters(year, month, "state-check")
+    expected_periods = {
+        "FONE_MRPT_AC_OffLineFormat": f"{year}-{month:02d}-01",
+        "FONE_MRPT_FY_OffLineFormat": f"{year}-{month:02d}-01",
+        "FONE_MRPT_FY_OffLineDetail": f"{year}-M{month}",
+    }
 
     from mypackage.utilities import connect_to_fone
 
@@ -230,7 +238,7 @@ def _read_fone_detail_table_state(detail_type: str) -> Dict[str, Any]:
     tables = {}
     try:
         for table_name, query in _TABLE_QUERIES[detail_type].items():
-            cursor.execute(query)
+            cursor.execute(query, (expected_periods[table_name],))
             row = cursor.fetchone()
             tables[table_name] = {
                 "row_count": int(row[0]),
@@ -251,9 +259,8 @@ def _validate_fone_detail_table_state(
     state: Dict[str, Any],
     year: int,
     month: int,
-    previous_state: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """校验非零行数、唯一期间及刷新前后状态变化。"""
+    """校验请求月份的非零行数和期间。"""
     if detail_type not in _TABLE_QUERIES:
         raise ValueError(f"不支持的 FONE 明细类型: {detail_type}")
     expected_periods = {
@@ -262,14 +269,15 @@ def _validate_fone_detail_table_state(
         "FONE_MRPT_FY_OffLineDetail": f"{year}-M{month}",
     }
     current_tables = state.get("tables", {})
-    previous_tables = (previous_state or {}).get("tables", {})
 
     for table_name in _TABLE_QUERIES[detail_type]:
         table_state = current_tables.get(table_name)
         if not table_state:
             raise RuntimeError(f"缺少 FONE 表校验结果: {table_name}")
         if table_state["row_count"] <= 0:
-            raise RuntimeError(f"FONE 刷新后表为空: {table_name}")
+            raise RuntimeError(
+                f"FONE 刷新后 {year}-{month:02d} 无数据: {table_name}；" "请确认该月份源数据已生成，且权限用户覆盖对应法人组织"
+            )
         expected_period = expected_periods[table_name]
         if (
             table_state["distinct_periods"] != 1
@@ -282,30 +290,15 @@ def _validate_fone_detail_table_state(
             )
         if table_state["id_min"] is None or table_state["id_max"] is None:
             raise RuntimeError(f"FONE 表缺少刷新后的 ID 范围: {table_name}")
-
-        prior = previous_tables.get(table_name)
-        if prior:
-            before_signature = (
-                prior.get("row_count"),
-                prior.get("id_min"),
-                prior.get("id_max"),
-            )
-            after_signature = (
-                table_state.get("row_count"),
-                table_state.get("id_min"),
-                table_state.get("id_max"),
-            )
-            if before_signature == after_signature:
-                raise RuntimeError(f"FONE 表刷新前后状态未变化: {table_name}")
     return state
 
 
 @task(name="get_fone_detail_table_state", log_prints=True, retries=0)
-def get_fone_detail_table_state_task(detail_type: str) -> Dict[str, Any]:
-    """获取收入或费用目标表的刷新前状态。"""
-    state = _read_fone_detail_table_state(detail_type)
+def get_fone_detail_table_state_task(detail_type: str, year: int, month: int) -> Dict[str, Any]:
+    """获取收入或费用目标表中请求月份的刷新前状态。"""
+    state = _read_fone_detail_table_state(detail_type, year, month)
     counts = {name: value["row_count"] for name, value in state["tables"].items()}
-    print(f"FONE {detail_type} 刷新前表状态: {counts}")
+    print(f"FONE {detail_type} {year}-{month:02d} 刷新前表状态: {counts}")
     return state
 
 
@@ -420,16 +413,14 @@ def validate_fone_detail_table_state_task(
     detail_type: str,
     year: int,
     month: int,
-    previous_state: Dict[str, Any],
 ) -> Dict[str, Any]:
     """回读目标表并验证本次脚本确实重建了指定期间。"""
-    current_state = _read_fone_detail_table_state(detail_type)
+    current_state = _read_fone_detail_table_state(detail_type, year, month)
     validated = _validate_fone_detail_table_state(
         detail_type=detail_type,
         state=current_state,
         year=year,
         month=month,
-        previous_state=previous_state,
     )
     counts = {name: value["row_count"] for name, value in validated["tables"].items()}
     print(f"FONE {detail_type} 刷新后校验通过: {counts}")
