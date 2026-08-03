@@ -12,6 +12,7 @@ from modules import (
     fetch_budget_shared_rate_flow,
     fone_income_expense_refresh_flow,
     inventory_impairment_flow,
+    kingdee_voucher_journal_flow,
     profit_refresh_flow,
     rd_project_profitability_flow,
 )
@@ -129,6 +130,16 @@ if __name__ == "__main__":
         name="子流程-FONE收入费用明细刷新",
         tags=["FONE", "收入明细", "费用明细", "财务刷新", "手动触发"],
         description="按显式年月顺序刷新 FONE 收入、费用明细，并回读数据库验证非空、期间和刷新状态。",
+    )
+
+    print("\n" + "=" * 60)
+    print("金蝶凭证序时簿同步子流程 - 生产环境注册")
+    print("=" * 60)
+    print("说明：仅手工触发；year 必填，month 和 months 必须且只能填写一个。")
+    kingdee_voucher_journal_flow.serve(
+        name="子流程-金蝶凭证序时簿同步",
+        tags=["金蝶", "凭证序时簿", "月度任务", "手动触发", "财务写入"],
+        description="按显式年度和单月或月份列表分页同步金蝶凭证序时簿，按分录稳定标识幂等写库。",
     )
 
     print("\n" + "=" * 60)

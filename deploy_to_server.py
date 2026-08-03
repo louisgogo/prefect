@@ -16,6 +16,7 @@ from modules import (
     fone_income_expense_refresh_flow,
     fone_recon_flow,
     inventory_impairment_flow,
+    kingdee_voucher_journal_flow,
     org_sync_flow,
     profit_refresh_flow,
     profit_report_flow,
@@ -220,6 +221,15 @@ def _serve_rd_project_profitability():
     )
 
 
+def _serve_kingdee_voucher_journal():
+    """模块级函数，供 Process 调用。"""
+    kingdee_voucher_journal_flow.serve(
+        name="子流程-金蝶凭证序时簿同步",
+        tags=["金蝶", "凭证序时簿", "月度任务", "手动触发", "财务写入"],
+        description="按显式年度和单月或月份列表分页同步金蝶凭证序时簿，按分录稳定标识幂等写库。",
+    )
+
+
 def deploy_to_remote_server():
     """
     从本地推送流程到远程 Prefect Server
@@ -283,6 +293,7 @@ def deploy_to_remote_server():
     process15 = Process(target=_serve_inventory_impairment)
     process16 = Process(target=_serve_rd_project_profitability)
     process17 = Process(target=_serve_fone_income_expense_refresh)
+    process18 = Process(target=_serve_kingdee_voucher_journal)
 
     process1.start()
     time.sleep(1)
@@ -317,6 +328,8 @@ def deploy_to_remote_server():
     process16.start()
     time.sleep(1)
     process17.start()
+    time.sleep(1)
+    process18.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -351,6 +364,7 @@ def deploy_to_remote_server():
             process15,
             process16,
             process17,
+            process18,
         ]:
             p.terminate()
             p.join()
