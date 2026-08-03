@@ -38,7 +38,7 @@ def fone_income_expense_refresh_flow(
 
     try:
         print("【阶段1/2】刷新 FONE 收入成本明细")
-        income_before = get_fone_detail_table_state_task("income")
+        get_fone_detail_table_state_task("income", year, month)
         income_execution = execute_fone_income_expense_script_task(
             detail_type="income",
             year=year,
@@ -49,11 +49,10 @@ def fone_income_expense_refresh_flow(
             detail_type="income",
             year=year,
             month=month,
-            previous_state=income_before,
         )
 
         print("【阶段2/2】刷新 FONE 费用明细")
-        expense_before = get_fone_detail_table_state_task("expense")
+        get_fone_detail_table_state_task("expense", year, month)
         expense_execution = execute_fone_income_expense_script_task(
             detail_type="expense",
             year=year,
@@ -64,7 +63,6 @@ def fone_income_expense_refresh_flow(
             detail_type="expense",
             year=year,
             month=month,
-            previous_state=expense_before,
         )
 
         result = {

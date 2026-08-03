@@ -7,6 +7,7 @@ from modules.recon.tasks.fone_income_expense_tasks import (
     _build_refresh_only_script,
     _compile_fone_detail_script,
     _parse_fone_content_response,
+    _read_fone_detail_table_state,
     _validate_fone_detail_table_state,
     resolve_fone_detail_refresh_parameters,
 )
@@ -150,20 +151,17 @@ class FoneRefreshValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "permission_user"):
                 resolve_fone_detail_refresh_parameters(2026, 5)
 
-    def test_income_state_accepts_requested_period_and_changed_ids(self):
-        previous = _income_state(id_min=1, id_max=10)
-        current = _income_state(id_min=11, id_max=20)
+    def test_income_state_accepts_requested_period(self):
+        current = _income_state()
 
-        result = _validate_fone_detail_table_state(
-            "income", current, 2026, 5, previous_state=previous
-        )
+        result = _validate_fone_detail_table_state("income", current, 2026, 5)
 
         self.assertIs(result, current)
 
     def test_income_state_rejects_empty_table(self):
         current = _income_state(row_count=0, id_min=None, id_max=None)
 
-        with self.assertRaisesRegex(RuntimeError, "表为空"):
+        with self.assertRaisesRegex(RuntimeError, "2026-05 无数据"):
             _validate_fone_detail_table_state("income", current, 2026, 5)
 
     def test_income_state_rejects_wrong_period(self):
@@ -172,13 +170,12 @@ class FoneRefreshValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "期间异常"):
             _validate_fone_detail_table_state("income", current, 2026, 5)
 
-    def test_income_state_rejects_unchanged_signature(self):
+    def test_income_state_allows_idempotent_unchanged_signature(self):
         current = _income_state()
 
-        with self.assertRaisesRegex(RuntimeError, "刷新前后状态未变化"):
-            _validate_fone_detail_table_state(
-                "income", current, 2026, 5, previous_state=_income_state()
-            )
+        result = _validate_fone_detail_table_state("income", current, 2026, 5)
+
+        self.assertIs(result, current)
 
     def test_expense_state_checks_both_period_formats(self):
         current = _expense_state()
@@ -186,6 +183,25 @@ class FoneRefreshValidationTests(unittest.TestCase):
         result = _validate_fone_detail_table_state("expense", current, 2026, 5)
 
         self.assertIs(result, current)
+
+    def test_table_state_reads_only_requested_period(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (10, 1, 10, 1, "2026-06-01", "2026-06-01")
+        connection = MagicMock()
+
+        with patch(
+            "mypackage.utilities.connect_to_fone",
+            return_value=(connection, cursor),
+        ):
+            state = _read_fone_detail_table_state("income", 2026, 6)
+
+        query, params = cursor.execute.call_args.args
+        self.assertIn("WHERE `会计期间` = %s", query)
+        self.assertEqual(params, ("2026-06-01",))
+        self.assertEqual(
+            state["tables"]["FONE_MRPT_AC_OffLineFormat"]["row_count"],
+            10,
+        )
 
 
 class FoneRefreshFlowTests(unittest.TestCase):
@@ -217,6 +233,8 @@ class FoneRefreshFlowTests(unittest.TestCase):
 
         detail_types = [call.kwargs["detail_type"] for call in execute_task.call_args_list]
         self.assertEqual(detail_types, ["income", "expense"])
+        self.assertEqual(state_task.call_args_list[0].args, ("income", 2026, 5))
+        self.assertEqual(state_task.call_args_list[1].args, ("expense", 2026, 5))
         self.assertEqual(result["income_tables"]["FONE_MRPT_AC_OffLineFormat"]["row_count"], 10)
         self.assertEqual(result["expense_tables"]["FONE_MRPT_FY_OffLineDetail"]["row_count"], 15)
 
