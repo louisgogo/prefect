@@ -1,3 +1,4 @@
+import uuid
 from io import StringIO
 
 import numpy as np
@@ -5,6 +6,15 @@ import pandas as pd
 from mypackage.utilities import connect_to_db, engine_to_db
 
 from .batch import ensure_batch_schema, ensure_staging_table_batch_support
+
+TABLE_TO_CLASS = {
+    "staging_bus_expense": "费用",
+    "staging_bus_revenue": "收入",
+    "staging_bus_profit_bd": "其他",
+    "staging_bus_receivable": "应收",
+    "staging_bus_inventory": "存货",
+    "staging_bus_in_transit_inventory": "在途存货",
+}
 
 # 表结构定义（中文列名）
 TABLE_SCHEMAS = {
@@ -46,7 +56,15 @@ TABLE_SCHEMAS = {
         "组织": ["唯一层级", "一级组织", "二级组织", "三级组织"],
     },
     "staging_bus_profit_bd": {
-        "其他": ["来源编号", "财报合并", "日期", "一级科目", "本月金额", "年份", "数据来源"],
+        "其他": [
+            "来源编号",
+            "财报合并",
+            "日期",
+            "一级科目",
+            "本月金额",
+            "年份",
+            "数据来源",
+        ],
         "组织": ["唯一层级", "一级组织", "二级组织", "三级组织"],
     },
     "staging_bus_inventory": {
@@ -158,9 +176,9 @@ TABLE_SCHEMAS = {
 
 
 def get_table_columns(table_name, bus_lines):
-    """获取表的完整列名列表（含业务线）"""
+    """获取 Staging 基础表列名；业务线比例存储在独立长表。"""
     schema = TABLE_SCHEMAS.get(table_name, {})
-    columns = ["batch_id"]
+    columns = ["batch_id", "record_id"]
     # 组织列放前面
     if "组织" in schema:
         columns.extend(schema["组织"])
@@ -168,20 +186,18 @@ def get_table_columns(table_name, bus_lines):
     for key in ["费用", "收入", "存货", "应收", "在途", "其他"]:
         if key in schema:
             columns.extend(schema[key])
-    # 业务线列
-    columns.extend(bus_lines)
     return columns
 
 
 def create_staging_table(cur, table_name, bus_lines):
-    """创建staging表（中文列名）。表不存在则创建；已存在则自动补全缺失的业务线列。"""
+    """创建 Staging 基础表；不再为业务线动态扩展字段。"""
     schema = TABLE_SCHEMAS.get(table_name, {})
     ensure_batch_schema(cur)
 
     # 检查表是否已存在
     cur.execute(f"SELECT to_regclass('{table_name}')")
     if cur.fetchone()[0] is not None:
-        # 表已存在：检查并补全缺失的业务线列
+        # 表已存在：只校验受管迁移提供的 record_id 与比例长表。
         cur.execute(
             "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
             (table_name,),
@@ -191,18 +207,21 @@ def create_staging_table(cur, table_name, bus_lines):
             cur.execute(f'ALTER TABLE {table_name} ADD COLUMN "来源层级" VARCHAR(500)')
             existing_cols.add("来源层级")
             print(f'Table {table_name}: added missing column "来源层级".')
-        missing = [col for col in bus_lines if col not in existing_cols]
-        if missing:
-            for col in missing:
-                cur.execute(f'ALTER TABLE {table_name} ADD COLUMN "{col}" DECIMAL(10,4)')
-                print(f'Table {table_name}: added missing column "{col}".')
-        else:
-            print(f"Table {table_name} already exists, columns aligned.")
+        if "record_id" not in existing_cols:
+            raise RuntimeError(f"{table_name} 缺少 record_id，请先执行受管数据库迁移后再运行 Prefect 流程")
+        cur.execute("SELECT to_regclass('staging_bus_line_ratio')")
+        if cur.fetchone()[0] is None:
+            raise RuntimeError("缺少 staging_bus_line_ratio，请先执行受管数据库迁移")
+        print(f"Table {table_name} already exists, normalized ratio storage ready.")
         ensure_staging_table_batch_support(cur, table_name)
         return
 
     # 表不存在：构建列定义并创建
-    columns_def = ["id SERIAL PRIMARY KEY", "batch_id UUID NOT NULL"]
+    columns_def = [
+        "id SERIAL PRIMARY KEY",
+        "batch_id UUID NOT NULL",
+        "record_id UUID NOT NULL",
+    ]
 
     # 组织列
     if "组织" in schema:
@@ -274,10 +293,6 @@ def create_staging_table(cur, table_name, bus_lines):
                 else:
                     columns_def.append(f'"{col}" VARCHAR(500)')
 
-    # 业务线列 - 存储拆分比例
-    for col in bus_lines:
-        columns_def.append(f'"{col}" DECIMAL(10,4)')
-
     # 添加 audit_status 和 created_at
     columns_def.append("\"审核状态\" VARCHAR(50) DEFAULT 'PENDING'")
     columns_def.append('"创建时间" TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
@@ -291,6 +306,7 @@ def create_staging_table(cur, table_name, bus_lines):
     )
     cur.execute(f'CREATE INDEX idx_{table_name}_date ON {table_name}("{date_col}")')
     cur.execute(f'CREATE INDEX idx_{table_name}_lvl ON {table_name}("唯一层级")')
+    cur.execute(f"CREATE UNIQUE INDEX uq_{table_name}_record_id ON {table_name}(record_id)")
     ensure_staging_table_batch_support(cur, table_name)
 
     print(f"Table {table_name} created with {len(columns_def)} columns")
@@ -320,7 +336,7 @@ def insert_to_staging_table(
     is_by_df=True,
 ):
     """
-    将数据插入PostgreSQL中间表（宽表格式，业务线直接作为列）。
+    将数据写入 Staging 基础表，并把业务线比例反透视到独立长表。
     表不存在则创建，存在则按批次追加数据。不同批次互不覆盖。
     """
     conn, cur = connect_to_db()
@@ -383,6 +399,7 @@ def insert_to_staging_table(
 
             # 所有新记录归属于本次抽取批次
             final_df["batch_id"] = batch_id
+            final_df["record_id"] = [str(uuid.uuid4()) for _ in range(len(final_df))]
 
             # 确保所有业务线列存在（保留已有值，缺失的设为NULL）
             for col in bus_lines:
@@ -402,17 +419,16 @@ def insert_to_staging_table(
                     raise ValueError(f"费用 Staging 数据有 {missing_count} 条记录的“来源层级”为空，已终止入库。")
                 final_df["来源层级"] = source_values
 
-            # 只保留表定义的列
+            # 先在内存中完成比例归一化，再拆分基础行和比例行。
             existing_cols = [col for col in table_columns if col in final_df.columns]
-            final_df = final_df[existing_cols]
 
             # 业务线比例列四舍五入到2位小数，金额列四舍五入到3位小数
-            bus_line_cols = [col for col in existing_cols if col in bus_lines]
+            bus_line_cols = [col for col in bus_lines if col in final_df.columns]
             for col in existing_cols:
-                if col in bus_lines:
-                    final_df[col] = pd.to_numeric(final_df[col], errors="coerce").round(2)
-                elif pd.api.types.is_float_dtype(final_df[col]):
+                if pd.api.types.is_float_dtype(final_df[col]):
                     final_df[col] = final_df[col].round(3)
+            for col in bus_line_cols:
+                final_df[col] = pd.to_numeric(final_df[col], errors="coerce").round(2)
 
             # 归一化补偿：确保每行非空业务线比例之和严格等于1
             if bus_line_cols:
@@ -427,18 +443,51 @@ def insert_to_staging_table(
                         if pd.notna(col):
                             final_df.at[idx, col] = round(final_df.at[idx, col] + diffs.loc[idx], 2)
 
-            # 使用COPY导入数据
-            copy_data_to_postgres(final_df, table_name, existing_cols, conn, cur)
+            ratio_df = _build_ratio_rows(final_df, table_name, bus_line_cols)
+            base_df = final_df[existing_cols]
+
+            # 基础行和比例行必须共用一个事务，任一步失败都会整体回滚。
+            copy_data_to_postgres(base_df, table_name, existing_cols, conn, cur, commit=False)
+            if not ratio_df.empty:
+                copy_data_to_postgres(
+                    ratio_df,
+                    "staging_bus_line_ratio",
+                    ["class", "record_id", "bus_line", "rate"],
+                    conn,
+                    cur,
+                    commit=False,
+                )
+            conn.commit()
             print(f"Total {len(final_df)} records inserted into {table_name} via COPY.")
         else:
             print(f"No data to insert into {table_name}.")
 
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cur.close()
         conn.close()
 
 
-def copy_data_to_postgres(df, table_name, columns, conn, cur):
+def _build_ratio_rows(df, table_name, bus_line_cols):
+    """把宽表比例转换为统一的非零比例记录。"""
+    if not bus_line_cols:
+        return pd.DataFrame(columns=["class", "record_id", "bus_line", "rate"])
+    class_name = TABLE_TO_CLASS[table_name]
+    ratio_df = df[["record_id", *bus_line_cols]].melt(
+        id_vars=["record_id"],
+        value_vars=bus_line_cols,
+        var_name="bus_line",
+        value_name="rate",
+    )
+    ratio_df["rate"] = pd.to_numeric(ratio_df["rate"], errors="coerce")
+    ratio_df = ratio_df[ratio_df["rate"].notna() & ratio_df["rate"].ne(0)].copy()
+    ratio_df.insert(0, "class", class_name)
+    return ratio_df[["class", "record_id", "bus_line", "rate"]]
+
+
+def copy_data_to_postgres(df, table_name, columns, conn, cur, commit=True):
     """
     使用 PostgreSQL COPY 命令高效导入数据
     比 to_sql 快 10-100 倍
@@ -483,17 +532,25 @@ def copy_data_to_postgres(df, table_name, columns, conn, cur):
 
     try:
         cur.copy_expert(copy_sql, buffer)
-        conn.commit()
+        if commit:
+            conn.commit()
         elapsed = time.time() - start_time
         print(f"COPY completed in {elapsed:.2f} seconds for {len(df)} records")
     except Exception as e:
         conn.rollback()
         print(f"COPY failed: {e}")
+        if not commit:
+            raise
         # 降级到批量 INSERT
         print("Falling back to to_sql...")
         from sqlalchemy import create_engine
 
         engine = engine_to_db()
         df.to_sql(
-            table_name, con=engine, if_exists="append", index=False, method="multi", chunksize=1000
+            table_name,
+            con=engine,
+            if_exists="append",
+            index=False,
+            method="multi",
+            chunksize=1000,
         )

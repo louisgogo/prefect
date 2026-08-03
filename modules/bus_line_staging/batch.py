@@ -17,6 +17,15 @@ STAGING_TABLE_DATE_COLUMNS = {
     "staging_bus_in_transit_inventory": "会计期间",
 }
 
+STAGING_TABLE_CLASSES = {
+    "staging_bus_expense": "费用",
+    "staging_bus_revenue": "收入",
+    "staging_bus_profit_bd": "其他",
+    "staging_bus_inventory": "存货",
+    "staging_bus_receivable": "应收",
+    "staging_bus_in_transit_inventory": "在途存货",
+}
+
 
 def _month_start(value: date) -> date:
     return value.replace(day=1)
@@ -291,19 +300,6 @@ def start_batch(date_range: Iterable[date], flow_run_id: str | None = None) -> s
         conn.close()
 
 
-def _existing_business_line_columns(cur, table_name: str, bus_lines: Iterable[str]) -> list[str]:
-    cur.execute(
-        """
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema = current_schema() AND table_name = %s
-        """,
-        (table_name,),
-    )
-    existing = {row[0] for row in cur.fetchall()}
-    return [line for line in bus_lines if line in existing]
-
-
 def inherit_previous_values(batch_id: str, bus_lines: Iterable[str]) -> dict[str, int]:
     """Copy ratios and audit status from this month's preceding batch."""
     conn, cur = connect_to_db()
@@ -327,27 +323,45 @@ def inherit_previous_values(batch_id: str, bus_lines: Iterable[str]) -> dict[str
             if cur.fetchone()[0] is None or previous_batch_id is None:
                 inherited[table_name] = 0
                 continue
-            ratio_columns = _existing_business_line_columns(cur, table_name, bus_lines)
-            assignments = [
-                f"{_quote_identifier(column)} = previous.{_quote_identifier(column)}"
-                for column in ratio_columns
-            ]
-            assignments.append('"审核状态" = previous."审核状态"')
             cur.execute(
                 f"""
                 UPDATE {table_name} AS new_row
-                SET {', '.join(assignments)}
+                SET "审核状态" = previous."审核状态"
                 FROM {table_name} AS previous
                 WHERE new_row.batch_id = %s
                   AND previous.batch_id = %s
-                  AND new_row."{date_column}" = %s
                   AND previous."{date_column}" = new_row."{date_column}"
                   AND previous."来源编号" = new_row."来源编号"
                   AND previous."唯一层级" = new_row."唯一层级"
                 """,
-                (batch_id, previous_batch_id, acct_period),
+                (batch_id, previous_batch_id),
             )
             inherited[table_name] = cur.rowcount
+            class_name = STAGING_TABLE_CLASSES[table_name]
+            cur.execute(
+                f"""
+                INSERT INTO staging_bus_line_ratio(
+                    class, record_id, bus_line, rate, created_at, updated_at, updated_by
+                )
+                SELECT %s, new_row.record_id, ratio.bus_line, ratio.rate,
+                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ratio.updated_by
+                FROM {table_name} AS new_row
+                JOIN {table_name} AS previous
+                  ON previous.batch_id = %s
+                 AND previous."{date_column}" = new_row."{date_column}"
+                 AND previous."来源编号" = new_row."来源编号"
+                 AND previous."唯一层级" = new_row."唯一层级"
+                JOIN staging_bus_line_ratio AS ratio
+                  ON ratio.class = %s
+                 AND ratio.record_id = previous.record_id
+                WHERE new_row.batch_id = %s
+                ON CONFLICT (class, record_id, bus_line) DO UPDATE
+                SET rate = EXCLUDED.rate,
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (class_name, previous_batch_id, class_name, batch_id),
+            )
         conn.commit()
         return inherited
     except Exception:
@@ -412,13 +426,13 @@ def compare_batch_to_previous(
             if cur.fetchone()[0] is None:
                 continue
 
-            ratio_columns = _existing_business_line_columns(cur, table_name, bus_lines)
             excluded_columns = [
                 "id",
                 "batch_id",
+                "record_id",
                 "审核状态",
                 "创建时间",
-                *ratio_columns,
+                *list(bus_lines),
             ]
             cur.execute(
                 f"""
