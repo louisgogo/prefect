@@ -17,7 +17,9 @@ FastAPI continues to own the manifest-managed table migrations. The unshipped Fa
 - [x] (2026-08-03 05:22Z) Added 10 focused task and flow tests; unittest and focused flake8 checks pass.
 - [x] (2026-08-03 05:23Z) Ran the real Prefect flow for 2026 period 8 against `test_mydb`: 30 source rows, 0 inserts, 30 updates, and 30 distinct stored entry IDs.
 - [x] (2026-08-03 05:25Z) Focused pre-commit hooks and final whitespace checks pass for every changed Prefect file.
-- [ ] Coordinate Git release, worker environment variables, deployment registration, and production trigger with the FastAPI migration release.
+- [x] (2026-08-03 05:41Z) Committed and pushed the Prefect feature, merged PR #3 into `session/prefect`, configured the ignored worker credential, restarted `prefect-workers.service`, and verified the deployment is READY.
+- [ ] Merge and release the paired FastAPI migration PR before any production voucher synchronization is triggered.
+- [ ] Trigger and reconcile the authorized production periods after the schema release.
 
 ## Surprises & Discoveries
 
@@ -42,7 +44,7 @@ FastAPI continues to own the manifest-managed table migrations. The unshipped Fa
 
 ## Outcomes & Retrospective
 
-The Prefect implementation and test rollout are complete. Flow run `vagabond-lyrebird` synchronized 2026 period 8 through real Prefect orchestration and proved idempotence with 30 updates and no inserts or duplicates. The FastAPI worktree now retains only manifest-managed schema migrations. Git release, production worker configuration, deployment registration, and production data synchronization remain intentionally pending authorization and migration sequencing.
+The Prefect implementation, test rollout, Git release, worker configuration, and deployment registration are complete. Flow run `vagabond-lyrebird` synchronized 2026 period 8 through real Prefect orchestration and proved idempotence with 30 updates and no inserts or duplicates. Deployment `kingdee_voucher_journal_flow/子流程-金蝶凭证序时簿同步` is READY on version `67f6e0a2`, exposes `year`, `month`, `months`, and `page_size`, and has no schedule. The FastAPI migration PR and any production data trigger remain intentionally pending.
 
 ## Context and Orientation
 
@@ -91,6 +93,8 @@ Existing test evidence from the prototype: 456,153 unique 2026 entries, 50,320 v
 
 Prefect evidence: flow run `vagabond-lyrebird` completed 2026 period 8 with 30 source rows, zero inserts, 30 updates, one completed page, and 30 distinct stored source IDs. Ten focused unittest cases pass, including parameter exclusivity, ordered month orchestration, page advancement, boolean conversion, UUID adaptation, idempotent upsert counting, and token redaction.
 
+Registration evidence: Prefect PR #3 merged as `67f6e0a2746758725481d8ce56f0cd1ec897896d`; `prefect-workers.service` is active; deployment ID is `d5ec32dc-f45c-4edb-82c5-18802e0db198`, status READY, not paused, with no schedules.
+
 ## Interfaces and Dependencies
 
 The implementation uses existing Prefect, requests, psycopg2, `mypackage`, and Hermes notification dependencies. Required worker configuration is a valid `XGD_TOKEN` and finance database connection through `KINGDEE_VOUCHER_DATABASE_URL` or the established `mypackage` configuration.
@@ -101,3 +105,4 @@ The public flow is `kingdee_voucher_journal_flow`, registered as `子流程-金�
 
 - 2026-08-03: Initial plan created after the user selected Prefect orchestration and explicit month parameters.
 - 2026-08-03: Recorded completed implementation, deployment registration, focused test results, the psycopg2 UUID adaptation fix, and the successful period-8 Prefect test run.
+- 2026-08-03: Recorded the merged Prefect release, worker credential configuration, systemd restart, and READY manual-trigger deployment evidence.
