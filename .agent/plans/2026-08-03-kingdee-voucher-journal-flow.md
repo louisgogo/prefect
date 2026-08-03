@@ -18,7 +18,7 @@ FastAPI continues to own the manifest-managed table migrations. The unshipped Fa
 - [x] (2026-08-03 05:23Z) Ran the real Prefect flow for 2026 period 8 against `test_mydb`: 30 source rows, 0 inserts, 30 updates, and 30 distinct stored entry IDs.
 - [x] (2026-08-03 05:25Z) Focused pre-commit hooks and final whitespace checks pass for every changed Prefect file.
 - [x] (2026-08-03 05:41Z) Committed and pushed the Prefect feature, merged PR #3 into `session/prefect`, configured the ignored worker credential, restarted `prefect-workers.service`, and verified the deployment is READY.
-- [ ] Add previous-month Quick Run defaults and make pagination continue until an empty source page, then publish and re-register the deployment.
+- [x] (2026-08-03 05:53Z) Added previous-month Quick Run defaults and empty-page pagination, merged PR #5, restarted the worker, and verified deployment version `9ecef7e1` is READY with defaults `year=2026`, `month=7`, `page_size=5000`.
 - [ ] Merge and release the paired FastAPI migration PR before any production voucher synchronization is triggered.
 - [ ] Trigger and reconcile the authorized production periods after the schema release.
 
@@ -46,7 +46,7 @@ FastAPI continues to own the manifest-managed table migrations. The unshipped Fa
 
 ## Outcomes & Retrospective
 
-The Prefect implementation, test rollout, Git release, worker configuration, and deployment registration are complete. Flow run `vagabond-lyrebird` synchronized 2026 period 8 through real Prefect orchestration and proved idempotence with 30 updates and no inserts or duplicates. Deployment `kingdee_voucher_journal_flow/子流程-金蝶凭证序时簿同步` is READY on version `67f6e0a2`, exposes `year`, `month`, `months`, and `page_size`, and has no schedule. The FastAPI migration PR and any production data trigger remain intentionally pending.
+The Prefect implementation, test rollout, Git release, worker configuration, and deployment registration are complete. Flow runs `vagabond-lyrebird` and `thistle-shrew` synchronized 2026 period 8 through real Prefect orchestration and proved idempotence with 30 updates and no inserts or duplicates. Deployment `kingdee_voucher_journal_flow/子流程-金蝶凭证序时簿同步` is READY on version `9ecef7e1`, exposes customizable `year`, `month`, `months`, and `page_size`, and prefills the previous calendar month for Quick Run. The FastAPI migration PR and any production data trigger remain intentionally pending.
 
 ## Context and Orientation
 
@@ -97,6 +97,8 @@ Prefect evidence: flow run `vagabond-lyrebird` completed 2026 period 8 with 30 s
 
 Registration evidence: Prefect PR #3 merged as `67f6e0a2746758725481d8ce56f0cd1ec897896d`; `prefect-workers.service` is active; deployment ID is `d5ec32dc-f45c-4edb-82c5-18802e0db198`, status READY, not paused, with no schedules.
 
+Default-period evidence: Prefect PR #5 merged as `9ecef7e12eb949c1af7ff3d137458d4abd7b57ee`; deployment defaults are `year=2026`, `month=7`, `page_size=5000` on 2026-08-03. Test flow `thistle-shrew` completed period 8 with a 30-row short page followed by an empty page, reporting zero inserts and 30 updates.
+
 ## Interfaces and Dependencies
 
 The implementation uses existing Prefect, requests, psycopg2, `mypackage`, and Hermes notification dependencies. Required worker configuration is a valid `XGD_TOKEN` and finance database connection through `KINGDEE_VOUCHER_DATABASE_URL` or the established `mypackage` configuration.
@@ -109,3 +111,4 @@ The public flow is `kingdee_voucher_journal_flow`, registered as `子流程-金�
 - 2026-08-03: Recorded completed implementation, deployment registration, focused test results, the psycopg2 UUID adaptation fix, and the successful period-8 Prefect test run.
 - 2026-08-03: Recorded the merged Prefect release, worker credential configuration, systemd restart, and READY manual-trigger deployment evidence.
 - 2026-08-03: Added the user-requested previous-month Quick Run behavior and documented empty-page termination as the safer pagination contract.
+- 2026-08-03: Recorded merged PR #5, deployment version `9ecef7e1`, verified previous-month defaults, and the successful short-page integration run.
