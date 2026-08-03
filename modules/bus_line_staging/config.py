@@ -6,6 +6,8 @@ from mypackage.utilities import connect_to_db
 
 def get_bus_lines():
     """从业务线维表获取完整拆分列，保留历史终止业务线。"""
+    conn = None
+    cur = None
     try:
         conn, cur = connect_to_db()
         cur.execute(
@@ -20,36 +22,16 @@ def get_bus_lines():
             ("无", "抵销数"),
         )
         lines = [row[0] for row in cur.fetchall()]
-        cur.close()
-        conn.close()
+        if not lines:
+            raise RuntimeError("dim_bus_line 未返回任何可用业务线")
         return lines
     except Exception as e:
-        print(f"获取业务线列表失败: {e}")
-        # 降级返回原有硬编码列表
-        return [
-            "国际业务",
-            "美国业务",
-            "国内硬件",
-            "小POS",
-            "立充",
-            "大POS",
-            "澳门业务",
-            "跨境总部",
-            "跨境欧洲",
-            "跨境新加坡",
-            "web3",
-            "能源硬件",
-            "政府事务",
-            "能源运营",
-            "AGI",
-            "本地生活",
-            "数币",
-            "消费电子",
-            "审核业务",
-            "政府消费券",
-            "集团",
-            "资产运营",
-        ]
+        raise RuntimeError(f"获取业务线列表失败，已停止生成 Staging 数据: {e}") from e
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
 
 
 def get_date_range(start_date=None, end_date=None):
