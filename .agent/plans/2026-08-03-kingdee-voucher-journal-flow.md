@@ -19,8 +19,10 @@ FastAPI continues to own the manifest-managed table migrations. The unshipped Fa
 - [x] (2026-08-03 05:25Z) Focused pre-commit hooks and final whitespace checks pass for every changed Prefect file.
 - [x] (2026-08-03 05:41Z) Committed and pushed the Prefect feature, merged PR #3 into `session/prefect`, configured the ignored worker credential, restarted `prefect-workers.service`, and verified the deployment is READY.
 - [x] (2026-08-03 05:53Z) Added previous-month Quick Run defaults and empty-page pagination, merged PR #5, restarted the worker, and verified deployment version `9ecef7e1` is READY with defaults `year=2026`, `month=7`, `page_size=5000`.
-- [ ] Merge and release the paired FastAPI migration PR before any production voucher synchronization is triggered.
-- [ ] Trigger and reconcile the authorized production periods after the schema release.
+- [x] (2026-08-03 06:38Z) Released FastAPI schema and tool-panel PR #23 to production, applied the two finance migrations, and backported PR #25 to `develop`.
+- [x] (2026-08-03 06:38Z) Synchronized production periods 1 through 7: seven completed month records, 457,120 unique rows, zero null source IDs, and exact per-period source/stored counts.
+- [x] (2026-08-03 06:40Z) Converted the monthly task result timestamp to ISO 8601 text and added a regression assertion; all 12 focused tests and changed-file pre-commit hooks pass.
+- [ ] Publish a new deployment version and verify a safe idempotent rerun reaches Prefect `Completed`.
 
 ## Surprises & Discoveries
 
@@ -29,6 +31,8 @@ FastAPI continues to own the manifest-managed table migrations. The unshipped Fa
 - The production Prefect worker is systemd-managed and pulls the checked-out `/root/prefect` branch before starting `deploy_to_server.py`. Registration or restart must wait for an authorized pushed commit.
 - The first live Prefect run exposed that psycopg2 does not adapt Python `uuid.UUID` values automatically in this environment. Passing the run ID as canonical UUID text fixes the insert without changing the PostgreSQL UUID column, and a regression test now covers this boundary.
 - Treating any page shorter than `page_size` as the final page depends on the external API always honoring the requested limit. Continuing until an empty page costs one final request but prevents silent data loss if Kingdee applies a smaller server-side page cap.
+- The authorized production backfill committed all seven months successfully, but the completion notification received `max_source_modified_at` as a Python `datetime`. `httpx` could not JSON-encode it, so flow run `7e340323-cbee-4151-912d-47d46f9ba65a` was marked `Failed` after 457,120 rows and all seven month records were already completed.
+- Production reconciliation found one July voucher in document status `A` whose raw Kingdee entry amounts are unbalanced; all typed stored amounts match the raw payload. This is a source-side unapproved voucher condition, not a paging, duplication, or normalization defect. Completed/approved voucher reconciliation remains clean when the source draft is excluded.
 
 ## Decision Log
 
@@ -44,9 +48,13 @@ FastAPI continues to own the manifest-managed table migrations. The unshipped Fa
   Rationale: A failed month should not rerun already completed months. Database upsert by `FEntity_FEntryID` makes task retries safe.
   Date/Author: 2026-08-03 / Codex.
 
+- Decision: Serialize `max_source_modified_at` to ISO 8601 text in the monthly task result while retaining the database run-record column as a timestamp.
+  Rationale: Prefect/Hermes summaries must be JSON-safe, while PostgreSQL should keep a typed timestamp for querying. Converting at the task-result boundary fixes notifications and flow state without changing stored financial data.
+  Date/Author: 2026-08-03 / Codex.
+
 ## Outcomes & Retrospective
 
-The Prefect implementation, test rollout, Git release, worker configuration, and deployment registration are complete. Flow runs `vagabond-lyrebird` and `thistle-shrew` synchronized 2026 period 8 through real Prefect orchestration and proved idempotence with 30 updates and no inserts or duplicates. Deployment `kingdee_voucher_journal_flow/子流程-金蝶凭证序时簿同步` is READY on version `9ecef7e1`, exposes customizable `year`, `month`, `months`, and `page_size`, and prefills the previous calendar month for Quick Run. The FastAPI migration PR and any production data trigger remain intentionally pending.
+The implementation, test rollout, Git release, worker configuration, deployment registration, FastAPI schema/tool release, and production January-through-July data load are complete. Seven month records completed with 457,120 unique rows and exact source/stored counts. The remaining defect is confined to the post-load Hermes completion notification: a non-JSON-safe timestamp caused Prefect to mark the otherwise successful aggregate flow as failed. The hotfix converts that result field to ISO text and will be verified through an idempotent closed-month rerun.
 
 ## Context and Orientation
 
@@ -76,12 +84,13 @@ All commands run in `/root/prefect-kingdee-voucher-sync` using `/root/prefect/ve
 4. Run an ephemeral Prefect flow for explicit year 2026, month 8 against `test_mydb`.
 5. Verify the latest test run reports 30 source rows, zero inserts, 30 updates, and no duplicate source IDs.
 6. After authorized Git release and FastAPI production migration, configure worker secrets, register the deployment, restart the systemd worker, trigger the requested production periods, and validate production counts and balances.
+7. Convert the task-result timestamp to ISO 8601 text, add a regression assertion, release the Prefect hotfix, and rerun one already-loaded closed month to prove idempotence and a terminal `Completed` state.
 
 ## Validation and Acceptance
 
 Unit tests must pass. The flow schema must expose `year`, `month`, `months`, and `page_size`; the registered deployment must prefill the previous calendar year/month and page size 5000. Package exports and all three deployment scripts must reference the new flow.
 
-The test flow is accepted when period 8 completes through Prefect task orchestration and remains idempotent. Production acceptance requires the FastAPI migrations to be present in `main`, both target tables to exist, the worker to run the intended pushed Prefect commit, every requested month to complete, and row uniqueness/reconciliation checks to pass.
+The test flow is accepted when period 8 completes through Prefect task orchestration and remains idempotent. Production acceptance requires the FastAPI migrations to be present in `main`, both target tables to exist, the worker to run the intended pushed Prefect commit, every requested month to complete, row uniqueness/reconciliation checks to pass, and the aggregate flow to reach Prefect `Completed` after its Hermes completion notification.
 
 ## Idempotence and Recovery
 
@@ -99,6 +108,8 @@ Registration evidence: Prefect PR #3 merged as `67f6e0a2746758725481d8ce56f0cd1e
 
 Default-period evidence: Prefect PR #5 merged as `9ecef7e12eb949c1af7ff3d137458d4abd7b57ee`; deployment defaults are `year=2026`, `month=7`, `page_size=5000` on 2026-08-03. Test flow `thistle-shrew` completed period 8 with a 30-row short page followed by an empty page, reporting zero inserts and 30 updates.
 
+Production evidence: run `7e340323-cbee-4151-912d-47d46f9ba65a` completed month tasks for periods 1 through 7 with 457,120 inserted rows and exact per-period stored counts. The flow then failed only in `notify_hermes_task` because `datetime` was not JSON serializable. Identity checks found 457,120 distinct source IDs and zero null IDs. One unapproved July source voucher is unbalanced in the raw Kingdee payload; no typed/raw normalization discrepancy was found.
+
 ## Interfaces and Dependencies
 
 The implementation uses existing Prefect, requests, psycopg2, `mypackage`, and Hermes notification dependencies. Required worker configuration is a valid `XGD_TOKEN` and finance database connection through `KINGDEE_VOUCHER_DATABASE_URL` or the established `mypackage` configuration.
@@ -112,3 +123,4 @@ The public flow is `kingdee_voucher_journal_flow`, registered as `子流程-金�
 - 2026-08-03: Recorded the merged Prefect release, worker credential configuration, systemd restart, and READY manual-trigger deployment evidence.
 - 2026-08-03: Added the user-requested previous-month Quick Run behavior and documented empty-page termination as the safer pagination contract.
 - 2026-08-03: Recorded merged PR #5, deployment version `9ecef7e1`, verified previous-month defaults, and the successful short-page integration run.
+- 2026-08-03: Recorded the production January-through-July load, the post-completion notification serialization defect, the source-side unapproved-voucher reconciliation exception, and the ISO timestamp hotfix plan.
