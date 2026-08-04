@@ -14,6 +14,7 @@ Prefect must stop reading or writing the stored in-transit fields `order_amount`
 - [x] (2026-08-04 09:44Z) Removed the inventory-impairment dependency on stored order amount.
 - [x] (2026-08-04 09:44Z) Updated focused tests, bootstrap SQL, example notebook, and workflow documentation.
 - [x] (2026-08-04 09:44Z) Passed all 90 unit tests, scoped pre-commit, JSON validation, and diff validation without triggering database-writing flows.
+- [x] (2026-08-04 09:53Z) Merged PR #10 into `session/prefect` as `35e4a51` and reran all 90 unit tests from the integrated branch.
 
 ## Surprises & Discoveries
 
@@ -33,11 +34,11 @@ Prefect must stop reading or writing the stored in-transit fields `order_amount`
 
 ## Outcomes & Retrospective
 
-The Prefect code is locally complete and compatible with both the pre-migration schema and the post-migration schema. It has not been deployed or used to trigger a database-writing flow.
+The Prefect code is integrated into `session/prefect` and compatible with both the pre-migration and post-migration schemas. All 90 unit tests pass from the merged branch. No worker restart, deployment registration, database-writing flow, or production data change was performed; those operational actions were outside the authorized scope and require separate approval.
 
 ## Context and Orientation
 
-`modules/report_collection/tasks/report_tasks.py` gathers monthly Excel sheets. `modules/data_import/tasks/data_import_tasks.py` writes them to fact tables. `modules/bus_line_staging/tasks/asset_tasks.py` prepares editable business-line staging rows using the Chinese schema in `modules/bus_line_staging/utils.py`. `modules/bus_line_cal/tasks/asset_tasks.py` writes the final business-line fact table. `modules/inventory_impairment/tasks/inventory_impairment_tasks.py` performs quarterly impairment calculations. The coordinated application and database work is tracked in the FastAPI worktree plan with the same filename.
+`modules/report_collection/tasks/report_tasks.py` gathers monthly Excel sheets. `modules/data_import/tasks/data_import_tasks.py` writes them to fact tables. `modules/bus_line_staging/tasks/asset_tasks.py` prepares editable business-line staging rows using the Chinese schema in `modules/bus_line_staging/utils.py`. `modules/bus_line_cal/tasks/asset_tasks.py` writes the final business-line fact table. `modules/inventory_impairment/tasks/inventory_impairment_tasks.py` performs quarterly impairment calculations. The coordinated application and database work is retained in the FastAPI repository at `.agent/plans/archive/2026-08-04-in-transit-derived-amounts.md`.
 
 ## Plan of Work
 
@@ -66,7 +67,7 @@ Code changes are safe before the database migration because they ignore still-pr
 
 ## Artifacts and Notes
 
-The 2026-02 historical staging omission is a separate data correction and is not automatically rewritten by this code change.
+The 2026-02 historical staging omission is a separate data correction and is not automatically rewritten by this code change. Integration evidence is PR #10 with merge commit `35e4a5149de9a795be9e0796b55f0932aa5cc2fc`.
 
 ## Interfaces and Dependencies
 
@@ -76,3 +77,4 @@ No flow names, schedules, package exports, or deployment registrations change. T
 
 - 2026-08-04: Created after the user confirmed derived order amount and in-transit amount rules.
 - 2026-08-04: Recorded completed code changes and local validation; deployment remains pending authorization and integration.
+- 2026-08-04: Recorded integration into `session/prefect`, repeated 90-test validation, explicit production exclusions, and archived the completed plan.
