@@ -28,6 +28,14 @@ There is no committed pytest/unittest suite in the current tree. For changes, ru
 
 Recent history uses Conventional Commit prefixes such as `fix(ai_data_etl): ...`, `feat(contract_ocr): ...`, and `chore(contract_ocr): ...`; follow `type(scope): summary` with a concise imperative summary. PRs should describe the workflow impact, list affected modules and deployment scripts, mention required environment variables or database assumptions, link the issue/task, and include Prefect UI screenshots or command output when deployment behavior changes.
 
+## Git Worktree Layout
+
+- Keep `/root/prefect` as the fixed base repository path; do not move it or use it as a temporary feature, hotfix, release, documentation, or investigation worktree.
+- Store every temporary Prefect worktree under `/root/worktrees/prefect/<short-slug>`. Do not create temporary Prefect worktrees directly under `/root`.
+- Create task branches from the latest intended remote integration branch and use pull requests for integration instead of committing directly to a long-lived branch.
+- After a pull request is merged, delete its remote topic branch. After confirming that the worktree has no uncommitted or unpushed work and is not being used by another task, remove it promptly with `git worktree remove <path>` and delete the local topic branch when safe.
+- Do not leave completed worktrees accumulated under either `/root` or `/root/worktrees/prefect`. If a worktree must be retained, document the concrete dirty, unpushed, unmerged, detached, or in-use reason.
+
 ## Security & Configuration Tips
 
 Keep secrets and environment-specific settings out of git. Use `.env`, `PREFECT_API_URL`, and documented systemd environment files for server configuration. Be careful with database writes, budget version parameters, and production worker restarts; validate on local or staging Prefect before updating production services.
