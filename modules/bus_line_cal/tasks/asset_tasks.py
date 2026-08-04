@@ -4,7 +4,6 @@ import os
 import sys
 
 import pandas as pd
-
 from prefect import task
 
 # 添加根目录到路径（prefect目录）
@@ -392,10 +391,7 @@ def process_inventory_on_way_task(
 
         # 需要应用比例的数值列
         inv_num_columns = [
-            "order_amount",
-            "total_payment_amount",
             "order_count",
-            "total_inventory_received",
             "unreceived_inventory",
         ]
 
