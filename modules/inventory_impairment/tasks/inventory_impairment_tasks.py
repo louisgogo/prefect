@@ -8,7 +8,6 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 from mypackage.utilities import connect_to_db
-
 from prefect import task
 
 AGING_AMOUNT_COLUMNS = [
@@ -47,7 +46,6 @@ IN_TRANSIT_COLUMNS = [
     "inv_cat",
     "order_date",
     "delivery_date",
-    "order_amount",
     "order_count",
     "unit_price",
     "exchange_rate",
@@ -236,7 +234,7 @@ def prepare_in_transit_detail(df_in_transit: pd.DataFrame) -> pd.DataFrame:
         default="missing",
     )
 
-    for column in ["order_amount", "order_count", "unit_price", "unreceived_inventory"]:
+    for column in ["order_count", "unit_price", "unreceived_inventory"]:
         result[column] = pd.to_numeric(result[column], errors="coerce")
     result["exchange_rate"] = pd.to_numeric(result["exchange_rate"], errors="coerce").fillna(1.0)
     result["transit_amount"] = (

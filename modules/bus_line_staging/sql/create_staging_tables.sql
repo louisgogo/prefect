@@ -121,7 +121,6 @@ CREATE TABLE IF NOT EXISTS public.staging_bus_in_transit_inventory (
     third_org VARCHAR(255),
     acct_period DATE,                -- 会计期间
     mat_name VARCHAR(255),           -- 物料名称 (mat_name)
-    order_amount DECIMAL(18, 4),     -- 订单金额 (order_amount)
     unique_lvl VARCHAR(255),
     year INT,                        -- 派生自 acct_period
     bus_line_name VARCHAR(255),

@@ -17,7 +17,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-
 from prefect import task
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -177,9 +176,7 @@ TARGET_COLUMNS = {
         "物料编码",
         "物料名称",
         "订单金额",
-        "累计付款金额",
         "订单数量",
-        "累计入库数量",
         "未入库数量",
         "单价",
         "币别",
@@ -665,10 +662,17 @@ def _process_zaitu_cunhuo(df, filename, rel_path, matched_sheet, last_month_star
         df["交货日期"] = pd.to_datetime(df["交货日期"], errors="coerce")
 
     # 数值列类型转换
-    num_cols = ["汇率", "单价", "累计入库数量", "订单数量", "累计付款金额", "订单金额"]
+    num_cols = ["汇率", "单价", "订单数量", "未入库数量"]
     for col in num_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # 订单金额是派生展示字段，不再沿用或落库存量文件中的手工值。
+    if "订单数量" in df.columns and "单价" in df.columns:
+        df["订单金额"] = df["订单数量"] * df["单价"]
+    for obsolete_col in ["累计付款金额", "累计入库数量"]:
+        if obsolete_col in df.columns:
+            df = df.drop(columns=[obsolete_col])
 
     # 删除验证列
     if "验证" in df.columns:

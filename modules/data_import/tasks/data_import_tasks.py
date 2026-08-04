@@ -13,14 +13,25 @@ from mypackage.utilities import (
     update_full_table,
     url_to_db,
 )
+from prefect import task
 from sqlalchemy import create_engine, text
 
-from prefect import task
+UNSTORED_COLUMNS_BY_TABLE = {
+    "fact_inventory_on_way": {
+        "order_amount",
+        "total_payment_amount",
+        "total_inventory_received",
+    },
+}
 
 # 添加根目录到路径
 sys.path.append(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 )
+
+
+def drop_unstored_columns(table_name: str, df: pd.DataFrame) -> pd.DataFrame:
+    return df.drop(columns=list(UNSTORED_COLUMNS_BY_TABLE.get(table_name, set())), errors="ignore")
 
 
 def _check_data_exists(
@@ -109,6 +120,7 @@ def update_data_by_date_range_task(
         replace_existing: 是否替换已存在的数据，默认 True
     """
     try:
+        df = drop_unstored_columns(table_name, df.copy())
         # 先检查 DataFrame 中是否有数据
         if df.empty:
             print(f"警告: {table_name} 的 DataFrame 为空，跳过更新操作（避免删除历史数据）")
@@ -361,7 +373,7 @@ def update_rd_data_task(
 
     for table_name, table_date_column, df_date_column in tables_config:
         if table_name in dfs:
-            df = dfs[table_name].copy()
+            df = drop_unstored_columns(table_name, dfs[table_name].copy())
             # 先检查 DataFrame 是否为空
             if df.empty:
                 print(f"⊘ 跳过 {table_name}（DataFrame 为空，无数据需要更新）")

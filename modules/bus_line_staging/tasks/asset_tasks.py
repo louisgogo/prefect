@@ -5,12 +5,22 @@ import numpy as np
 import pandas as pd
 from mypackage.mapping import reverse_combined_column_mapping
 from mypackage.utilities import connect_to_db
-
 from prefect import task
 
-# 导入本地配置
 from ..config import get_bus_lines, groups_frontend
 from ..utils import insert_to_staging_table
+
+
+def select_in_transit_inventory_rows(df: pd.DataFrame) -> pd.DataFrame:
+    unreceived = pd.to_numeric(df["未入库数量"], errors="coerce").fillna(0)
+    return df[(df["业务线"].isin(["无", "小POS"])) & unreceived.ne(0)].copy()
+
+
+def calculate_in_transit_order_amount(df: pd.DataFrame) -> pd.Series:
+    unreceived = pd.to_numeric(df["未入库数量"], errors="coerce")
+    unit_price = pd.to_numeric(df["单价"], errors="coerce")
+    exchange_rate = pd.to_numeric(df["汇率"], errors="coerce").fillna(1)
+    return unreceived * unit_price * exchange_rate
 
 
 @task(name="4-存货应收拆分", log_prints=True)
@@ -200,14 +210,14 @@ def run_inv_ar_split_task(date_range, batch_id):
             df_ar = pd.DataFrame()
 
         # 3. 在途存货数据
-        # 根据示例：筛选业务线为'无'或'小POS'的数据，删除订单金额为0的数据（SQL中过滤）
+        # 只保留仍有未入库数量的在途记录；订单金额不再作为源字段或筛选条件。
         print("正在获取在途存货数据...")
         cur.execute(
             f"""SELECT * FROM fact_inventory_on_way
             WHERE unique_lvl NOT LIKE '%无归属%'
             AND acct_period IN ({date_list})
             AND unique_lvl IN ({levels_str})
-            AND order_amount != 0"""
+            AND COALESCE(unreceived_inventory, 0) <> 0"""
         )
         df_transit = pd.DataFrame(
             cur.fetchall(),
@@ -219,10 +229,8 @@ def run_inv_ar_split_task(date_range, batch_id):
         df_transit_org = pd.merge(
             df_transit, df_org[["唯一层级", "业务线", "分组简称"]], how="left", on="唯一层级"
         )
-        # 筛选业务线为'无'或'小POS'的数据，删除订单金额为0的数据
-        df_transit_matched = df_transit_org[
-            (df_transit_org["业务线"].isin(["无", "小POS"])) & (df_transit_org["订单金额"] != 0)
-        ]
+        # 筛选业务线为“无”或“小POS”且仍有未入库数量的数据。
+        df_transit_matched = select_in_transit_inventory_rows(df_transit_org)
 
         # Get groups before dropping the column
         transit_groups = []
@@ -239,11 +247,7 @@ def run_inv_ar_split_task(date_range, batch_id):
                 "-", n=2, expand=True
             )
             # 计算在途订单金额：未入库数量 * 单价 * 汇率（汇率空白视为1；单价空白为赠品，结果为空）
-            df_transit_matched["在途订单金额"] = (
-                df_transit_matched["未入库数量"]
-                * df_transit_matched["单价"]
-                * df_transit_matched["汇率"].fillna(1)
-            )
+            df_transit_matched["在途订单金额"] = calculate_in_transit_order_amount(df_transit_matched)
             # 选择特定列，参考示例文件中的列选择
             df_transit = df_transit_matched[
                 [
@@ -260,11 +264,8 @@ def run_inv_ar_split_task(date_range, batch_id):
                     "存货类别",
                     "物料编码",
                     "物料名称",
-                    "订单金额",
                     "在途订单金额",
-                    "累计付款金额",
                     "订单数量",
-                    "累计入库数量",
                     "未入库数量",
                     "交货日期",
                     "会计期间",
