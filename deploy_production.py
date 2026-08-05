@@ -4,8 +4,11 @@ import os
 import sys
 from datetime import datetime
 
+from prefect.client.schemas.schedules import CronSchedule
+
 from modules import (
     budget_update_flow,
+    business_data_refresh_flow,
     business_line_profit_flow,
     calculate_shared_rate_flow,
     data_import_flow,
@@ -149,6 +152,18 @@ if __name__ == "__main__":
         tags=["金蝶", "凭证序时簿", "月度任务", "手动触发", "财务写入"],
         description="快速执行默认同步上个自然月；也可自定义单月或月份列表，按分录稳定标识幂等写库。",
         parameters=voucher_defaults,
+    )
+
+    print("\n" + "=" * 60)
+    print("业报基础数据更新子流程 - 生产环境注册")
+    print("=" * 60)
+    print("计划执行：每天06:00（Asia/Shanghai）；也支持业报收集界面按数据集手工触发。")
+    business_data_refresh_flow.serve(
+        name="子流程-业报基础数据更新",
+        schedule=CronSchedule(cron="0 6 * * *", timezone="Asia/Shanghai"),
+        parameters={"datasets": None, "requested_by": None},
+        tags=["业报收集", "基础数据", "每日任务", "手动触发", "财务写入"],
+        description="每日06:00自动更新客户、物料、研发项目、供应商和收单指标；也支持业报编辑人员按数据集手工更新。",
     )
 
     print("\n" + "=" * 60)

@@ -9,6 +9,7 @@ from multiprocessing import Process
 from modules import (
     ai_data_etl_flow,
     budget_update_flow,
+    business_data_refresh_flow,
     business_line_profit_flow,
     calculate_shared_rate_flow,
     data_import_flow,
@@ -376,6 +377,16 @@ def deploy_kingdee_voucher_journal_flow():
     )
 
 
+def deploy_business_data_refresh_flow():
+    """部署业报基础数据更新本地测试流程。"""
+    business_data_refresh_flow.serve(
+        name="业报基础数据更新-本地测试",
+        parameters={"datasets": None, "requested_by": None},
+        tags=["本地测试", "业报收集", "基础数据", "财务写入"],
+        description="本地测试客户、物料、研发项目、供应商和收单指标的统一安全更新。",
+    )
+
+
 if __name__ == "__main__":
     print("开始部署流程...")
     print("确保已启动 Prefect Server：prefect server start")
@@ -401,6 +412,7 @@ if __name__ == "__main__":
     process16 = Process(target=deploy_rd_project_profitability_flow)
     process17 = Process(target=deploy_fone_income_expense_refresh_flow)
     process18 = Process(target=deploy_kingdee_voucher_journal_flow)
+    process19 = Process(target=deploy_business_data_refresh_flow)
 
     process1.start()
     time.sleep(1)
@@ -437,6 +449,8 @@ if __name__ == "__main__":
     process17.start()
     time.sleep(1)
     process18.start()
+    time.sleep(1)
+    process19.start()
 
     # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
@@ -468,6 +482,7 @@ if __name__ == "__main__":
             process16,
             process17,
             process18,
+            process19,
         ]:
             p.terminate()
             p.join()
