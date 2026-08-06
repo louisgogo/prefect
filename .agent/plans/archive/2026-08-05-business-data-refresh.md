@@ -19,7 +19,9 @@ The observable result is a durable flow with per-dataset task states and aggrega
 - [x] (2026-08-05 09:31Z) Coordinated the FastAPI schema, status/trigger API, editor permission gate, supplier validation, and business-report UI integration.
 - [x] (2026-08-06 03:20Z) Rechecked the production worker runtime: Kingdee tokens are configured, while SQL Server/Oracle credentials and drivers are absent.
 - [x] (2026-08-06 03:20Z) Changed the scheduled server/production default to `supplier` only so the daily run cannot fail four unconfigured datasets.
-- [ ] Merge the Prefect pull request to `session/prefect`, restart the authorized production worker after the FastAPI schema migration, and verify a selected `supplier` run.
+- [x] (2026-08-06 03:20Z) Merged PR #12 to `session/prefect`, restarted `prefect-workers`, and registered `业报基础数据更新/子流程-业报基础数据更新` with the supplier-only daily default.
+- [x] (2026-08-06 03:22Z) Diagnosed a pre-business parameter validation failure, merged PR #13 to resolve delayed typing annotations, and added direct Prefect parameter-model coverage.
+- [x] (2026-08-06 03:23Z) Completed production supplier flow run `f079cf92-1212-44b3-8ab1-20736856ae57`: 25,649 target rows, 25,586 active rows, one requested dataset completed, zero failed datasets.
 
 ## Surprises & Discoveries
 
@@ -63,7 +65,9 @@ The observable result is a durable flow with per-dataset task states and aggrega
 
 ## Outcomes & Retrospective
 
-Implementation and focused validation are complete. The selected supplier path fetched 25,645 Holdings rows and wrote the same count to `test_mydb` twice, with 25,582 active rows and zero missing codes across the test inventory-in-transit population. The production rollout is now authorized by the user's 2026-08-06 request, but the worker restart and selected production run remain pending until the FastAPI schema migration is installed. Full customer/material/R&D/acquiring execution still awaits worker credentials and the SQL Server ODBC runtime.
+The supplier path is deployed and operational. Test synchronization wrote 25,645 rows with 25,582 active; production synchronization wrote 25,649 rows with 25,586 active and covered all 324 production inventory-in-transit supplier codes. The deployment is READY, scheduled daily at 06:00 Asia/Shanghai, and defaults to `datasets=['supplier']`. Full customer/material/R&D/acquiring execution still awaits worker credentials, Python dependencies, and the SQL Server ODBC runtime.
+
+The first production run exposed a deployment-only issue: `from __future__ import annotations` left `List` unresolved in Prefect's subprocess Pydantic model. The run failed before `_begin_run`, so no database state changed. Removing delayed evaluation and testing `business_data_refresh_flow.validate_parameters(...)` fixed the issue; the selected retry then completed cleanly.
 
 ## Context and Orientation
 
@@ -133,3 +137,4 @@ Credentials must be provided only by the worker environment. Expected configurat
 - 2026-08-05: Initial plan created after the user approved the unified five-dataset flow, daily schedule, and business-report self-service UI design.
 - 2026-08-05: Completed implementation and supplier-path test validation. Recorded the remaining operational prerequisite: configure source credentials and a SQL Server ODBC driver before activating all datasets.
 - 2026-08-06: Production rollout was authorized for the supplier feature. Rechecked worker prerequisites and narrowed the scheduled default to suppliers so unconfigured source systems are never invoked automatically.
+- 2026-08-06: Completed and archived the rollout after the parameter-schema hotfix and successful production supplier synchronization.
