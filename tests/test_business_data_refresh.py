@@ -53,11 +53,19 @@ class BusinessDataRefreshTests(unittest.TestCase):
         self.assertEqual(validated["datasets"], ["supplier"])
         self.assertEqual(validated["requested_by"], "test-user")
 
-    def test_server_deployments_default_to_supplier_only(self):
+    def test_server_deployments_default_to_all_datasets(self):
         repository = Path(__file__).resolve().parents[1]
         for script_name in ("deploy_to_server.py", "deploy_production.py"):
             source = (repository / script_name).read_text(encoding="utf-8")
-            self.assertIn('parameters={"datasets": ["supplier"], "requested_by": None}', source)
+            for dataset in (
+                "customer",
+                "material",
+                "rd_project",
+                "supplier",
+                "acquiring_metrics",
+            ):
+                self.assertIn(f'"{dataset}"', source)
+            self.assertNotIn('parameters={"datasets": ["supplier"]', source)
 
     def test_dataset_selection_uses_canonical_order(self):
         self.assertEqual(
@@ -119,10 +127,13 @@ class BusinessDataRefreshTests(unittest.TestCase):
         with self.assertRaisesRegex(BusinessDataRefreshError, "空快照"):
             validate_snapshot_count("customer", 0, 100)
 
-    def test_acquiring_duplicate_dimension_key_is_rejected(self):
+    def test_acquiring_preserves_multiple_rows_for_the_same_dimension(self):
         row = ("202607", "01", "分公司", "P", "产品", "44", "4401", 1, 2, 3, 4)
-        with self.assertRaisesRegex(BusinessDataRefreshError, "重复业务维度键"):
-            validate_acquiring_rows("t_jl_area_merch_netin", [row, row])
+        validate_acquiring_rows("t_jl_area_merch_netin", [row, row])
+
+    def test_acquiring_rejects_source_column_mismatch(self):
+        with self.assertRaisesRegex(BusinessDataRefreshError, "列数与目标表不一致"):
+            validate_acquiring_rows("t_jl_area_merch_netin", [("202607",)])
 
     def test_supplier_api_paginates_until_empty_page(self):
         session = FakeSession([[{"FNumber": "S1"}], [{"FNumber": "S2"}], []])
