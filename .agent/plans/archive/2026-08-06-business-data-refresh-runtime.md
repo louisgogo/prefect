@@ -16,8 +16,11 @@ The Prefect deployment `子流程-业报基础数据更新` must refresh custome
 - [x] (2026-08-06 04:09Z) Backed up the eleven affected test tables and completed individual customer, material, R&D, supplier, and acquiring runs.
 - [x] (2026-08-06 04:09Z) Completed test combined run `e2adcc72-00b4-45ba-b7a1-c247731f6872`: five completed datasets and zero failures; it also served as an idempotent rerun after individual refreshes.
 - [x] (2026-08-06 04:09Z) Changed server/production 06:00 defaults from supplier-only to all five datasets and passed 11 focused tests plus pre-commit checks.
-- [ ] Back up production targets, deploy, verify each dataset and one combined production run.
-- [ ] Archive this plan after operational acceptance.
+- [x] (2026-08-06 04:18Z) Merged Prefect PR #15 at `8dd02c6`, restarted `prefect-workers`, and verified deployment version `8dd02c64` READY with all five default datasets.
+- [x] (2026-08-06 04:18Z) Backed up the eleven affected production tables before data changes.
+- [x] (2026-08-06 04:18Z) Completed production combined Flow Run `700f2e8d-25d5-4314-a138-be2a32e52ebf`: five completed datasets, zero failures, and exact source/target counts.
+- [x] (2026-08-06 04:18Z) Verified production counts, master-data key uniqueness, July 2026 acquiring watermark, complete in-transit supplier coverage, and active services.
+- [x] (2026-08-06 04:18Z) Archived this completed plan.
 
 ## Surprises & Discoveries
 
@@ -40,7 +43,9 @@ The Prefect deployment `子流程-业报基础数据更新` must refresh custome
 
 ## Outcomes & Retrospective
 
-Implementation and rollout are in progress.
+The production worker now has the Oracle and SQL Server runtime dependencies and root-only environment configuration needed for all five sources. Prefect PR #15 is merged at `8dd02c6`; the deployment is READY and defaults its daily 06:00 run to all five datasets. Test and production combined runs both completed five datasets with zero failures. Production contains 67,096 unique customers, 103,569 unique materials, 663 unique R&D projects, 25,649 source suppliers (25,586 active), and 319,071 acquiring rows at watermark `202607`; all current in-transit supplier codes are covered.
+
+The legacy notebook still contains an embedded credential and should be retired, followed by credential rotation coordinated with the SQL Server and Oracle source owners. That security follow-up is separate from the completed refresh rollout; no credential value was committed or retained in this plan.
 
 ## Context and Orientation
 
@@ -48,7 +53,7 @@ Implementation and rollout are in progress.
 
 ## Plan of Work
 
-Inspect source connectors and target safety checks. Add a small, testable connection preflight and, if required, a SQL Server connector fallback that preserves row shape and transaction behavior. Ensure every raised error is concise, includes dataset/source context, and excludes connection strings and secrets.
+Inspect source connectors and target safety checks. Use the existing explicit missing-variable and missing-driver errors, install the declared ODBC path, and verify real read-only connections without adding an unnecessary connector fallback. Ensure raised errors remain concise and do not echo connection strings or secrets.
 
 Install exact dependencies into `/root/prefect/venv` and configure the worker environment without committing values. Validate read-only source connectivity and source schemas before triggering target writes. Back up test targets, run datasets individually, compare row counts/uniqueness/watermarks, then run all five together and verify rerun behavior. Repeat with production backups and acceptance checks under the user's explicit production authorization.
 
@@ -58,7 +63,7 @@ Work in `/root/worktrees/prefect/business-data-refresh-runtime` for source chang
 
 ## Validation and Acceptance
 
-- Unit tests cover dataset resolution and source preflight/fallback behavior.
+- Unit tests cover dataset resolution, deployment defaults, row safety checks, and acquiring-row structure behavior.
 - Read-only connections can query the three SQL Server views and five Oracle tables plus the Kingdee supplier endpoint.
 - Each test dataset completes with expected nonzero row count, unique keys, acceptable count variance, and expected watermark.
 - A test combined run completes all five items, then an idempotent rerun also completes.
@@ -72,6 +77,10 @@ Use existing per-dataset PostgreSQL transactions and snapshot-count guards. Back
 ## Artifacts and Notes
 
 - Failed parameter-validation run: `e06c00f5-31fb-4960-8287-dc7b185559da`; no business task ran.
+- Test combined run: `e2adcc72-00b4-45ba-b7a1-c247731f6872`.
+- Production combined run: `700f2e8d-25d5-4314-a138-be2a32e52ebf`.
+- Test backup: `/root/fastapi-backups/20260806_1201_business_data_refresh_test/test_mydb_business_data.dump`.
+- Production backup: `/root/fastapi-backups/20260806_1215_business_data_refresh_prod/mydb_business_data.dump`.
 - Do not record credential values or source data samples in this file.
 
 ## Interfaces and Dependencies
@@ -84,3 +93,4 @@ Use existing per-dataset PostgreSQL transactions and snapshot-count guards. Back
 ## Revision Notes
 
 - 2026-08-06: Created after runtime audit found missing source configuration and drivers.
+- 2026-08-06: Recorded dependency/configuration rollout, test and production combined refreshes, production acceptance counts, credential-rotation follow-up, and archival.
