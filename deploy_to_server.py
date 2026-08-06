@@ -6,9 +6,12 @@ import time
 from datetime import datetime
 from multiprocessing import Process
 
+from prefect.client.schemas.schedules import CronSchedule
+
 from modules import (
     ai_data_etl_flow,
     budget_update_flow,
+    business_data_refresh_flow,
     business_line_profit_flow,
     calculate_shared_rate_flow,
     data_import_flow,
@@ -236,6 +239,17 @@ def _serve_kingdee_voucher_journal():
     )
 
 
+def _serve_business_data_refresh():
+    """注册业报基础数据每日更新和手工自助更新。"""
+    business_data_refresh_flow.serve(
+        name="子流程-业报基础数据更新",
+        schedule=CronSchedule(cron="0 6 * * *", timezone="Asia/Shanghai"),
+        parameters={"datasets": ["supplier"], "requested_by": None},
+        tags=["业报收集", "基础数据", "每日任务", "手动触发", "财务写入"],
+        description="每日06:00默认更新供应商主数据；也支持业报编辑人员按数据集手工更新其他已配置数据源。",
+    )
+
+
 def deploy_to_remote_server():
     """
     从本地推送流程到远程 Prefect Server
@@ -300,6 +314,7 @@ def deploy_to_remote_server():
     process16 = Process(target=_serve_rd_project_profitability)
     process17 = Process(target=_serve_fone_income_expense_refresh)
     process18 = Process(target=_serve_kingdee_voucher_journal)
+    process19 = Process(target=_serve_business_data_refresh)
 
     process1.start()
     time.sleep(1)
@@ -336,6 +351,8 @@ def deploy_to_remote_server():
     process17.start()
     time.sleep(1)
     process18.start()
+    time.sleep(1)
+    process19.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -371,6 +388,7 @@ def deploy_to_remote_server():
             process16,
             process17,
             process18,
+            process19,
         ]:
             p.terminate()
             p.join()

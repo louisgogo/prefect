@@ -8,6 +8,9 @@ from .ai_data_etl.flows.ai_data_etl_flow import ai_data_etl_flow
 from .budget_update.flows.budget_update_flow import budget_update_flow
 from .bus_line_cal.flows.business_line_profit_flow import business_line_profit_flow
 
+# 业报基础数据更新流程
+from .business_data_refresh.flows.business_data_refresh_flow import business_data_refresh_flow
+
 # 数据导入流程
 from .data_import.flows.data_import_flow import data_import_flow
 
@@ -54,6 +57,7 @@ __all__ = [
     "inventory_impairment_flow",
     "kingdee_voucher_journal_flow",
     "budget_update_flow",
+    "business_data_refresh_flow",
     "org_sync_flow",
     "profit_refresh_flow",
     "rd_project_profitability_flow",
