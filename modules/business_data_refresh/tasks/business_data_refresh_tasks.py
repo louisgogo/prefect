@@ -691,15 +691,9 @@ def _normalize_acquiring_value(value: Any) -> Any:
 def validate_acquiring_rows(table: str, rows: Sequence[Tuple[Any, ...]]) -> None:
     if not rows:
         raise BusinessDataRefreshError(f"{table} 外部源返回空快照")
-    dimension_count = 7 if table.startswith("t_jl_area_") else 5
-    keys = set()
     for row in rows:
         if len(row) != len(ACQUIRING_TABLE_COLUMNS[table]):
             raise BusinessDataRefreshError(f"{table} 返回列数与目标表不一致")
-        key = tuple(clean_optional(value) for value in row[:dimension_count])
-        if key in keys:
-            raise BusinessDataRefreshError(f"{table} 返回重复业务维度键：{key}")
-        keys.add(key)
 
 
 def _replace_acquiring_snapshots(
