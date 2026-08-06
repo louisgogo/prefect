@@ -157,13 +157,13 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("业报基础数据更新子流程 - 生产环境注册")
     print("=" * 60)
-    print("计划执行：每天06:00（Asia/Shanghai）；也支持业报收集界面按数据集手工触发。")
+    print("计划执行：每天06:00（Asia/Shanghai）默认更新供应商；也支持业报收集界面按数据集手工触发。")
     business_data_refresh_flow.serve(
         name="子流程-业报基础数据更新",
         schedule=CronSchedule(cron="0 6 * * *", timezone="Asia/Shanghai"),
-        parameters={"datasets": None, "requested_by": None},
+        parameters={"datasets": ["supplier"], "requested_by": None},
         tags=["业报收集", "基础数据", "每日任务", "手动触发", "财务写入"],
-        description="每日06:00自动更新客户、物料、研发项目、供应商和收单指标；也支持业报编辑人员按数据集手工更新。",
+        description="每日06:00默认更新供应商主数据；也支持业报编辑人员按数据集手工更新其他已配置数据源。",
     )
 
     print("\n" + "=" * 60)

@@ -17,7 +17,9 @@ The observable result is a durable flow with per-dataset task states and aggrega
 - [x] (2026-08-05 09:31Z) Added five dataset tasks and the unified flow with durable per-dataset state and partial-failure reporting.
 - [x] (2026-08-05 09:31Z) Exported the flow and registered `子流程-业报基础数据更新` in all three deployment scripts with the 06:00 Asia/Shanghai schedule.
 - [x] (2026-08-05 09:31Z) Coordinated the FastAPI schema, status/trigger API, editor permission gate, supplier validation, and business-report UI integration.
-- [ ] Push and merge the Prefect pull request to `session/prefect`; production worker registration/restart remains explicitly unauthorized.
+- [x] (2026-08-06 03:20Z) Rechecked the production worker runtime: Kingdee tokens are configured, while SQL Server/Oracle credentials and drivers are absent.
+- [x] (2026-08-06 03:20Z) Changed the scheduled server/production default to `supplier` only so the daily run cannot fail four unconfigured datasets.
+- [ ] Merge the Prefect pull request to `session/prefect`, restart the authorized production worker after the FastAPI schema migration, and verify a selected `supplier` run.
 
 ## Surprises & Discoveries
 
@@ -55,9 +57,13 @@ The observable result is a durable flow with per-dataset task states and aggrega
   Rationale: This is the user-approved self-service and automatic-refresh boundary. Read-only users remain excluded, and a global concurrency lock prevents duplicate runs.
   Date/Author: 2026-08-05 / Codex
 
+- Decision: Default the scheduled server and production deployment to `supplier` until the other source runtimes are configured.
+  Rationale: The production worker has the Kingdee token needed by suppliers, but lacks the SQL Server/Oracle credentials, `pyodbc`, `oracledb`, and a SQL Server ODBC driver. A supplier-only default preserves the requested daily synchronization without creating predictable partial failures. Explicit manual dataset selection remains available for later rollout.
+  Date/Author: 2026-08-06 / Codex
+
 ## Outcomes & Retrospective
 
-Implementation and focused validation are complete. The selected supplier path fetched 25,645 Holdings rows and wrote the same count to `test_mydb` twice, with 25,582 active rows and zero missing codes across the test inventory-in-transit population. No Prefect deployment was registered and no production worker was restarted. Full customer/material/R&D/acquiring execution awaits worker credentials and the SQL Server ODBC runtime.
+Implementation and focused validation are complete. The selected supplier path fetched 25,645 Holdings rows and wrote the same count to `test_mydb` twice, with 25,582 active rows and zero missing codes across the test inventory-in-transit population. The production rollout is now authorized by the user's 2026-08-06 request, but the worker restart and selected production run remain pending until the FastAPI schema migration is installed. Full customer/material/R&D/acquiring execution still awaits worker credentials and the SQL Server ODBC runtime.
 
 ## Context and Orientation
 
@@ -89,7 +95,7 @@ All commands run in `/root/worktrees/prefect/business-data-refresh` with `source
 
 1. Add `modules/business_data_refresh/tasks/business_data_refresh_tasks.py`, flow files, package exports, and unit tests.
 2. Add `oracledb` and `pyodbc` to `requirements.txt`; verify the host has a compatible SQL Server ODBC driver before a live run.
-3. Register `子流程-业报基础数据更新` in `deploy_local.py`, `deploy_to_server.py`, and `deploy_production.py`. The server/production registration uses daily 06:00 Asia/Shanghai scheduling and defaults to all datasets.
+3. Register `子流程-业报基础数据更新` in `deploy_local.py`, `deploy_to_server.py`, and `deploy_production.py`. The server/production registration uses daily 06:00 Asia/Shanghai scheduling and defaults to `supplier`; the local registration retains all-dataset development behavior.
 4. Run focused unit tests and pre-commit checks. Validate imports and inspect the flow/deployment parameter schema.
 5. Commit and push `feature/business-data-refresh`, open a ready pull request to `session/prefect`, merge with a merge commit when checks allow, and delete the remote topic branch.
 6. After the FastAPI migration reaches test, update the test Prefect runtime branch/deployment without restarting production workers, trigger a selected-dataset or approved full test run, inspect Flow/Task Runs, and compare database results.
@@ -125,4 +131,5 @@ Credentials must be provided only by the worker environment. Expected configurat
 ## Revision Notes
 
 - 2026-08-05: Initial plan created after the user approved the unified five-dataset flow, daily schedule, and business-report self-service UI design.
-- 2026-08-05: Completed implementation and supplier-path test validation. Recorded the remaining operational prerequisite: configure source credentials and a SQL Server ODBC driver before activating the unified deployment.
+- 2026-08-05: Completed implementation and supplier-path test validation. Recorded the remaining operational prerequisite: configure source credentials and a SQL Server ODBC driver before activating all datasets.
+- 2026-08-06: Production rollout was authorized for the supplier feature. Rechecked worker prerequisites and narrowed the scheduled default to suppliers so unconfigured source systems are never invoked automatically.

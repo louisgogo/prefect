@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from modules.business_data_refresh.flows.business_data_refresh_flow import (
@@ -44,6 +45,12 @@ class FakeSession:
 
 
 class BusinessDataRefreshTests(unittest.TestCase):
+    def test_server_deployments_default_to_supplier_only(self):
+        repository = Path(__file__).resolve().parents[1]
+        for script_name in ("deploy_to_server.py", "deploy_production.py"):
+            source = (repository / script_name).read_text(encoding="utf-8")
+            self.assertIn('parameters={"datasets": ["supplier"], "requested_by": None}', source)
+
     def test_dataset_selection_uses_canonical_order(self):
         self.assertEqual(
             resolve_datasets(["supplier", "customer"]),
