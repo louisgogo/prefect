@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from modules.business_data_refresh.flows.business_data_refresh_flow import (
+    business_data_refresh_flow,
     execute_dataset_runners,
     resolve_datasets,
 )
@@ -45,6 +46,13 @@ class FakeSession:
 
 
 class BusinessDataRefreshTests(unittest.TestCase):
+    def test_prefect_flow_parameter_model_resolves_typing_annotations(self):
+        validated = business_data_refresh_flow.validate_parameters(
+            {"datasets": ["supplier"], "requested_by": "test-user"}
+        )
+        self.assertEqual(validated["datasets"], ["supplier"])
+        self.assertEqual(validated["requested_by"], "test-user")
+
     def test_server_deployments_default_to_supplier_only(self):
         repository = Path(__file__).resolve().parents[1]
         for script_name in ("deploy_to_server.py", "deploy_production.py"):
