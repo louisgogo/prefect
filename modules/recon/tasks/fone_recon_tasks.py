@@ -19,7 +19,6 @@ FONE_PROXY_BASE_URL = os.environ.get(
 FONE_PROXY_TOKEN_ENV = "AIHUB_FONE_API_TOKEN"
 
 APP_ID = "62908e353a35730f118e4e5c"
-APP_USER_ID = "6a0183b79e00504b378bc0f0"
 FONE_RECON_CONTENT_ID = "66f3691df6f9db36f4cc9e32"
 FONE_RECON_SCRIPT_NAME = "0501-获取ERP科目余额表-WebApi"
 FONE_RECON_OPERATE_SOURCE_NAME = "Prefect-往来数据"
@@ -200,9 +199,9 @@ def execute_fone_recon_script_task(start_date: str, end_date: str) -> Dict[str, 
         raise RuntimeError("FONE 往来脚本内容响应不是有效 JSON") from exc
     script_text = _compile_fone_recon_script(definition, start_date, end_date)
     task_id = f"script_prefect_recon_{uuid.uuid4().hex}"
+    # appUserId 由 AIHub 第三方绑定自动注入；调用方传入会触发 82403 字段冲突。
     payload = {
         "appID": APP_ID,
-        "appUserId": APP_USER_ID,
         "scriptText": script_text,
         "context": "",
         "fContentId": FONE_RECON_CONTENT_ID,

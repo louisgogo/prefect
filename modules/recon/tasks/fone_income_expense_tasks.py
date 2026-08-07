@@ -15,7 +15,6 @@ from prefect import task
 
 from .fone_recon_tasks import APP_ID, FONE_PROXY_BASE_URL, _fone_proxy_headers, _is_fone_api_success
 
-FONE_DETAIL_APP_USER_ID = "62b570fd90fc832e38480750"
 FONE_DETAIL_PERMISSION_USER_ENV = "FONE_DETAIL_PERMISSION_USER"
 
 FONE_DETAIL_SCRIPTS = {
@@ -341,9 +340,9 @@ def execute_fone_income_expense_script_task(
         permission_user=permission_user,
     )
     task_id = f"script_prefect_{detail_type}_{year}_{month:02d}_{uuid.uuid4().hex}"
+    # appUserId 由 AIHub 第三方绑定自动注入；调用方传入会触发 82403 字段冲突。
     payload = {
         "appID": APP_ID,
-        "appUserId": FONE_DETAIL_APP_USER_ID,
         "scriptText": script_text,
         "context": "",
         "fContentId": spec["content_id"],
