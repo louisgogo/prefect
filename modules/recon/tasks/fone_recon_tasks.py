@@ -6,6 +6,7 @@
 import json
 import os
 import re
+import time
 import uuid
 from datetime import date
 from typing import Any, Dict
@@ -22,6 +23,8 @@ APP_ID = "62908e353a35730f118e4e5c"
 FONE_RECON_CONTENT_ID = "66f3691df6f9db36f4cc9e32"
 FONE_RECON_SCRIPT_NAME = "0501-获取ERP科目余额表-WebApi"
 FONE_RECON_OPERATE_SOURCE_NAME = "Prefect-往来数据"
+FONE_RECON_VERIFY_TIMEOUT_SECONDS = int(os.environ.get("FONE_RECON_VERIFY_TIMEOUT_SECONDS", "900"))
+FONE_RECON_VERIFY_INTERVAL_SECONDS = int(os.environ.get("FONE_RECON_VERIFY_INTERVAL_SECONDS", "15"))
 
 _VARIABLE_MARKER_PATTERN = re.compile(r"@([A-Za-z0-9_\u3400-\u9fff]+)@")
 
@@ -175,6 +178,111 @@ def _http_error_summary(response: requests.Response) -> str:
     return summary
 
 
+def _read_fone_recon_target_state(target_date: str) -> Dict[str, Any]:
+    """读取 Fone2BI_IntCommCheck 指定期间的行数和 ID 范围。"""
+    from mypackage.utilities import engine_to_mysql
+    from sqlalchemy import text
+
+    engine = engine_to_mysql()
+    with engine.connect() as connection:
+        row = (
+            connection.execute(
+                text(
+                    """
+                SELECT COUNT(*) AS row_count, MIN(id) AS min_id, MAX(id) AS max_id
+                FROM Fone2BI_IntCommCheck
+                WHERE `日期` = :target_date
+                """
+                ),
+                {"target_date": target_date},
+            )
+            .mappings()
+            .one()
+        )
+    return {
+        "row_count": int(row["row_count"]),
+        "min_id": row["min_id"],
+        "max_id": row["max_id"],
+    }
+
+
+def _fone_recon_target_refreshed(
+    previous_state: Dict[str, Any], current_state: Dict[str, Any]
+) -> bool:
+    """目标期间必须非空，且相对执行前状态发生变化。"""
+    if current_state["row_count"] <= 0:
+        return False
+    if previous_state["row_count"] <= 0:
+        return True
+    previous_signature = (
+        previous_state["row_count"],
+        previous_state["min_id"],
+        previous_state["max_id"],
+    )
+    current_signature = (
+        current_state["row_count"],
+        current_state["min_id"],
+        current_state["max_id"],
+    )
+    return current_signature != previous_signature
+
+
+def _wait_for_fone_recon_target_refresh(
+    target_date: str,
+    previous_state: Dict[str, Any],
+) -> Dict[str, Any]:
+    """轮询业务目标表，直到刷新后的状态连续两次保持稳定。"""
+    deadline = time.monotonic() + FONE_RECON_VERIFY_TIMEOUT_SECONDS
+    next_progress_log = time.monotonic()
+    stable_candidate = None
+    while True:
+        current_state = _read_fone_recon_target_state(target_date)
+        if _fone_recon_target_refreshed(previous_state, current_state):
+            if stable_candidate == current_state:
+                return current_state
+            stable_candidate = current_state
+        else:
+            stable_candidate = None
+        now = time.monotonic()
+        if now >= deadline:
+            raise RuntimeError(
+                "等待 FONE 目标表刷新完成超时: "
+                f"target_date={target_date}, before={previous_state}, current={current_state}"
+            )
+        if now >= next_progress_log:
+            print(
+                "FONE 脚本仍在后台执行，等待目标表刷新: "
+                f"target_date={target_date}, current_rows={current_state['row_count']}"
+            )
+            next_progress_log = now + 60
+        time.sleep(min(FONE_RECON_VERIFY_INTERVAL_SECONDS, max(0, deadline - time.monotonic())))
+
+
+def _mark_fone_script_backend_running(task_id: str, headers: Dict[str, str]) -> None:
+    """调用 FONE 原生后台运行接口，让长任务脱离已超时的前台请求。"""
+    try:
+        response = requests.post(
+            f"{FONE_PROXY_BASE_URL}/api/Script/BackendRunning",
+            json={"appId": APP_ID, "taskId": task_id},
+            headers=headers,
+            timeout=30,
+        )
+        response.raise_for_status()
+        try:
+            response_data = response.json()
+        except ValueError:
+            print("[WARN] FONE 后台运行确认响应不是有效 JSON，将继续按目标表验证")
+            return
+        if not _is_fone_api_success(response_data):
+            print(
+                "[WARN] FONE 后台运行确认接口返回失败，将继续按目标表验证: "
+                f"status={response_data.get('status')}, message={response_data.get('message')}"
+            )
+    except requests.RequestException as exc:
+        details = _http_error_summary(exc.response) if exc.response is not None else str(exc)
+        print(f"[WARN] FONE 后台运行确认请求失败，将继续按目标表验证: {details}")
+
+
 @task(name="execute_fone_recon_script", log_prints=True, retries=0)
 def execute_fone_recon_script_task(start_date: str, end_date: str) -> Dict[str, Any]:
     """通过 AIHub FONE 代理执行 0501 往来对账脚本。"""
@@ -199,6 +307,7 @@ def execute_fone_recon_script_task(start_date: str, end_date: str) -> Dict[str, 
         raise RuntimeError("FONE 往来脚本内容响应不是有效 JSON") from exc
     script_text = _compile_fone_recon_script(definition, start_date, end_date)
     task_id = f"script_prefect_recon_{uuid.uuid4().hex}"
+    previous_target_state = _read_fone_recon_target_state(start_date)
     # appUserId 由 AIHub 第三方绑定自动注入；调用方传入会触发 82403 字段冲突。
     payload = {
         "appID": APP_ID,
@@ -223,6 +332,26 @@ def execute_fone_recon_script_task(start_date: str, end_date: str) -> Dict[str, 
             headers=headers,
             timeout=900,
         )
+        if response.status_code == 504:
+            print("AIHub 网关 60 秒超时，FONE 脚本可能仍在执行；" f"转后台并等待目标表刷新，task_id={task_id}")
+            _mark_fone_script_backend_running(task_id, headers)
+            target_state = _wait_for_fone_recon_target_refresh(
+                start_date,
+                previous_target_state,
+            )
+            print(
+                "FONE 后台脚本已通过目标表验证: " f"target_date={start_date}, rows={target_state['row_count']}"
+            )
+            return {
+                "api_success": True,
+                "task_id": task_id,
+                "script_status": 0,
+                "console_log_count": 0,
+                "warning_count": 1,
+                "error_count": 0,
+                "gateway_timeout_recovered": True,
+                "target_row_count": target_state["row_count"],
+            }
         response.raise_for_status()
     except requests.exceptions.Timeout as exc:
         raise RuntimeError("执行脚本请求超时，执行状态未知；请检查 FONE 运行记录后再决定是否重试") from exc
@@ -262,6 +391,12 @@ def execute_fone_recon_script_task(start_date: str, end_date: str) -> Dict[str, 
     if script_status != 0:
         raise RuntimeError(f"脚本内部状态非成功: status={script_status}")
 
+    target_state = _wait_for_fone_recon_target_refresh(
+        start_date,
+        previous_target_state,
+    )
+    print("FONE 往来目标表刷新验证通过: " f"target_date={start_date}, rows={target_state['row_count']}")
+
     return {
         "api_success": True,
         "task_id": task_id,
@@ -269,4 +404,6 @@ def execute_fone_recon_script_task(start_date: str, end_date: str) -> Dict[str, 
         "console_log_count": len(console_logs),
         "warning_count": len(warning_messages),
         "error_count": len(error_messages),
+        "gateway_timeout_recovered": False,
+        "target_row_count": target_state["row_count"],
     }
