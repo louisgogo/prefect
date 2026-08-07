@@ -76,7 +76,15 @@ class FoneProxyAuthTests(unittest.TestCase):
             fone_recon_tasks.requests,
             "post",
             side_effect=[content_response, execute_response],
-        ) as post_mock:
+        ) as post_mock, patch.object(
+            fone_recon_tasks,
+            "_read_fone_recon_target_state",
+            return_value={"row_count": 0, "min_id": None, "max_id": None},
+        ), patch.object(
+            fone_recon_tasks,
+            "_wait_for_fone_recon_target_refresh",
+            return_value={"row_count": 1, "min_id": 1, "max_id": 1},
+        ):
             result = fone_recon_tasks.execute_fone_recon_script_task.fn(
                 start_date="2026-05-01",
                 end_date="2026-05-31",
@@ -104,7 +112,77 @@ class FoneProxyAuthTests(unittest.TestCase):
         self.assertEqual(result["script_status"], 0)
         self.assertEqual(result["console_log_count"], 1)
         self.assertTrue(result["task_id"].startswith("script_prefect_recon_"))
+        self.assertFalse(result["gateway_timeout_recovered"])
+        self.assertEqual(result["target_row_count"], 1)
         self.assertNotIn("console_logs", result)
+
+    def test_recon_task_recovers_gateway_timeout_from_target_table(self):
+        definition = {
+            "variables": [
+                {"name": "开始日期", "value": "2026-01-01"},
+                {"name": "结束日期", "value": "2026-01-31"},
+            ],
+            "scriptText": "run(@开始日期@, @结束日期@);",
+        }
+        content_response = _Response(
+            {
+                "status": 0,
+                "isSuccess": True,
+                "data": {
+                    "appId": fone_recon_tasks.APP_ID,
+                    "data": json.dumps(definition),
+                },
+            }
+        )
+        gateway_timeout_response = _Response({}, status_code=504, text="Gateway Time-out")
+        backend_response = _Response({"status": 0, "isSuccess": True, "data": ""})
+        previous_state = {"row_count": 0, "min_id": None, "max_id": None}
+        refreshed_state = {"row_count": 423, "min_id": 100, "max_id": 522}
+
+        with patch.dict(
+            "os.environ", {"AIHUB_FONE_API_TOKEN": "proxy-token"}, clear=True
+        ), patch.object(
+            fone_recon_tasks.requests,
+            "post",
+            side_effect=[content_response, gateway_timeout_response, backend_response],
+        ) as post_mock, patch.object(
+            fone_recon_tasks,
+            "_read_fone_recon_target_state",
+            return_value=previous_state,
+        ), patch.object(
+            fone_recon_tasks,
+            "_wait_for_fone_recon_target_refresh",
+            return_value=refreshed_state,
+        ) as wait_mock:
+            result = fone_recon_tasks.execute_fone_recon_script_task.fn(
+                start_date="2026-07-01",
+                end_date="2026-07-31",
+            )
+
+        execution_payload = post_mock.call_args_list[1].kwargs["json"]
+        backend_payload = post_mock.call_args_list[2].kwargs["json"]
+        self.assertEqual(backend_payload["taskId"], execution_payload["taskId"])
+        self.assertEqual(backend_payload["appId"], fone_recon_tasks.APP_ID)
+        self.assertNotIn("appUserId", backend_payload)
+        wait_mock.assert_called_once_with("2026-07-01", previous_state)
+        self.assertTrue(result["gateway_timeout_recovered"])
+        self.assertEqual(result["target_row_count"], 423)
+
+    def test_recon_target_refresh_requires_nonempty_changed_state(self):
+        previous_state = {"row_count": 423, "min_id": 1, "max_id": 423}
+
+        self.assertFalse(
+            fone_recon_tasks._fone_recon_target_refreshed(
+                previous_state,
+                {"row_count": 423, "min_id": 1, "max_id": 423},
+            )
+        )
+        self.assertTrue(
+            fone_recon_tasks._fone_recon_target_refreshed(
+                previous_state,
+                {"row_count": 424, "min_id": 424, "max_id": 847},
+            )
+        )
 
     def test_compile_recon_script_rejects_missing_date_marker(self):
         definition = {
@@ -147,6 +225,10 @@ class FoneProxyAuthTests(unittest.TestCase):
             fone_recon_tasks.requests,
             "post",
             side_effect=[content_response, execute_response],
+        ), patch.object(
+            fone_recon_tasks,
+            "_read_fone_recon_target_state",
+            return_value={"row_count": 0, "min_id": None, "max_id": None},
         ):
             with self.assertRaisesRegex(
                 RuntimeError, "HTTP 400.*script validation failed"
