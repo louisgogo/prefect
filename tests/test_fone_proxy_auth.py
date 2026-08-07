@@ -98,6 +98,7 @@ class FoneProxyAuthTests(unittest.TestCase):
         self.assertIn('var 结束日期="2026-05-31";', payload["scriptText"])
         self.assertIn('var 数据流="stream-id";', payload["scriptText"])
         self.assertNotIn("@开始日期@", payload["scriptText"])
+        self.assertNotIn("appUserId", payload)
         self.assertEqual(payload["operateSourceName"], "Prefect-往来数据")
         self.assertEqual(payload["from"], "report")
         self.assertEqual(result["script_status"], 0)
@@ -226,7 +227,9 @@ throw e;
         )
         for call in post_mock.call_args_list:
             self.assertEqual(call.kwargs["headers"]["Authorization"], "Bearer proxy-token")
-        executed_script = post_mock.call_args_list[1].kwargs["json"]["scriptText"]
+        execution_payload = post_mock.call_args_list[1].kwargs["json"]
+        self.assertNotIn("appUserId", execution_payload)
+        executed_script = execution_payload["scriptText"]
         self.assertIn("run(实际数月, 实际数年, 数据流);", executed_script)
         self.assertIn("releaseLock();", executed_script)
         self.assertNotIn("generateExcel();", executed_script)
