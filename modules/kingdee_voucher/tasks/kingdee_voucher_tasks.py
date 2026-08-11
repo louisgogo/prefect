@@ -577,8 +577,29 @@ def _update_run_progress(
         )
 
 
-def _complete_run(connection, run_id: uuid.UUID) -> None:
+def _complete_run(
+    connection,
+    run_id: uuid.UUID,
+    year: int,
+    month: int,
+) -> int:
+    """Prune absent source rows and complete one authoritative period snapshot."""
+
     with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            DELETE FROM fact_gl_voucher_journal
+            WHERE fiscal_year = %s
+              AND fiscal_period = %s
+              AND last_synced_at < (
+                  SELECT started_at
+                  FROM kingdee_gl_voucher_sync_runs
+                  WHERE id = %s
+              )
+            """,
+            (year, month, str(run_id)),
+        )
+        deleted_rows = int(cursor.rowcount or 0)
         cursor.execute(
             """
             UPDATE kingdee_gl_voucher_sync_runs
@@ -589,6 +610,7 @@ def _complete_run(connection, run_id: uuid.UUID) -> None:
             (str(run_id),),
         )
     connection.commit()
+    return deleted_rows
 
 
 def _fail_run(connection, run_id: uuid.UUID, error: Exception) -> None:
@@ -693,7 +715,7 @@ def sync_kingdee_voucher_period_task(
 
             start_row += len(rows)
 
-        _complete_run(connection, run_id)
+        deleted_rows = _complete_run(connection, run_id, year, month)
         return {
             "run_id": str(run_id),
             "year": year,
@@ -702,6 +724,7 @@ def sync_kingdee_voucher_period_task(
             "source_rows": source_rows,
             "inserted_rows": inserted_rows,
             "updated_rows": updated_rows,
+            "deleted_rows": deleted_rows,
             "max_source_modified_at": (
                 max_source_modified_at.isoformat() if max_source_modified_at else None
             ),

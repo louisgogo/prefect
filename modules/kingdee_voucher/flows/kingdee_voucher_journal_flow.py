@@ -66,12 +66,13 @@ def kingdee_voucher_journal_flow(
             "source_rows": sum(int(item["source_rows"]) for item in results),
             "inserted_rows": sum(int(item["inserted_rows"]) for item in results),
             "updated_rows": sum(int(item["updated_rows"]) for item in results),
+            "deleted_rows": sum(int(item["deleted_rows"]) for item in results),
             "period_results": results,
         }
         logger.info(
             f"金蝶凭证序时簿同步完成：{year} 年第 {period_text} 期，"
             f"源数据 {summary['source_rows']} 行，新增 {summary['inserted_rows']} 行，"
-            f"更新 {summary['updated_rows']} 行"
+            f"更新 {summary['updated_rows']} 行，清理失效 {summary['deleted_rows']} 行"
         )
         notify_hermes_task(
             event="completed",
