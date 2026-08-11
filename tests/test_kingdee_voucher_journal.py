@@ -10,6 +10,7 @@ from modules.kingdee_voucher.tasks import kingdee_voucher_tasks as task_module
 from modules.kingdee_voucher.tasks.kingdee_voucher_tasks import (
     KingdeeVoucherSyncError,
     _boolean,
+    _complete_run,
     _request_page,
     _resolve_token,
     _start_run,
@@ -168,7 +169,7 @@ class VoucherPeriodTaskTests(unittest.TestCase):
             ) as request_page,
             patch.object(task_module, "_upsert_page", side_effect=[(2, 0), (1, 0)]),
             patch.object(task_module, "_update_run_progress") as update_progress,
-            patch.object(task_module, "_complete_run") as complete_run,
+            patch.object(task_module, "_complete_run", return_value=4) as complete_run,
         ):
             result = sync_kingdee_voucher_period_task.fn(
                 year=2026,
@@ -182,12 +183,35 @@ class VoucherPeriodTaskTests(unittest.TestCase):
         )
         self.assertEqual(result["source_rows"], 3)
         self.assertEqual(result["inserted_rows"], 3)
+        self.assertEqual(result["deleted_rows"], 4)
         self.assertEqual(result["max_source_modified_at"], "2026-08-31T12:00:00")
         self.assertEqual(update_progress.call_count, 2)
-        complete_run.assert_called_once_with(connection, "run-id")
+        complete_run.assert_called_once_with(connection, "run-id", 2026, 8)
         self.assertEqual(connection.commit.call_count, 2)
         session.close.assert_called_once_with()
         connection.close.assert_called_once_with()
+
+    def test_complete_run_prunes_only_absent_rows_in_requested_period(self):
+        cursor = MagicMock()
+        cursor.rowcount = 7
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        run_id = uuid.UUID("12345678-1234-5678-1234-567812345678")
+
+        deleted_rows = _complete_run(connection, run_id, 2026, 7)
+
+        self.assertEqual(deleted_rows, 7)
+        delete_sql, delete_params = cursor.execute.call_args_list[0].args
+        self.assertIn("DELETE FROM fact_gl_voucher_journal", delete_sql)
+        self.assertIn("fiscal_year = %s", delete_sql)
+        self.assertIn("fiscal_period = %s", delete_sql)
+        self.assertIn("last_synced_at <", delete_sql)
+        self.assertEqual(delete_params, (2026, 7, str(run_id)))
+        self.assertIn(
+            "UPDATE kingdee_gl_voucher_sync_runs",
+            cursor.execute.call_args_list[1].args[0],
+        )
+        connection.commit.assert_called_once_with()
 
 
 class VoucherFlowTests(unittest.TestCase):
@@ -201,6 +225,7 @@ class VoucherFlowTests(unittest.TestCase):
                 "source_rows": month,
                 "inserted_rows": 0,
                 "updated_rows": month,
+                "deleted_rows": month + 1,
             }
 
         period_task = MagicMock(side_effect=result_for_month)
@@ -225,6 +250,7 @@ class VoucherFlowTests(unittest.TestCase):
         )
         self.assertEqual(result["months"], [1, 3, 8])
         self.assertEqual(result["source_rows"], 12)
+        self.assertEqual(result["deleted_rows"], 15)
         self.assertEqual(
             [item.kwargs["event"] for item in notify.call_args_list], ["started", "completed"]
         )
