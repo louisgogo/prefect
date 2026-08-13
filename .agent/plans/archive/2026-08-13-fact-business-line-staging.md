@@ -13,8 +13,8 @@ The monthly deployment `主流程-业务线Staging抽取` must treat an explicit
 - [x] (2026-08-13 11:45Z) Routed explicit fact rows through a dedicated six-table restore task and prevented legacy extraction, income auto-fill, and prior-batch inheritance from overwriting them.
 - [x] (2026-08-13 12:05Z) Added focused tests and completed local compilation, diff, and targeted regression validation.
 - [x] (2026-08-13 07:30Z) Confirmed the paired FastAPI fact columns are present in test and production, both environments have zero pending manifest migrations, schema drift is zero, and map translation coverage is complete.
-- [ ] Publish the Prefect topic branch through a merge-commit PR to `session/prefect`, restart the systemd-managed workers, and confirm the deployment is registered from the merged commit.
-- [ ] Run the deployment for an explicit accounting period only after confirming the period has no active filling batch that would be disrupted; record the flow-run and database verification evidence.
+- [x] (2026-08-13 08:08Z) Merged Prefect PR #21 with merge commit `2f92c248`, restarted `prefect-workers.service`, and confirmed deployment version `2f92c248` is READY and polling.
+- [x] (2026-08-13 08:14Z) Completed the representative production run for 2026-06; flow run `d3f7a960-f895-475b-909d-3729f03fcf1a` generated READY batch `BLS-202606-005` without replacing the active FILLING batch.
 
 ## Surprises & Discoveries
 
@@ -23,6 +23,8 @@ The monthly deployment `主流程-业务线Staging抽取` must treat an explicit
 - In production June 2026 data, 24 `fact_expense` rows with `dist_bus_line` also match the administrative/human-resources allocation rules. Explicit rows must therefore be removed before those rules run or they can be allocated twice.
 - Current-month `source_no + unique_lvl` keys are unique in all six fact tables inspected, but implementation still reports the source number in every validation failure instead of depending silently on that observation.
 - A generic Staging-to-fact JSON writeback is unsafe: administrative and human-resources allocations can create multiple second-level organization rows for one fact `source_no`, while fact JSON has no organization key. The existing business-report publication/change paths remain the authoritative fact JSON writers; `sync_staging_data` continues to write only `fact_bus_line`.
+- The first production smoke attempt for 2026-07 failed because `fact_bus_wage_rate` had no July data. Flow run `c94ab3a1-7a81-4bd1-a129-0dd523c90c78` was correctly marked failed; batch cleanup removed all generated Staging and ratio rows, leaving only auditable FAILED batch `BLS-202607-000`.
+- Restarting the existing multi-process `flow.serve` service required the configured 90-second systemd stop timeout because several old runner subprocesses did not exit after SIGTERM. Systemd killed the remaining control-group processes and started the new service normally; no ad-hoc process management was used.
 
 ## Decision Log
 
@@ -41,7 +43,7 @@ The monthly deployment `主流程-业务线Staging抽取` must treat an explicit
 
 ## Outcomes & Retrospective
 
-The local implementation is complete. Explicit fact assignments are preflighted before batch creation, restored into normalized Staging ratios, and isolated from legacy inference. The paired FastAPI schema and application are already live in test and production. Prefect publication and representative runtime verification remain in progress.
+The rollout is complete. FastAPI schema and application prerequisites are live in test and production. Prefect PR #21 is merged, the systemd-managed workers are serving deployment version `2f92c248`, and an explicit June 2026 production run completed successfully. The new READY batch preserved the existing FILLING batch. All 274 direct expense assignments were restored exactly once with matching 100% ratios, and no ratio record in the new batch had a total other than one.
 
 ## Context and Orientation
 
@@ -81,6 +83,8 @@ The code change is additive and safe to rerun locally. Runtime extraction remain
 
 The implementation depends on FastAPI feature commit `a0bd343`, merged as `824be72`. On 2026-08-13 both test and production were verified to contain all six JSONB columns with no pending manifest migration; schema drift and map-translation coverage checks passed.
 
+Production evidence: backup `/root/prefect/backups/bus_line_staging_pre_202607_run_20260813_1610.dump` was validated with `pg_restore -l`. Deployment `业务线数据中间库抽取流程(Staging)/主流程-业务线Staging抽取` reports version `2f92c248` and READY status. Successful flow run `d3f7a960-f895-475b-909d-3729f03fcf1a` produced batch `BLS-202606-005` with status READY. It contains 13,726 expense, 1,782 revenue, 65 other, 11,522 inventory, 978 receivable, and 7,293 in-transit Staging records. Direct-expense verification reported 274 fact rows, 274 matched Staging rows, 274 matched ratio rows, 274 exact line/rate matches, zero duplicate keys, and zero bad ratio totals.
+
 ## Interfaces and Dependencies
 
 No new package dependency is required. The parser uses Python `json`, `math`, pandas, PostgreSQL JSONB values returned by psycopg2, `dim_bus_line.status`, and the existing normalized `staging_bus_line_ratio` schema.
@@ -90,3 +94,4 @@ No new package dependency is required. The parser uses Python `json`, `math`, pa
 - 2026-08-13: Created after the user approved authoritative fact assignments and explicit conflict failures.
 - 2026-08-13: Completed the local implementation and recorded the reason generic Staging-to-fact JSON writeback was intentionally excluded.
 - 2026-08-13: Updated the rollout state after production authorization and confirmed the FastAPI prerequisite is already deployed in both environments.
+- 2026-08-13: Recorded production deployment, the safely cleaned July dependency failure, the successful June run, data acceptance results, and archived the completed plan.
