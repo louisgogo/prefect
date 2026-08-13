@@ -1,6 +1,5 @@
 import pandas as pd
 from mypackage.utilities import connect_to_db
-
 from prefect import task
 
 
@@ -58,20 +57,36 @@ def run_revenue_ratio_fill_task(date_range, batch_id):
 
             print(f"  {acct_period}: 国际业务={intl_rate:.2f}, 国内硬件={domestic_rate:.2f}")
 
-            # 2. 更新 staging_bus_revenue 中对应组织的业务线比例
+            # 2. 仅给尚无任何比例的记录写入规范化比例长表。
             cur.execute(
                 """
-                UPDATE staging_bus_revenue
-                SET "国际业务" = %s,
-                    "国内硬件" = %s
-                WHERE "会计期间" = %s
-                  AND batch_id = %s
-                  AND ("唯一层级" LIKE '%%智造事业群-智造管理中心%%'
-                       OR "唯一层级" LIKE '%%国际渠道事业群-运营中心%%')
+                INSERT INTO staging_bus_line_ratio(class, record_id, bus_line, rate)
+                SELECT '收入', staging.record_id, ratio.bus_line, ratio.rate
+                FROM staging_bus_revenue AS staging
+                CROSS JOIN (VALUES (%s::text, %s::numeric), (%s::text, %s::numeric))
+                    AS ratio(bus_line, rate)
+                WHERE staging."会计期间" = %s
+                  AND staging.batch_id = %s
+                  AND (staging."唯一层级" LIKE '%%智造事业群-智造管理中心%%'
+                       OR staging."唯一层级" LIKE '%%国际渠道事业群-运营中心%%')
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM staging_bus_line_ratio AS existing
+                      WHERE existing.class = '收入'
+                        AND existing.record_id = staging.record_id
+                  )
+                ON CONFLICT (class, record_id, bus_line) DO NOTHING
                 """,
-                (intl_rate, domestic_rate, acct_period, batch_id),
+                (
+                    "国际业务",
+                    intl_rate,
+                    "国内硬件",
+                    domestic_rate,
+                    acct_period,
+                    batch_id,
+                ),
             )
-            update_count_total += cur.rowcount
+            update_count_total += cur.rowcount // 2
 
         conn.commit()
         print(f"✅ 收入比例自动填充完成，共更新 {update_count_total} 条记录。")

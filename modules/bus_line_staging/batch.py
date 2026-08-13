@@ -323,6 +323,7 @@ def inherit_previous_values(batch_id: str, bus_lines: Iterable[str]) -> dict[str
             if cur.fetchone()[0] is None or previous_batch_id is None:
                 inherited[table_name] = 0
                 continue
+            class_name = STAGING_TABLE_CLASSES[table_name]
             cur.execute(
                 f"""
                 UPDATE {table_name} AS new_row
@@ -333,11 +334,16 @@ def inherit_previous_values(batch_id: str, bus_lines: Iterable[str]) -> dict[str
                   AND previous."{date_column}" = new_row."{date_column}"
                   AND previous."来源编号" = new_row."来源编号"
                   AND previous."唯一层级" = new_row."唯一层级"
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM staging_bus_line_ratio AS current_ratio
+                      WHERE current_ratio.class = %s
+                        AND current_ratio.record_id = new_row.record_id
+                  )
                 """,
-                (batch_id, previous_batch_id),
+                (batch_id, previous_batch_id, class_name),
             )
             inherited[table_name] = cur.rowcount
-            class_name = STAGING_TABLE_CLASSES[table_name]
             cur.execute(
                 f"""
                 INSERT INTO staging_bus_line_ratio(
@@ -355,12 +361,18 @@ def inherit_previous_values(batch_id: str, bus_lines: Iterable[str]) -> dict[str
                   ON ratio.class = %s
                  AND ratio.record_id = previous.record_id
                 WHERE new_row.batch_id = %s
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM staging_bus_line_ratio AS current_ratio
+                      WHERE current_ratio.class = %s
+                        AND current_ratio.record_id = new_row.record_id
+                  )
                 ON CONFLICT (class, record_id, bus_line) DO UPDATE
                 SET rate = EXCLUDED.rate,
                     updated_by = EXCLUDED.updated_by,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (class_name, previous_batch_id, class_name, batch_id),
+                (class_name, previous_batch_id, class_name, batch_id, class_name),
             )
         conn.commit()
         return inherited

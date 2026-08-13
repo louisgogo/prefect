@@ -5,11 +5,11 @@ import numpy as np
 import pandas as pd
 from mypackage.mapping import reverse_combined_column_mapping
 from mypackage.utilities import connect_to_db
-
 from prefect import task
 
 # 导入本地配置
 from ..config import get_bus_lines, groups_frontend, groups_middle
+from ..fact_assignments import legacy_fact_filter
 from ..utils import insert_to_staging_table
 from .expense_tasks import _set_expense_source_metadata
 
@@ -43,7 +43,8 @@ def run_unassigned_split_task(date_range, batch_id):
         cur.execute(
             f"""SELECT * FROM fact_revenue
             WHERE acct_period IN ({date_list})
-            AND unique_lvl IN ({levels_str})"""
+            AND unique_lvl IN ({levels_str})
+            AND {legacy_fact_filter()}"""
         )
         df = cur.fetchall()
         columns = [
@@ -97,7 +98,9 @@ def run_unassigned_split_task(date_range, batch_id):
         cur.execute(
             f"""SELECT * FROM fact_expense
             WHERE acct_period IN ({date_list})
-            AND unique_lvl IN ({levels_expense_str})"""
+            AND unique_lvl IN ({levels_expense_str})
+            AND {legacy_fact_filter()}
+            AND NULLIF(BTRIM(dist_bus_line), '') IS NULL"""
         )
         df = cur.fetchall()
         columns = [
@@ -161,7 +164,8 @@ def run_unassigned_split_task(date_range, batch_id):
             f"""SELECT * FROM fact_profit_bd
             WHERE date IN ({date_list})
             AND unique_lvl IN ({levels_profit_str})
-            AND prim_subj IN ({acct_str})"""
+            AND prim_subj IN ({acct_str})
+            AND {legacy_fact_filter()}"""
         )
         df = cur.fetchall()
         columns = [
