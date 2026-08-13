@@ -5,11 +5,11 @@ import numpy as np
 import pandas as pd
 from mypackage.mapping import reverse_combined_column_mapping
 from mypackage.utilities import connect_to_db
-
 from prefect import task
 
 # 导入本地配置
 from ..config import get_bus_lines, groups_frontend
+from ..fact_assignments import legacy_fact_filter
 from ..utils import insert_to_staging_table
 
 
@@ -39,7 +39,8 @@ def run_revenue_other_split_task(date_range, batch_id):
         cur.execute(
             f"""SELECT * FROM fact_revenue
             WHERE acct_period IN ({date_list})
-            AND unique_lvl IN ({levels_str})"""
+            AND unique_lvl IN ({levels_str})
+            AND {legacy_fact_filter()}"""
         )
         df_revenue = pd.DataFrame(
             cur.fetchall(),
@@ -93,7 +94,8 @@ def run_revenue_other_split_task(date_range, batch_id):
             f"""SELECT * FROM fact_profit_bd
             WHERE date IN ({date_list})
             AND unique_lvl IN ({levels_str})
-            AND prim_subj IN ({acct_str})"""
+            AND prim_subj IN ({acct_str})
+            AND {legacy_fact_filter()}"""
         )
         df_profit = pd.DataFrame(
             cur.fetchall(),

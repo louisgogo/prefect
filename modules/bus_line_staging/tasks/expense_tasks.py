@@ -5,11 +5,11 @@ import numpy as np
 import pandas as pd
 from mypackage.mapping import reverse_combined_column_mapping
 from mypackage.utilities import connect_to_db, read_data_bysql
-
 from prefect import task
 
 # 导入本地配置
 from ..config import get_bus_lines, groups_backend, groups_frontend, groups_middle
+from ..fact_assignments import legacy_fact_filter
 from ..utils import insert_to_staging_table
 
 
@@ -86,6 +86,7 @@ def run_expense_split_to_staging_task(date_range, batch_id):
         f"""SELECT * FROM fact_expense
         WHERE acct_period IN ({date_list})
         AND dist_bus_line IS NULL
+        AND {legacy_fact_filter()}
         AND ((exp_item_code IN ({expense_categorys_text_1}) AND unique_lvl LIKE '%行政中心%')
              OR (exp_item_code IN ({expense_categorys_text_2}) AND unique_lvl LIKE '%人力资源中心%'))"""
     )
@@ -147,6 +148,8 @@ def run_expense_split_to_staging_task(date_range, batch_id):
         f"""SELECT * FROM fact_expense
         WHERE acct_period IN ({date_list})
         AND unique_lvl NOT LIKE '%无归属%'
+        AND {legacy_fact_filter()}
+        AND NULLIF(BTRIM(dist_bus_line), '') IS NULL
         AND source_no NOT IN ({id_exclude_str})"""
     )
     columns = [reverse_combined_column_mapping.get(desc[0], desc[0]) for desc in cur.description]

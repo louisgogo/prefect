@@ -8,6 +8,7 @@ from mypackage.utilities import connect_to_db
 from prefect import task
 
 from ..config import get_bus_lines, groups_frontend
+from ..fact_assignments import legacy_fact_filter
 from ..utils import insert_to_staging_table
 
 
@@ -50,7 +51,8 @@ def run_inv_ar_split_task(date_range, batch_id):
             f"""SELECT * FROM fact_inventory
             WHERE unique_lvl NOT LIKE '%无归属%'
             AND acct_period IN ({date_list})
-            AND unique_lvl IN ({levels_str})"""
+            AND unique_lvl IN ({levels_str})
+            AND {legacy_fact_filter()}"""
         )
         df_inv = pd.DataFrame(
             cur.fetchall(),
@@ -126,7 +128,8 @@ def run_inv_ar_split_task(date_range, batch_id):
             AND acct_period IN ({date_list})
             AND unique_lvl IN ({levels_str})
             AND txn_nature != '内部关联方往来'
-            AND ar_balance != 0"""
+            AND ar_balance != 0
+            AND {legacy_fact_filter()}"""
         )
         df_ar = pd.DataFrame(
             cur.fetchall(),
@@ -217,7 +220,8 @@ def run_inv_ar_split_task(date_range, batch_id):
             WHERE unique_lvl NOT LIKE '%无归属%'
             AND acct_period IN ({date_list})
             AND unique_lvl IN ({levels_str})
-            AND COALESCE(unreceived_inventory, 0) <> 0"""
+            AND COALESCE(unreceived_inventory, 0) <> 0
+            AND {legacy_fact_filter()}"""
         )
         df_transit = pd.DataFrame(
             cur.fetchall(),

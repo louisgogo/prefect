@@ -11,6 +11,7 @@ from ..batch import (
     start_batch,
 )
 from ..config import get_bus_lines, get_date_range
+from ..fact_assignments import restore_fact_assignments_task, validate_fact_assignments_task
 from ..tasks.asset_tasks import run_inv_ar_split_task
 from ..tasks.expense_tasks import run_expense_split_to_staging_task
 from ..tasks.ratio_fill_tasks import run_revenue_ratio_fill_task
@@ -53,9 +54,20 @@ def bus_line_staging_flow(start_date: str | None = None, end_date: str | None = 
     batch_id = None
     batch_completed = False
     try:
+        assignment_counts = validate_fact_assignments_task(date_range)
+        logger.info(
+            "fact业务线直接归属预检通过，共识别 %s 条记录。",
+            sum(assignment_counts.values()),
+        )
         runtime_flow_run_id = str(flow_run.id) if flow_run.id else None
         batch_id = start_batch(date_range, flow_run_id=runtime_flow_run_id)
         logger.info(f"本次Staging抽取批次: {batch_id}")
+
+        restored_counts = restore_fact_assignments_task(date_range, batch_id)
+        logger.info(
+            "fact业务线直接归属已还原到Staging，共 %s 条记录。",
+            sum(restored_counts.values()),
+        )
 
         # 1. 费用数据拆分
         run_expense_split_to_staging_task(date_range, batch_id)
@@ -119,12 +131,18 @@ def bus_line_staging_flow(start_date: str | None = None, end_date: str | None = 
                 "batch_status": batch_status,
                 "inherited_records": inherited_total,
                 "comparison_totals": comparison_totals,
+                "fact_assignment_records": sum(assignment_counts.values()),
+                "restored_fact_assignment_records": sum(restored_counts.values()),
                 "summary": f"业务线Staging抽取完成，范围: {date_label}，批次: {batch_no}",
             },
         )
         result["inherited_records"] = inherited_total
         result["inherited_by_table"] = inherited_counts
         result["comparison"] = comparison
+        result["fact_assignment_records"] = sum(assignment_counts.values())
+        result["fact_assignment_by_table"] = assignment_counts
+        result["restored_fact_assignment_records"] = sum(restored_counts.values())
+        result["restored_fact_assignment_by_table"] = restored_counts
         return result
     except Exception as e:
         if batch_id and not batch_completed:
