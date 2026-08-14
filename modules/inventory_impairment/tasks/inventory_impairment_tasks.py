@@ -1,12 +1,14 @@
 """季度存货跌价计算及业报数据校验 Tasks。"""
 
 import hashlib
+import os
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
+import requests
 from mypackage.utilities import connect_to_db
 from prefect import task
 
@@ -68,6 +70,12 @@ FACT_PROFIT_BD_COLUMNS = [
     "remarks",
     "source_no",
 ]
+PLATFORM_BASE_URL_ENV = "AIHUB_PLATFORM_BASE_URL"
+PLATFORM_TOKEN_ENV = "AIHUB_PLATFORM_API_TOKEN"
+PLATFORM_TOKEN_FALLBACK_ENV = "XGD_TOKEN"
+DEFAULT_PLATFORM_BASE_URL = "http://127.0.0.1:8001/api/v1"
+PLATFORM_SYNC_PATH = "/data-collect/business-report/inventory-impairment-sync"
+PLATFORM_SYNC_TIMEOUT_SECONDS = 120
 
 
 def get_default_inventory_impairment_period(
@@ -484,90 +492,71 @@ def prepare_fact_profit_bd_rows(
     )
 
 
-def _replace_fact_profit_bd_rows(
-    conn,
-    cur,
+def _platform_json_value(value):
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, pd.Timestamp):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def sync_inventory_impairment_via_platform(
     rows: pd.DataFrame,
     quarter_period: pd.Timestamp,
 ) -> Dict[str, object]:
-    """在调用方提供的连接中原子替换季度存货跌价记录。"""
+    """Submit calculated impairment rows to the platform-owned linked sync API."""
     _require_columns(rows, FACT_PROFIT_BD_COLUMNS, "fact_profit_bd 待写入数据")
     if rows.empty:
-        raise ValueError("待写入数据为空，拒绝删除 fact_profit_bd 旧记录")
+        raise ValueError("待同步的资产减值数据为空")
 
     target_date = pd.Timestamp(quarter_period).date()
-    row_dates = set(pd.to_datetime(rows["date"], errors="raise").dt.date)
-    if row_dates != {target_date}:
-        raise ValueError(f"待写入数据日期与目标季度不一致: {sorted(row_dates)}")
-    if set(rows["fin_con"]) != {"业报调整"}:
-        raise ValueError("待写入数据 fin_con 必须全部为业报调整")
-    if set(rows["prim_subj"]) != {"资产减值损失"}:
-        raise ValueError("待写入数据 prim_subj 必须全部为资产减值损失")
-    if rows["source_no"].isna().any() or rows["source_no"].duplicated().any():
-        raise ValueError("待写入数据 source_no 不能为空或重复")
-
-    scope_params = (target_date, "业报调整", "资产减值损失")
-    lock_key = f"fact_profit_bd:inventory_impairment:{target_date.isoformat()}"
-    expected_total = sum(Decimal(str(value)) for value in rows["mo_amt"])
-
+    base_url = os.getenv(PLATFORM_BASE_URL_ENV, DEFAULT_PLATFORM_BASE_URL).strip().rstrip("/")
+    token = (
+        os.getenv(PLATFORM_TOKEN_ENV, "").strip()
+        or os.getenv(PLATFORM_TOKEN_FALLBACK_ENV, "").strip()
+    )
+    if not token:
+        raise RuntimeError(
+            f"必须配置 {PLATFORM_TOKEN_ENV} 或 {PLATFORM_TOKEN_FALLBACK_ENV}，" "资产减值结果才能通过平台同步"
+        )
+    url = f"{base_url}{PLATFORM_SYNC_PATH}"
+    payload = {
+        "quarter_period": target_date.isoformat(),
+        "rows": [
+            {column: _platform_json_value(row[column]) for column in FACT_PROFIT_BD_COLUMNS}
+            for _, row in rows[FACT_PROFIT_BD_COLUMNS].iterrows()
+        ],
+    }
     try:
-        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,))
-        cur.execute(
-            """
-            SELECT COUNT(*), COALESCE(SUM(mo_amt), 0)
-            FROM fact_profit_bd
-            WHERE date = %s AND fin_con = %s AND prim_subj = %s
-            """,
-            scope_params,
+        response = requests.post(
+            url,
+            json=payload,
+            headers={"X-Internal-Token": token},
+            timeout=PLATFORM_SYNC_TIMEOUT_SECONDS,
         )
-        old_count, old_total = cur.fetchone()
+        response.raise_for_status()
+        body = response.json()
+    except requests.RequestException as exc:
+        detail = ""
+        if getattr(exc, "response", None) is not None:
+            try:
+                detail = str(exc.response.json().get("detail") or "")
+            except (AttributeError, ValueError):
+                detail = exc.response.text[:500]
+        suffix = f"：{detail}" if detail else ""
+        raise RuntimeError(f"资产减值平台同步请求失败{suffix}") from exc
+    except ValueError as exc:
+        raise RuntimeError("资产减值平台同步返回了无效 JSON") from exc
 
-        cur.execute(
-            """
-            DELETE FROM fact_profit_bd
-            WHERE date = %s AND fin_con = %s AND prim_subj = %s
-            """,
-            scope_params,
-        )
-        deleted_count = cur.rowcount
-
-        placeholders = ", ".join(["%s"] * len(FACT_PROFIT_BD_COLUMNS))
-        insert_sql = (
-            f"INSERT INTO fact_profit_bd ({', '.join(FACT_PROFIT_BD_COLUMNS)}) "
-            f"VALUES ({placeholders})"
-        )
-        cur.executemany(
-            insert_sql,
-            list(rows[FACT_PROFIT_BD_COLUMNS].itertuples(index=False, name=None)),
-        )
-
-        cur.execute(
-            """
-            SELECT COUNT(*), COALESCE(SUM(mo_amt), 0)
-            FROM fact_profit_bd
-            WHERE date = %s AND fin_con = %s AND prim_subj = %s
-            """,
-            scope_params,
-        )
-        new_count, new_total = cur.fetchone()
-        new_total_decimal = Decimal(str(new_total))
-        if new_count != len(rows):
-            raise ValueError(f"fact_profit_bd 写入行数校验失败: 期望 {len(rows)}，实际 {new_count}")
-        if abs(new_total_decimal - expected_total) > Decimal("0.01"):
-            raise ValueError(f"fact_profit_bd 写入金额校验失败: 期望 {expected_total}，实际 {new_total_decimal}")
-
-        conn.commit()
-        return {
-            "date": target_date.isoformat(),
-            "old_count": int(old_count),
-            "old_total": float(old_total),
-            "deleted_count": int(deleted_count),
-            "inserted_count": int(new_count),
-            "inserted_total": float(new_total_decimal),
-        }
-    except Exception:
-        conn.rollback()
-        raise
+    if body.get("code") != 200 or not isinstance(body.get("data"), dict):
+        raise RuntimeError(f"资产减值平台同步返回异常：{body}")
+    return body["data"]
 
 
 def _fetch_dataframe(cur, query: str, params: Iterable[object]) -> pd.DataFrame:
@@ -620,20 +609,13 @@ def load_inventory_impairment_sources_task(
 def replace_inventory_impairment_in_fact_profit_bd_task(
     rows: pd.DataFrame, quarter_period: pd.Timestamp
 ) -> Dict[str, object]:
-    """事务性删除并写入指定季度的存货跌价业报记录。"""
-    conn, cur = connect_to_db()
-    if conn is None or cur is None:
-        raise ConnectionError("无法连接 PostgreSQL")
-    try:
-        metrics = _replace_fact_profit_bd_rows(conn, cur, rows, quarter_period)
-    finally:
-        cur.close()
-        conn.close()
+    """通过平台原子同步指定季度的存货跌价 Fact/staging 记录。"""
+    metrics = sync_inventory_impairment_via_platform(rows, quarter_period)
 
     print(
-        f"fact_profit_bd 存货跌价替换完成：日期={metrics['date']}，"
-        f"删除={metrics['deleted_count']} 行，写入={metrics['inserted_count']} 行，"
-        f"写入合计={metrics['inserted_total']:.2f}"
+        f"资产减值平台同步完成：日期={metrics['date']}，"
+        f"新增={metrics['inserted']}，更新={metrics['updated']}，"
+        f"补链={metrics['repaired_links']}，删除={metrics['deleted']}"
     )
     return metrics
 

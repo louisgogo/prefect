@@ -4,7 +4,6 @@ from datetime import date
 from typing import Dict, Optional
 
 import pandas as pd
-
 from prefect import flow
 
 from ..tasks.inventory_impairment_tasks import (
@@ -42,7 +41,7 @@ def inventory_impairment_flow(
     validate_against_profit_bd: bool = True,
     tolerance: float = 0.01,
 ) -> Dict[str, object]:
-    """计算指定季度各主体存货跌价金额，替换写入业报并核对。"""
+    """计算指定季度各主体存货跌价金额，通过平台同步业报并核对。"""
     year, quarter = resolve_inventory_impairment_period(year, quarter)
     periods, quarter_period = get_quarter_periods(year, quarter)
     period_text = ", ".join(period.strftime("%Y-%m-%d") for period in periods)

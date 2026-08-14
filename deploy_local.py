@@ -333,12 +333,12 @@ def deploy_inventory_impairment_flow():
     print("=" * 60)
     print("季度存货跌价计算子流程 - 本地测试部署")
     print("=" * 60)
-    print(f"默认期间：{defaults['year']}年第{defaults['quarter']}季度；" "本地测试默认只读，可在 UI 中显式开启写入。")
+    print(f"默认期间：{defaults['year']}年第{defaults['quarter']}季度；" "本地测试默认只读，可在 UI 中显式开启平台同步。")
 
     inventory_impairment_flow.serve(
         name="季度存货跌价计算-本地测试",
         tags=["本地测试", "存货跌价", "季度任务", "只读校验"],
-        description="默认计算最近已结束季度；本地默认只读，可选择替换 fact_profit_bd 的业报资产减值损失。",
+        description="默认计算最近已结束季度；本地默认只读，可选择通过平台同步业报资产减值损失及填报记录。",
         parameters=defaults,
     )
 
