@@ -1,16 +1,16 @@
 import unittest
 from datetime import date
-from decimal import Decimal
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
 from modules.inventory_impairment.flows.inventory_impairment_flow import inventory_impairment_flow
+from modules.inventory_impairment.tasks import inventory_impairment_tasks
 from modules.inventory_impairment.tasks.inventory_impairment_tasks import (
     AGING_AMOUNT_COLUMNS,
     AGING_QUANTITY_COLUMNS,
     FACT_PROFIT_BD_COLUMNS,
     IN_TRANSIT_COLUMNS,
-    _replace_fact_profit_bd_rows,
     calculate_impairment_detail,
     calculate_monthly_and_quarterly_impairment,
     get_default_inventory_impairment_period,
@@ -19,6 +19,7 @@ from modules.inventory_impairment.tasks.inventory_impairment_tasks import (
     prepare_in_transit_detail,
     reconcile_quarterly_impairment,
     resolve_inventory_impairment_period,
+    sync_inventory_impairment_via_platform,
 )
 
 
@@ -282,61 +283,69 @@ class InventoryImpairmentTests(unittest.TestCase):
         self.assertTrue(first["source_no"].str.startswith("INVIMP-202606-").all())
         self.assertEqual(first["remarks"].unique().tolist(), ["存货跌价自动计算-2026Q2"])
 
-    def test_replace_fact_profit_rows_commits_delete_insert_and_readback(self):
+    def test_platform_sync_posts_calculated_rows_with_internal_token(self):
         rows = self._prepared_write_rows()
-        conn = _FakeConnection()
-        cur = _FakeCursor(
-            fetch_results=[
-                (16, Decimal("300.13")),
-                (2, Decimal("300.13")),
-            ],
-            delete_count=16,
-        )
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "code": 200,
+            "data": {
+                "date": "2026-06-01",
+                "inserted": 1,
+                "updated": 1,
+                "repaired_links": 0,
+                "deleted": 0,
+            },
+        }
 
-        metrics = _replace_fact_profit_bd_rows(conn, cur, rows, pd.Timestamp("2026-06-01"))
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "AIHUB_PLATFORM_BASE_URL": "https://platform.example/api/v1",
+                    "AIHUB_PLATFORM_API_TOKEN": "platform-token",
+                },
+                clear=False,
+            ),
+            patch.object(
+                inventory_impairment_tasks.requests, "post", return_value=response
+            ) as post,
+        ):
+            metrics = sync_inventory_impairment_via_platform(
+                rows,
+                pd.Timestamp("2026-06-01"),
+            )
 
-        self.assertTrue(conn.committed)
-        self.assertFalse(conn.rolled_back)
-        self.assertEqual(metrics["deleted_count"], 16)
-        self.assertEqual(metrics["inserted_count"], 2)
-        self.assertEqual(len(cur.inserted_rows), 2)
-        delete_call = next(call for call in cur.execute_calls if "DELETE FROM" in call[0])
+        self.assertEqual(metrics["updated"], 1)
+        request = post.call_args
         self.assertEqual(
-            delete_call[1],
-            (date(2026, 6, 1), "业报调整", "资产减值损失"),
+            request.args[0],
+            "https://platform.example/api/v1/data-collect/business-report/"
+            "inventory-impairment-sync",
+        )
+        self.assertEqual(request.kwargs["headers"], {"X-Internal-Token": "platform-token"})
+        self.assertEqual(request.kwargs["json"]["quarter_period"], "2026-06-01")
+        self.assertEqual(len(request.kwargs["json"]["rows"]), 2)
+        self.assertTrue(
+            all(
+                row["source_no"].startswith("INVIMP-202606-")
+                for row in request.kwargs["json"]["rows"]
+            )
         )
 
-    def test_replace_fact_profit_rows_rolls_back_on_insert_failure(self):
-        rows = self._prepared_write_rows()
-        conn = _FakeConnection()
-        cur = _FakeCursor(
-            fetch_results=[(16, Decimal("300.13"))],
-            delete_count=16,
-            fail_insert=True,
-        )
-
-        with self.assertRaisesRegex(RuntimeError, "insert failed"):
-            _replace_fact_profit_bd_rows(conn, cur, rows, pd.Timestamp("2026-06-01"))
-
-        self.assertFalse(conn.committed)
-        self.assertTrue(conn.rolled_back)
-
-    def test_replace_fact_profit_rows_rolls_back_on_readback_mismatch(self):
-        rows = self._prepared_write_rows()
-        conn = _FakeConnection()
-        cur = _FakeCursor(
-            fetch_results=[
-                (16, Decimal("300.13")),
-                (1, Decimal("100.13")),
-            ],
-            delete_count=16,
-        )
-
-        with self.assertRaisesRegex(ValueError, "写入行数校验失败"):
-            _replace_fact_profit_bd_rows(conn, cur, rows, pd.Timestamp("2026-06-01"))
-
-        self.assertFalse(conn.committed)
-        self.assertTrue(conn.rolled_back)
+    def test_platform_sync_fails_closed_without_service_token(self):
+        with (
+            patch.dict(
+                "os.environ",
+                {"AIHUB_PLATFORM_API_TOKEN": "", "XGD_TOKEN": ""},
+                clear=False,
+            ),
+            self.assertRaisesRegex(RuntimeError, "AIHUB_PLATFORM_API_TOKEN 或 XGD_TOKEN"),
+        ):
+            sync_inventory_impairment_via_platform(
+                self._prepared_write_rows(),
+                pd.Timestamp("2026-06-01"),
+            )
 
     @staticmethod
     def _prepared_write_rows():
@@ -367,41 +376,6 @@ class InventoryImpairmentTests(unittest.TestCase):
         self.assertTrue(
             inventory_impairment_flow.parameters.properties["write_to_fact_profit_bd"]["default"]
         )
-
-
-class _FakeConnection:
-    def __init__(self):
-        self.committed = False
-        self.rolled_back = False
-
-    def commit(self):
-        self.committed = True
-
-    def rollback(self):
-        self.rolled_back = True
-
-
-class _FakeCursor:
-    def __init__(self, fetch_results, delete_count, fail_insert=False):
-        self.fetch_results = list(fetch_results)
-        self.delete_count = delete_count
-        self.fail_insert = fail_insert
-        self.execute_calls = []
-        self.inserted_rows = []
-        self.rowcount = 0
-
-    def execute(self, query, params=None):
-        self.execute_calls.append((query, params))
-        if "DELETE FROM" in query:
-            self.rowcount = self.delete_count
-
-    def fetchone(self):
-        return self.fetch_results.pop(0)
-
-    def executemany(self, query, rows):
-        if self.fail_insert:
-            raise RuntimeError("insert failed")
-        self.inserted_rows = list(rows)
 
 
 if __name__ == "__main__":

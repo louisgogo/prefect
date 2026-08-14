@@ -206,7 +206,7 @@ def _serve_inventory_impairment():
     inventory_impairment_flow.serve(
         name="子流程-季度存货跌价计算",
         tags=["存货跌价", "季度任务", "手动触发", "财务写入"],
-        description="默认计算最近已结束季度，事务替换 fact_profit_bd 的业报资产减值损失并回读核对。",
+        description="默认计算最近已结束季度，通过平台原子同步业报资产减值损失及填报记录并回读核对。",
         parameters=defaults,
     )
 

@@ -1,8 +1,10 @@
 """数据导入相关 Tasks"""
+
 import os
+import re
 import sys
 from datetime import datetime
-from typing import Dict, Optional, Tuple
+from typing import Dict, Iterable, Optional, Tuple
 
 import pandas as pd
 from mypackage.mapping import combined_column_mapping, combined_table_mapping
@@ -24,6 +26,17 @@ UNSTORED_COLUMNS_BY_TABLE = {
     },
 }
 
+LINKED_FACT_TABLES = {
+    "fact_revenue",
+    "fact_expense",
+    "fact_receivable",
+    "fact_inventory",
+    "fact_inventory_on_way",
+    "fact_profit_bd",
+}
+FACT_IDENTITY_COLUMNS = ("id", "source_no", "business_report_staging_id")
+_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
 # 添加根目录到路径
 sys.path.append(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -32,6 +45,166 @@ sys.path.append(
 
 def drop_unstored_columns(table_name: str, df: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=list(UNSTORED_COLUMNS_BY_TABLE.get(table_name, set())), errors="ignore")
+
+
+def _normalized_source_keys(df: pd.DataFrame, *, context: str) -> pd.Series:
+    if "source_no" not in df.columns:
+        raise ValueError(f"{context} 缺少 source_no，无法安全保留 Fact 关联")
+    blank = df["source_no"].isna() | df["source_no"].astype(str).str.strip().eq("")
+    if blank.any():
+        raise ValueError(f"{context} 存在 {int(blank.sum())} 条空 source_no")
+    keys = df["source_no"].astype(str).str.strip()
+    duplicated = keys.duplicated(keep=False)
+    if duplicated.any():
+        examples = ", ".join(keys[duplicated].drop_duplicates().head(5).tolist())
+        raise ValueError(f"{context} 存在重复 source_no：{examples}")
+    return keys
+
+
+def merge_fact_identity_columns(
+    incoming: pd.DataFrame,
+    existing: pd.DataFrame,
+    allocated_ids: Iterable[int],
+) -> pd.DataFrame:
+    """Preserve Fact identity/link columns while preparing a date-range replacement."""
+    result = incoming.copy()
+    incoming_keys = _normalized_source_keys(result, context="待导入 Fact 数据")
+    result["source_no"] = incoming_keys
+    existing_keys = _normalized_source_keys(existing, context="现有 Fact 数据")
+    existing_identity = existing.copy()
+    existing_identity["__source_key"] = existing_keys
+    identity_by_source = existing_identity.set_index("__source_key")
+
+    result["id"] = incoming_keys.map(identity_by_source["id"])
+    result["business_report_staging_id"] = incoming_keys.map(
+        identity_by_source["business_report_staging_id"]
+    )
+
+    new_mask = result["id"].isna()
+    new_ids = list(allocated_ids)
+    if len(new_ids) != int(new_mask.sum()):
+        raise ValueError(f"新 Fact ID 数量不匹配：需要 {int(new_mask.sum())} 个，实际 {len(new_ids)} 个")
+    if new_ids:
+        result.loc[new_mask, "id"] = new_ids
+    result.loc[new_mask, "business_report_staging_id"] = None
+    result["id"] = result["id"].astype("int64")
+    return result
+
+
+def verify_fact_identity_rows(expected: pd.DataFrame, actual: pd.DataFrame) -> None:
+    """Ensure replacement kept Fact IDs and staging UUID links exactly as prepared."""
+    expected_keys = _normalized_source_keys(expected, context="预期 Fact 数据")
+    actual_keys = _normalized_source_keys(actual, context="写入后 Fact 数据")
+    expected_rows = expected.copy()
+    actual_rows = actual.copy()
+    expected_rows["__source_key"] = expected_keys
+    actual_rows["__source_key"] = actual_keys
+    expected_rows = expected_rows.set_index("__source_key")
+    actual_rows = actual_rows.set_index("__source_key")
+    if set(expected_rows.index) != set(actual_rows.index):
+        missing = sorted(set(expected_rows.index) - set(actual_rows.index))[:5]
+        extra = sorted(set(actual_rows.index) - set(expected_rows.index))[:5]
+        raise RuntimeError(f"Fact 替换后 source_no 集合不一致：缺失={missing}，新增={extra}")
+
+    for source_key in expected_rows.index:
+        expected_id = int(expected_rows.at[source_key, "id"])
+        actual_id = int(actual_rows.at[source_key, "id"])
+        expected_link = expected_rows.at[source_key, "business_report_staging_id"]
+        actual_link = actual_rows.at[source_key, "business_report_staging_id"]
+        normalized_expected_link = None if pd.isna(expected_link) else str(expected_link)
+        normalized_actual_link = None if pd.isna(actual_link) else str(actual_link)
+        if expected_id != actual_id or normalized_expected_link != normalized_actual_link:
+            raise RuntimeError(
+                f"Fact 身份关联校验失败：source_no={source_key}，"
+                f"id={actual_id}/{expected_id}，"
+                f"business_report_staging_id={normalized_actual_link}/{normalized_expected_link}"
+            )
+
+
+def _validate_identifier(value: str) -> str:
+    if not _SAFE_IDENTIFIER.fullmatch(str(value or "")):
+        raise ValueError(f"不安全的数据库标识符：{value}")
+    return value
+
+
+def _read_fact_identity_rows(
+    connection,
+    table_name: str,
+    table_date_column: str,
+    start_date: str,
+    end_date: str,
+) -> pd.DataFrame:
+    safe_table = _validate_identifier(table_name)
+    safe_date_column = _validate_identifier(table_date_column)
+    return pd.read_sql_query(
+        text(
+            f"SELECT id, source_no, business_report_staging_id FROM {safe_table} "
+            f"WHERE {safe_date_column} >= :start_date AND {safe_date_column} <= :end_date"
+        ),
+        connection,
+        params={"start_date": start_date, "end_date": end_date},
+    )
+
+
+def replace_linked_fact_rows(
+    table_name: str,
+    table_date_column: str,
+    filtered_df: pd.DataFrame,
+    df_date_column: str,
+    start_date: str,
+    end_date: str,
+) -> None:
+    """Replace one Fact date range atomically without losing IDs or staging UUID links."""
+    safe_table = _validate_identifier(table_name)
+    safe_date_column = _validate_identifier(table_date_column)
+    engine = create_engine(url_to_db())
+    with engine.begin() as connection:
+        existing = _read_fact_identity_rows(
+            connection,
+            table_name,
+            table_date_column,
+            start_date,
+            end_date,
+        )
+        incoming_keys = _normalized_source_keys(filtered_df, context="待导入 Fact 数据")
+        existing_keys = _normalized_source_keys(existing, context="现有 Fact 数据")
+        new_count = int((~incoming_keys.isin(set(existing_keys))).sum())
+        allocated_ids = []
+        if new_count:
+            sequence_name = connection.execute(
+                text("SELECT pg_get_serial_sequence(:table_name, 'id')"),
+                {"table_name": table_name},
+            ).scalar_one_or_none()
+            if not sequence_name:
+                raise RuntimeError(f"{table_name}.id 未配置序列，无法为新记录分配主键")
+            allocated_ids = [
+                int(row[0])
+                for row in connection.execute(
+                    text(
+                        "SELECT nextval(CAST(:sequence_name AS regclass)) "
+                        "FROM generate_series(1, :new_count)"
+                    ),
+                    {"sequence_name": sequence_name, "new_count": new_count},
+                )
+            ]
+        replacement = merge_fact_identity_columns(filtered_df, existing, allocated_ids)
+        replacement[df_date_column] = pd.to_datetime(replacement[df_date_column]).dt.date
+        connection.execute(
+            text(
+                f"DELETE FROM {safe_table} "
+                f"WHERE {safe_date_column} >= :start_date AND {safe_date_column} <= :end_date"
+            ),
+            {"start_date": start_date, "end_date": end_date},
+        )
+        replacement.to_sql(table_name, con=connection, if_exists="append", index=False)
+        actual = _read_fact_identity_rows(
+            connection,
+            table_name,
+            table_date_column,
+            start_date,
+            end_date,
+        )
+        verify_fact_identity_rows(replacement[list(FACT_IDENTITY_COLUMNS)], actual)
 
 
 def _check_data_exists(
@@ -146,9 +319,24 @@ def update_data_by_date_range_task(
 
         if replace_existing:
             print(f"✓ 更新 {table_name} 数据（替换模式）: {start_date} 到 {end_date}，共 {len(filtered_df)} 条数据")
-            update_between_dates(
-                table_name, table_date_column, df, df_date_column, start_date, end_date
-            )
+            if table_name in LINKED_FACT_TABLES:
+                replace_linked_fact_rows(
+                    table_name,
+                    table_date_column,
+                    filtered_df,
+                    df_date_column,
+                    start_date,
+                    end_date,
+                )
+            else:
+                update_between_dates(
+                    table_name,
+                    table_date_column,
+                    filtered_df,
+                    df_date_column,
+                    start_date,
+                    end_date,
+                )
         else:
             # 检查是否已存在数据
             exists = _check_data_exists(table_name, table_date_column, start_date, end_date)
@@ -159,7 +347,7 @@ def update_data_by_date_range_task(
                     f"✓ 更新 {table_name} 数据（追加模式）: {start_date} 到 {end_date}，共 {len(filtered_df)} 条数据"
                 )
                 update_between_dates(
-                    table_name, table_date_column, df, df_date_column, start_date, end_date
+                    table_name, table_date_column, filtered_df, df_date_column, start_date, end_date
                 )
     except Exception as e:
         error_msg = f"更新 {table_name} 数据时发生错误: {str(e)}"
@@ -340,7 +528,20 @@ def update_rd_data_task(
         df = pd.melt(
             df,
             id_vars=["proj_name", "product_sub_category", "year"],
-            value_vars=["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"],
+            value_vars=[
+                "1月",
+                "2月",
+                "3月",
+                "4月",
+                "5月",
+                "6月",
+                "7月",
+                "8月",
+                "9月",
+                "10月",
+                "11月",
+                "12月",
+            ],
             var_name="month",
             value_name="hours_worked",
         )
@@ -694,7 +895,17 @@ def update_business_data_task(
                 )
                 df_amt = (
                     pd.read_excel(file_path, sheet_name="入账提现金额")
-                    .loc[:, ["年", "月", "入账笔数", "入账成功总金额", "电商入账笔数", "电商入账成功总金额"]]
+                    .loc[
+                        :,
+                        [
+                            "年",
+                            "月",
+                            "入账笔数",
+                            "入账成功总金额",
+                            "电商入账笔数",
+                            "电商入账成功总金额",
+                        ],
+                    ]
                     .groupby(["年", "月"])
                     .sum()
                     .reset_index()
@@ -910,14 +1121,21 @@ def update_manual_refresh_data_task(
         skipped_count += 1
 
     # 更新其他明细表
+    #
+    # 业报收集的六张原始 Fact 已停止通过 Prefect Excel 导入直接写库，
+    # 后续由平台 CRUD/批量导入接口统一维护单据、填报人和变更记录：
+    #   fact_revenue, fact_expense, fact_profit_bd,
+    #   fact_receivable, fact_inventory, fact_inventory_on_way
+    # 如需恢复，不应只取消下方注释，而应改为调用平台受控接口。
+    print("⊘ 已停用业报收集 Fact 的 Prefect 直接导入：" "收入、费用、其他、应收、存货、在途将由平台统一维护")
     tables_config = [
         ("fact_receipt", "date", "date"),
-        ("fact_profit_bd", "date", "date"),
-        ("fact_expense", "acct_period", "acct_period"),
-        ("fact_inventory", "acct_period", "acct_period"),
-        ("fact_receivable", "acct_period", "acct_period"),
-        ("fact_revenue", "acct_period", "acct_period"),
-        ("fact_inventory_on_way", "acct_period", "acct_period"),
+        # ("fact_profit_bd", "date", "date"),
+        # ("fact_expense", "acct_period", "acct_period"),
+        # ("fact_inventory", "acct_period", "acct_period"),
+        # ("fact_receivable", "acct_period", "acct_period"),
+        # ("fact_revenue", "acct_period", "acct_period"),
+        # ("fact_inventory_on_way", "acct_period", "acct_period"),
     ]
 
     for table_name, table_date_column, df_date_column in tables_config:
