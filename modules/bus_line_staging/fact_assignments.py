@@ -435,8 +435,20 @@ def _fact_assignment_columns(cur, table_name: str) -> list[str]:
     ]
 
 
+def _selected_fact_tables(fact_tables: Sequence[str] | None) -> tuple[str, ...]:
+    if fact_tables is None:
+        return tuple(FACT_TABLE_PERIOD_COLUMNS)
+    requested = {str(table).strip() for table in fact_tables if str(table).strip()}
+    unknown = sorted(requested.difference(FACT_TABLE_PERIOD_COLUMNS))
+    if unknown:
+        raise ValueError(f"不支持的fact业务线归属表: {', '.join(unknown)}")
+    return tuple(table for table in FACT_TABLE_PERIOD_COLUMNS if table in requested)
+
+
 @task(name="校验fact业务线直接归属", log_prints=True)
-def validate_fact_assignments_task(date_range) -> dict[str, int]:
+def validate_fact_assignments_task(
+    date_range, fact_tables: Sequence[str] | None = None
+) -> dict[str, int]:
     """Fail before Staging writes when any source fact assignment is unsafe."""
     conn, cur = connect_to_db()
     counts: dict[str, int] = {}
@@ -445,7 +457,8 @@ def validate_fact_assignments_task(date_range) -> dict[str, int]:
         cur.execute("SELECT unique_lvl FROM dim_org_struc WHERE unique_lvl IS NOT NULL")
         known_org_levels = {str(row[0]).strip() for row in cur.fetchall()}
         date_values = list(date_range)
-        for table_name, period_column in FACT_TABLE_PERIOD_COLUMNS.items():
+        for table_name in _selected_fact_tables(fact_tables):
+            period_column = FACT_TABLE_PERIOD_COLUMNS[table_name]
             selected_columns = _fact_assignment_columns(cur, table_name)
             cur.execute(
                 f"SELECT {', '.join(selected_columns)} FROM {table_name} "
@@ -535,13 +548,16 @@ def build_restore_insert_sql(fact_table: str, spec: Mapping[str, Any]) -> str:
 
 
 @task(name="还原fact业务线到Staging", log_prints=True)
-def restore_fact_assignments_task(date_range, batch_id) -> dict[str, int]:
+def restore_fact_assignments_task(
+    date_range, batch_id, fact_tables: Sequence[str] | None = None
+) -> dict[str, int]:
     """Insert authoritative fact rows and their normalized ratios into one Staging batch."""
     conn, cur = connect_to_db()
     restored: dict[str, int] = {}
     try:
         date_values = list(date_range)
-        for fact_table, spec in RESTORE_SPECS.items():
+        for fact_table in _selected_fact_tables(fact_tables):
+            spec = RESTORE_SPECS[fact_table]
             staging_table = spec["staging_table"]
             period_column = spec["period_column"]
             cur.execute(
