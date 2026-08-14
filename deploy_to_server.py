@@ -29,6 +29,7 @@ from modules import (
     view_update_flow,
 )
 from modules.bus_line_staging import bus_line_staging_flow
+from modules.bus_line_staging.module_selection import ALL_MODULE_OPTIONS
 
 # 添加当前目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -162,8 +163,9 @@ def _serve_bus_line_staging():
     """模块级函数，供 Process 调用"""
     bus_line_staging_flow.serve(
         name="主流程-业务线Staging抽取",
+        parameters={"modules": list(ALL_MODULE_OPTIONS)},
         tags=["Staging", "业务线核算", "自动执行", "月度任务"],
-        description="将业务线拆分数据按批次存入PostgreSQL，重跑时继承已有比例和审核状态",
+        description="按modules参数全量或选择性刷新业务线Staging；部分刷新会保留未选模块并生成完整新批次",
     )
 
 

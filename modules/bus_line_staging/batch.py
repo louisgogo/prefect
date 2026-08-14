@@ -300,6 +300,150 @@ def start_batch(date_range: Iterable[date], flow_run_id: str | None = None) -> s
         conn.close()
 
 
+def _cloneable_columns(cur, table_name: str) -> list[str]:
+    """Return source columns copied between batch versions."""
+    _validate_table_name(table_name)
+    cur.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = %s
+        ORDER BY ordinal_position
+        """,
+        (table_name,),
+    )
+    columns = [str(row[0]) for row in cur.fetchall()]
+    required = {"batch_id", "record_id"}
+    missing = sorted(required.difference(columns))
+    if missing:
+        raise RuntimeError(f"{table_name} 缺少批次复制所需字段: {', '.join(missing)}")
+    excluded = {"id", "batch_id", "record_id", "创建时间", "created_at"}
+    return [column for column in columns if column not in excluded]
+
+
+def clone_previous_batch(batch_id: str) -> dict[str, int]:
+    """Clone the preceding complete batch into a new GENERATING batch."""
+    conn, cur = connect_to_db()
+    cloned: dict[str, int] = {}
+    try:
+        ensure_batch_schema(cur)
+        cur.execute(
+            """
+            SELECT previous_batch_id, status
+            FROM bus_line_staging_batch
+            WHERE batch_id = %s
+            FOR UPDATE
+            """,
+            (batch_id,),
+        )
+        row = cur.fetchone()
+        if not row or row[1] != "GENERATING":
+            raise ValueError(f"Batch {batch_id} is not in GENERATING status")
+        previous_batch_id = row[0]
+        if previous_batch_id is None:
+            raise ValueError("部分模块刷新需要已有上一批完整Staging数据；当前月份请先运行一次全部模块")
+
+        cur.execute(
+            """
+            CREATE TEMP TABLE IF NOT EXISTS bus_line_staging_clone_map (
+                old_record_id UUID PRIMARY KEY,
+                new_record_id UUID NOT NULL
+            ) ON COMMIT DROP
+            """
+        )
+        for table_name, class_name in STAGING_TABLE_CLASSES.items():
+            cur.execute("SELECT to_regclass(%s)", (table_name,))
+            if cur.fetchone()[0] is None:
+                cloned[table_name] = 0
+                continue
+
+            copy_columns = _cloneable_columns(cur, table_name)
+            cur.execute("TRUNCATE bus_line_staging_clone_map")
+            cur.execute(
+                f"""
+                INSERT INTO bus_line_staging_clone_map(old_record_id, new_record_id)
+                SELECT record_id, gen_random_uuid()
+                FROM {table_name}
+                WHERE batch_id = %s
+                """,
+                (previous_batch_id,),
+            )
+
+            quoted_columns = ", ".join(_quote_identifier(column) for column in copy_columns)
+            source_columns = ", ".join(
+                f"previous.{_quote_identifier(column)}" for column in copy_columns
+            )
+            cur.execute(
+                f"""
+                INSERT INTO {table_name}(batch_id, record_id, {quoted_columns})
+                SELECT %s, clone.new_record_id, {source_columns}
+                FROM {table_name} AS previous
+                JOIN bus_line_staging_clone_map AS clone
+                  ON clone.old_record_id = previous.record_id
+                WHERE previous.batch_id = %s
+                """,
+                (batch_id, previous_batch_id),
+            )
+            cloned[table_name] = cur.rowcount
+            cur.execute(
+                """
+                INSERT INTO staging_bus_line_ratio(
+                    class, record_id, bus_line, rate, created_at, updated_at, updated_by
+                )
+                SELECT %s, clone.new_record_id, ratio.bus_line, ratio.rate,
+                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ratio.updated_by
+                FROM staging_bus_line_ratio AS ratio
+                JOIN bus_line_staging_clone_map AS clone
+                  ON clone.old_record_id = ratio.record_id
+                WHERE ratio.class = %s
+                """,
+                (class_name, class_name),
+            )
+        conn.commit()
+        return cloned
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+def reset_batch_tables(batch_id: str, table_names: Iterable[str]) -> dict[str, int]:
+    """Delete selected category rows only from one new batch."""
+    requested = tuple(dict.fromkeys(table_names))
+    for table_name in requested:
+        _validate_table_name(table_name)
+
+    conn, cur = connect_to_db()
+    deleted: dict[str, int] = {}
+    try:
+        ensure_batch_schema(cur)
+        cur.execute(
+            "SELECT status FROM bus_line_staging_batch WHERE batch_id = %s FOR UPDATE",
+            (batch_id,),
+        )
+        row = cur.fetchone()
+        if not row or row[0] != "GENERATING":
+            raise ValueError(f"Batch {batch_id} is not in GENERATING status")
+        for table_name in requested:
+            cur.execute("SELECT to_regclass(%s)", (table_name,))
+            if cur.fetchone()[0] is None:
+                deleted[table_name] = 0
+                continue
+            cur.execute(f"DELETE FROM {table_name} WHERE batch_id = %s", (batch_id,))
+            deleted[table_name] = cur.rowcount
+        conn.commit()
+        return deleted
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
 def inherit_previous_values(batch_id: str, bus_lines: Iterable[str]) -> dict[str, int]:
     """Copy ratios and audit status from this month's preceding batch."""
     conn, cur = connect_to_db()

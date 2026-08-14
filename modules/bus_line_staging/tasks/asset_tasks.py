@@ -1,5 +1,6 @@
 import os
 import sys
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -25,8 +26,15 @@ def calculate_in_transit_order_amount(df: pd.DataFrame) -> pd.Series:
 
 
 @task(name="4-存货应收拆分", log_prints=True)
-def run_inv_ar_split_task(date_range, batch_id):
+def run_inv_ar_split_task(date_range, batch_id, modules: Sequence[str] | None = None):
     print("开始执行: 4-存货、应收账款数据拆分(入库中间表)")
+
+    selected = (
+        {"inventory", "receivable", "in_transit_inventory"} if modules is None else set(modules)
+    )
+    unknown = selected.difference({"inventory", "receivable", "in_transit_inventory"})
+    if unknown:
+        raise ValueError(f"资产拆分收到不支持的模块: {', '.join(sorted(unknown))}")
 
     bus_lines = get_bus_lines()
     conn, cur = connect_to_db()
@@ -291,7 +299,7 @@ def run_inv_ar_split_task(date_range, batch_id):
         )
 
         # 插入存货数据
-        if not df_inv.empty:
+        if "inventory" in selected and not df_inv.empty:
             if len(inv_groups) > 0:
                 insert_to_staging_table(
                     df=df_inv,
@@ -321,7 +329,7 @@ def run_inv_ar_split_task(date_range, batch_id):
                 )
 
         # 插入应收账款数据
-        if not df_ar.empty:
+        if "receivable" in selected and not df_ar.empty:
             if len(ar_groups) > 0:
                 insert_to_staging_table(
                     df=df_ar,
@@ -350,7 +358,7 @@ def run_inv_ar_split_task(date_range, batch_id):
                 )
 
         # 插入在途存货数据
-        if not df_transit.empty:
+        if "in_transit_inventory" in selected and not df_transit.empty:
             if len(transit_groups) > 0:
                 insert_to_staging_table(
                     df=df_transit,
