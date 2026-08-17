@@ -36,12 +36,21 @@ def _create_result_table(engine):
 
 
 def test_strip_source_metadata_columns_removes_json_dict():
-    source = pd.DataFrame([{"source_no": "R1", "business_line_ratios": {"国际业务": 1}}])
+    source = pd.DataFrame(
+        [
+            {
+                "source_no": "R1",
+                "business_line_ratios": {"国际业务": 1},
+                "business_report_staging_id": "staging-row-1",
+            }
+        ]
+    )
 
     result = strip_source_metadata_columns(source)
 
     assert list(result.columns) == ["source_no"]
     assert "business_line_ratios" in source.columns
+    assert "business_report_staging_id" in source.columns
 
 
 def test_replace_date_range_data_drops_source_metadata_and_preserves_other_months(tmp_path):
@@ -75,6 +84,7 @@ def test_replace_date_range_data_drops_source_metadata_and_preserves_other_month
                     "source_no": "NEW-JUNE",
                     "amount": 3,
                     "business_line_ratios": {},
+                    "business_report_staging_id": "staging-row-1",
                 }
             ]
         ),

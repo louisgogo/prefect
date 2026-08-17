@@ -8,7 +8,7 @@ from mypackage.utilities import url_to_db
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 
-SOURCE_METADATA_COLUMNS = frozenset({"business_line_ratios"})
+SOURCE_METADATA_COLUMNS = frozenset({"business_line_ratios", "business_report_staging_id"})
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
