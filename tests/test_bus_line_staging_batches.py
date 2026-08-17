@@ -42,6 +42,8 @@ class InheritanceCursor:
             return (date(2026, 6, 1), "old-batch")
         if "SELECT to_regclass" in self.last_sql:
             return ("staging_bus_revenue",)
+        if "AS ambiguous_matches" in self.last_sql:
+            return (0, 0)
         return None
 
     def close(self):
@@ -163,6 +165,69 @@ class BusLineStagingBatchTests(unittest.TestCase):
         self.assertIn("new_row.record_id", ratio_sql)
         self.assertIn("ratio.record_id = previous.record_id", ratio_sql)
         self.assertTrue(connection.committed)
+
+    def test_inheritance_falls_back_to_business_payload_when_source_number_changes(
+        self,
+    ):
+        class RenumberedCursor(InheritanceCursor):
+            def execute(self, sql, params=None):
+                super().execute(sql, params)
+                if self.last_sql.startswith("UPDATE staging_bus_revenue"):
+                    self.rowcount = 0
+
+            def fetchone(self):
+                if "AS ambiguous_matches" in self.last_sql:
+                    return (0, 2)
+                return super().fetchone()
+
+        cursor = RenumberedCursor()
+        connection = FakeConnection(cursor)
+        with patch.object(batch, "connect_to_db", return_value=(connection, cursor)), patch.dict(
+            batch.STAGING_TABLE_DATE_COLUMNS,
+            {"staging_bus_revenue": "会计期间"},
+            clear=True,
+        ):
+            result = batch.inherit_previous_values("new-batch", ["国际业务", "国内硬件"])
+
+        self.assertEqual(result, {"staging_bus_revenue": 2})
+        fallback_check_sql, fallback_check_params = next(
+            (sql, params) for sql, params in cursor.executed if "AS ambiguous_matches" in sql
+        )
+        self.assertIn("md5((to_jsonb(previous) - %s::text[])::text)", fallback_check_sql)
+        self.assertIn('exact_previous."来源编号" = new_row."来源编号"', fallback_check_sql)
+        self.assertIn("来源编号", fallback_check_params[0])
+        self.assertIn("审核状态", fallback_check_params[0])
+        fallback_insert_sql = next(
+            sql
+            for sql, _ in cursor.executed
+            if sql.startswith("WITH old_records") and "RETURNING new_row.record_id" in sql
+        )
+        self.assertIn("JOIN staging_bus_line_ratio AS old_ratio", fallback_insert_sql)
+        self.assertTrue(connection.committed)
+
+    def test_inheritance_rejects_ambiguous_payload_ratio_signatures(self):
+        class AmbiguousCursor(InheritanceCursor):
+            def execute(self, sql, params=None):
+                super().execute(sql, params)
+                if self.last_sql.startswith("UPDATE staging_bus_revenue"):
+                    self.rowcount = 0
+
+            def fetchone(self):
+                if "AS ambiguous_matches" in self.last_sql:
+                    return (1, 0)
+                return super().fetchone()
+
+        cursor = AmbiguousCursor()
+        connection = FakeConnection(cursor)
+        with patch.object(batch, "connect_to_db", return_value=(connection, cursor)), patch.dict(
+            batch.STAGING_TABLE_DATE_COLUMNS,
+            {"staging_bus_revenue": "会计期间"},
+            clear=True,
+        ):
+            with self.assertRaisesRegex(ValueError, "比例或审核状态不一致"):
+                batch.inherit_previous_values("new-batch", ["国际业务"])
+
+        self.assertTrue(connection.rolled_back)
 
     def test_current_edit_batch_is_resolved_by_month_not_latest_id(self):
         cursor = CurrentBatchCursor()

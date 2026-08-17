@@ -26,6 +26,16 @@ STAGING_TABLE_CLASSES = {
     "staging_bus_in_transit_inventory": "在途存货",
 }
 
+INHERITANCE_IDENTITY_COLUMNS = (
+    "id",
+    "batch_id",
+    "record_id",
+    "审核状态",
+    "创建时间",
+    "created_at",
+    "来源编号",
+)
+
 
 def _month_start(value: date) -> date:
     return value.replace(day=1)
@@ -462,6 +472,7 @@ def inherit_previous_values(batch_id: str, bus_lines: Iterable[str]) -> dict[str
         if not batch_row:
             raise ValueError(f"Unknown batch: {batch_id}")
         acct_period, previous_batch_id = batch_row
+        excluded_columns = list(dict.fromkeys((*INHERITANCE_IDENTITY_COLUMNS, *bus_lines)))
         for table_name, date_column in STAGING_TABLE_DATE_COLUMNS.items():
             cur.execute("SELECT to_regclass(%s)", (table_name,))
             if cur.fetchone()[0] is None or previous_batch_id is None:
@@ -518,6 +529,156 @@ def inherit_previous_values(batch_id: str, bus_lines: Iterable[str]) -> dict[str
                 """,
                 (class_name, previous_batch_id, class_name, batch_id, class_name),
             )
+            cur.execute(
+                f"""
+                WITH old_records AS (
+                    SELECT
+                        previous.record_id AS old_record_id,
+                        md5((to_jsonb(previous) - %s::text[])::text) AS fingerprint,
+                        previous."审核状态" AS audit_status,
+                        COALESCE(
+                            jsonb_object_agg(ratio.bus_line, ratio.rate ORDER BY ratio.bus_line)
+                                FILTER (WHERE ratio.bus_line IS NOT NULL),
+                            '{{}}'::jsonb
+                        ) AS ratio_signature
+                    FROM {table_name} AS previous
+                    LEFT JOIN staging_bus_line_ratio AS ratio
+                      ON ratio.class = %s
+                     AND ratio.record_id = previous.record_id
+                    WHERE previous.batch_id = %s
+                    GROUP BY previous.record_id, fingerprint, previous."审核状态"
+                ), ambiguous AS (
+                    SELECT fingerprint
+                    FROM old_records
+                    GROUP BY fingerprint
+                    HAVING COUNT(DISTINCT jsonb_build_object(
+                        'audit_status', audit_status,
+                        'ratios', ratio_signature
+                    )) > 1
+                ), resolved AS (
+                    SELECT DISTINCT ON (fingerprint)
+                        fingerprint, old_record_id, audit_status
+                    FROM old_records
+                    WHERE fingerprint NOT IN (SELECT fingerprint FROM ambiguous)
+                    ORDER BY fingerprint, old_record_id
+                ), unmatched_new AS (
+                    SELECT md5((to_jsonb(new_row) - %s::text[])::text) AS fingerprint
+                    FROM {table_name} AS new_row
+                    WHERE new_row.batch_id = %s
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM {table_name} AS exact_previous
+                          WHERE exact_previous.batch_id = %s
+                            AND exact_previous."{date_column}" = new_row."{date_column}"
+                            AND exact_previous."来源编号" = new_row."来源编号"
+                            AND exact_previous."唯一层级" = new_row."唯一层级"
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM staging_bus_line_ratio AS current_ratio
+                          WHERE current_ratio.class = %s
+                            AND current_ratio.record_id = new_row.record_id
+                      )
+                )
+                SELECT
+                    (SELECT COUNT(DISTINCT unmatched_new.fingerprint)
+                     FROM unmatched_new
+                     JOIN ambiguous USING (fingerprint)) AS ambiguous_matches,
+                    (SELECT COUNT(*)
+                     FROM unmatched_new
+                     JOIN resolved USING (fingerprint)) AS fallback_matches
+                """,
+                (
+                    excluded_columns,
+                    class_name,
+                    previous_batch_id,
+                    excluded_columns,
+                    batch_id,
+                    previous_batch_id,
+                    class_name,
+                ),
+            )
+            ambiguous_matches, fallback_matches = cur.fetchone()
+            if ambiguous_matches:
+                raise ValueError(
+                    f"{table_name} 有 {ambiguous_matches} 组来源编号变化后的相同业务数据，"
+                    "但上一批比例或审核状态不一致，已停止继承以避免错误覆盖"
+                )
+            fallback_matches = int(fallback_matches or 0)
+            if not fallback_matches:
+                continue
+            cur.execute(
+                f"""
+                WITH old_records AS (
+                    SELECT
+                        previous.record_id AS old_record_id,
+                        md5((to_jsonb(previous) - %s::text[])::text) AS fingerprint,
+                        previous."审核状态" AS audit_status,
+                        COALESCE(
+                            jsonb_object_agg(ratio.bus_line, ratio.rate ORDER BY ratio.bus_line)
+                                FILTER (WHERE ratio.bus_line IS NOT NULL),
+                            '{{}}'::jsonb
+                        ) AS ratio_signature
+                    FROM {table_name} AS previous
+                    LEFT JOIN staging_bus_line_ratio AS ratio
+                      ON ratio.class = %s
+                     AND ratio.record_id = previous.record_id
+                    WHERE previous.batch_id = %s
+                    GROUP BY previous.record_id, fingerprint, previous."审核状态"
+                ), resolved AS (
+                    SELECT DISTINCT ON (fingerprint)
+                        fingerprint, old_record_id, audit_status
+                    FROM old_records
+                    ORDER BY fingerprint, old_record_id
+                ), updated AS (
+                    UPDATE {table_name} AS new_row
+                    SET "审核状态" = resolved.audit_status
+                    FROM resolved
+                    WHERE new_row.batch_id = %s
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM {table_name} AS exact_previous
+                          WHERE exact_previous.batch_id = %s
+                            AND exact_previous."{date_column}" = new_row."{date_column}"
+                            AND exact_previous."来源编号" = new_row."来源编号"
+                            AND exact_previous."唯一层级" = new_row."唯一层级"
+                      )
+                      AND md5((to_jsonb(new_row) - %s::text[])::text) = resolved.fingerprint
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM staging_bus_line_ratio AS current_ratio
+                          WHERE current_ratio.class = %s
+                            AND current_ratio.record_id = new_row.record_id
+                      )
+                    RETURNING new_row.record_id, resolved.old_record_id
+                )
+                INSERT INTO staging_bus_line_ratio(
+                    class, record_id, bus_line, rate, created_at, updated_at, updated_by
+                )
+                SELECT %s, updated.record_id, old_ratio.bus_line, old_ratio.rate,
+                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, old_ratio.updated_by
+                FROM updated
+                JOIN staging_bus_line_ratio AS old_ratio
+                  ON old_ratio.class = %s
+                 AND old_ratio.record_id = updated.old_record_id
+                ON CONFLICT (class, record_id, bus_line) DO UPDATE
+                SET rate = EXCLUDED.rate,
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    excluded_columns,
+                    class_name,
+                    previous_batch_id,
+                    batch_id,
+                    previous_batch_id,
+                    excluded_columns,
+                    class_name,
+                    class_name,
+                    class_name,
+                ),
+            )
+            inherited[table_name] += fallback_matches
         conn.commit()
         return inherited
     except Exception:
