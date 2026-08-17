@@ -8,7 +8,9 @@ from prefect import task
 
 # 添加根目录到路径（prefect目录）
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from mypackage.utilities import connect_to_db, delete_data_add_data_by_DateRange, val_dist
+from mypackage.utilities import connect_to_db, val_dist
+
+from .write_utils import replace_date_range_data, strip_source_metadata_columns
 
 
 @task(name="load_receivable_data", log_prints=True)
@@ -29,6 +31,7 @@ def load_receivable_data_task(date_range: pd.DatetimeIndex) -> pd.DataFrame:
             ("%无归属%", date_range.min(), date_range.max()),
         )
         df_ar = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
+        df_ar = strip_source_metadata_columns(df_ar)
 
         # 按照日期筛选数据范围
         df_ar["acct_period"] = pd.to_datetime(df_ar["acct_period"])
@@ -169,7 +172,7 @@ def save_receivable_detail_task(df: pd.DataFrame, date_range: pd.DatetimeIndex) 
         df = df.rename(columns={"unique_lvl": "sec_dist_lvl", "source_lvl": "unique_lvl"})
         df_date_column = "acct_period"
 
-        delete_data_add_data_by_DateRange(table_name, date_column, df, df_date_column, date_range)
+        replace_date_range_data(table_name, date_column, df, df_date_column, date_range)
         print(f"保存应收明细到数据库完成，共 {len(df)} 条记录")
     except Exception as e:
         print(f"保存应收明细到数据库时发生错误: {str(e)}")
@@ -194,6 +197,7 @@ def load_inventory_data_task(date_range: pd.DatetimeIndex) -> pd.DataFrame:
             ("%无归属%", date_range.min(), date_range.max()),
         )
         df_inv = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
+        df_inv = strip_source_metadata_columns(df_inv)
 
         # 按照日期筛选数据范围
         df_inv["acct_period"] = pd.to_datetime(df_inv["acct_period"])
@@ -324,7 +328,7 @@ def save_inventory_detail_task(df: pd.DataFrame, date_range: pd.DatetimeIndex) -
         df = df.rename(columns={"unique_lvl": "sec_dist_lvl", "source_lvl": "unique_lvl"})
         df_date_column = "acct_period"
 
-        delete_data_add_data_by_DateRange(table_name, date_column, df, df_date_column, date_range)
+        replace_date_range_data(table_name, date_column, df, df_date_column, date_range)
         print(f"保存存货明细到数据库完成，共 {len(df)} 条记录")
     except Exception as e:
         print(f"保存存货明细到数据库时发生错误: {str(e)}")
@@ -349,6 +353,7 @@ def load_inventory_on_way_data_task(date_range: pd.DatetimeIndex) -> pd.DataFram
             ("%无归属%", date_range.min(), date_range.max()),
         )
         df_inv_on = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
+        df_inv_on = strip_source_metadata_columns(df_inv_on)
 
         # 按照日期筛选数据范围
         df_inv_on["acct_period"] = pd.to_datetime(df_inv_on["acct_period"])
@@ -467,7 +472,7 @@ def save_inventory_on_way_detail_task(df: pd.DataFrame, date_range: pd.DatetimeI
         df = df.rename(columns={"unique_lvl": "sec_dist_lvl", "source_lvl": "unique_lvl"})
         df_date_column = "acct_period"
 
-        delete_data_add_data_by_DateRange(table_name, date_column, df, df_date_column, date_range)
+        replace_date_range_data(table_name, date_column, df, df_date_column, date_range)
         print(f"保存在途存货明细到数据库完成，共 {len(df)} 条记录")
     except Exception as e:
         print(f"保存在途存货明细到数据库时发生错误: {str(e)}")
