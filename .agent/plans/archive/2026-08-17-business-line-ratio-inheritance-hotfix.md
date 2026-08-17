@@ -13,8 +13,8 @@ When selected business-line Staging modules are refreshed, draft ratios should s
 - [x] (2026-08-17 02:49Z) Added regression tests covering renumbered sources and conflicting duplicate payload signatures.
 - [x] (2026-08-17 02:49Z) Implemented strict payload fallback after exact source matching, with ambiguity rejection.
 - [x] (2026-08-17 02:52Z) Passed 23 focused unit tests, 123 broader unittest cases, 10 pytest-only Fact assignment cases, and all changed-file pre-commit hooks; production SQL validation returned zero remaining fallbacks after repair and planned the DML successfully.
-- [ ] Commit, push, open and merge a ready production hotfix PR to `session/prefect`.
-- [ ] Update `/root/prefect`, restart `prefect-workers`, and verify the deployment is registered and healthy.
+- [x] (2026-08-17 02:53Z) Committed, pushed, and merged production hotfix PR #25 to `session/prefect` as `ca60e35106eb9782de0159b6aab4934acecc5605`.
+- [x] (2026-08-17 02:53Z) Updated `/root/prefect`, restarted `prefect-workers`, and verified the worker is active and the business-line Staging deployment is unpaused and `READY`.
 
 ## Surprises & Discoveries
 
@@ -29,7 +29,7 @@ When selected business-line Staging modules are refreshed, draft ratios should s
 
 ## Outcomes & Retrospective
 
-The affected production draft is repaired and code validation is complete. GitHub publication and production worker rollout remain.
+The affected production draft is repaired: 6,364 prior ratios were restored, and all 6,457 current rows now have ratios. The defensive inheritance fallback is merged and running in production, with exact source matching still primary and ambiguous payload matches rejected. The Prefect worker is active and the business-line Staging deployment is unpaused and `READY`. No schema change or new dependency was required.
 
 ## Context and Orientation
 
@@ -62,3 +62,4 @@ The change uses existing `bus_line_staging_batch`, six `staging_bus_*` tables, a
 ## Revision Notes
 
 - 2026-08-17: Created for the production hotfix after confirming source renumbering caused zero inheritance for the affected organization.
+- 2026-08-17: Marked complete after PR #25 merged to `session/prefect`, the production worker restarted successfully, and deployment health verification passed; moved to the plan archive.
