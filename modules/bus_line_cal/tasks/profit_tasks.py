@@ -4,14 +4,10 @@ import os
 import sys
 
 import pandas as pd
-from mypackage.utilities import (
-    add_data,
-    connect_to_db,
-    delete_data_add_data_by_DateRange,
-    val_dist,
-)
-
+from mypackage.utilities import add_data, connect_to_db, val_dist
 from prefect import task
+
+from .write_utils import replace_date_range_data, strip_source_metadata_columns
 
 # 添加根目录到路径（prefect目录）
 sys.path.append(
@@ -41,6 +37,7 @@ def load_profit_data_task(date_range: pd.DatetimeIndex) -> pd.DataFrame:
         df_profit = pd.DataFrame(
             cur.fetchall(), columns=[desc[0] for desc in cur.description]
         )
+        df_profit = strip_source_metadata_columns(df_profit)
 
         # 删除最后更新时间
         if "last_modified" in df_profit.columns:
@@ -409,7 +406,7 @@ def save_profit_detail_task(df: pd.DataFrame, date_range: pd.DatetimeIndex) -> N
             df = df.drop(["id"], axis=1)
         df_date_column = "date"
 
-        delete_data_add_data_by_DateRange(
+        replace_date_range_data(
             table_name, date_column, df, df_date_column, date_range
         )
         print(f"保存利润明细到数据库完成，共 {len(df)} 条记录")

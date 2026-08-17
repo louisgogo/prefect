@@ -4,9 +4,10 @@ import os
 import sys
 
 import pandas as pd
-from mypackage.utilities import connect_to_db, delete_data_add_data_by_DateRange, val_dist
-
+from mypackage.utilities import connect_to_db, val_dist
 from prefect import task
+
+from .write_utils import replace_date_range_data, strip_source_metadata_columns
 
 # 添加根目录到路径（prefect目录）
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -30,6 +31,7 @@ def load_expense_data_task(date_range: pd.DatetimeIndex) -> pd.DataFrame:
             ("%无归属%", date_range.min(), date_range.max()),
         )
         df_expense = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
+        df_expense = strip_source_metadata_columns(df_expense)
 
         # 删除最后更新时间
         if "last_modified" in df_expense.columns:
@@ -346,7 +348,7 @@ def save_expense_detail_task(df: pd.DataFrame, date_range: pd.DatetimeIndex) -> 
             df = df.drop(["id"], axis=1)
         df_date_column = "acct_period"
 
-        delete_data_add_data_by_DateRange(table_name, date_column, df, df_date_column, date_range)
+        replace_date_range_data(table_name, date_column, df, df_date_column, date_range)
         print(f"保存费用明细到数据库完成，共 {len(df)} 条记录")
     except Exception as e:
         print(f"保存费用明细到数据库时发生错误: {str(e)}")
