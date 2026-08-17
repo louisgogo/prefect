@@ -6,24 +6,24 @@
 
 | 参数代码 | 来源 | 目标 |
 |---|---|---|
-| `customer` | SQL Server `V_XGD_BD_CUSTOMER`，组织 1000 | `dim_customer_info` |
+| `customer` | 金蝶 `BD_Customer`，使用组织 1000 | `dim_customer_info` |
 | `material` | SQL Server `V_XGD_BD_MATERIAL`，组织 1000/1700/1200 | `dim_material_master` |
 | `rd_project` | SQL Server `V_XGD_BD_YFPROJ` | `dim_rd_code` |
 | `supplier` | 金蝶 `BD_Supplier`，使用组织 1000 | `dim_supplier_info` |
 | `acquiring_metrics` | 五张 Oracle `T_JL_*` 表 | 同名小写 PostgreSQL 表 |
 
-客户、物料和研发项目继续保留 `C99 / 不分客户`、`PD99 / 不分产品`、`无 / 公共部门`。物料编码跨组织重复时依次优先使用 1000、1700、1200。
+客户、物料和研发项目继续保留 `C99 / 不分客户`、`PD99 / 不分产品`、`无 / 公共部门`。客户的国家、省、市和区域取金蝶对应辅助资料的显示值。物料编码跨组织重复时依次优先使用 1000、1700、1200。
 
 ## Worker 配置
 
 所有凭据只配置在 Prefect Worker 环境中：
 
-- `BUSINESS_DATA_SQLSERVER_CONNECTION_STRING`
+- `BUSINESS_DATA_SQLSERVER_CONNECTION_STRING`（物料和研发项目仍需使用）
 - `BUSINESS_DATA_ORACLE_USER`
 - `BUSINESS_DATA_ORACLE_PASSWORD`
 - `BUSINESS_DATA_ORACLE_DSN`
 - `BUSINESS_DATA_FINANCE_DATABASE_URL`（未配置时兼容 `KINGDEE_VOUCHER_DATABASE_URL` 或项目默认财务连接）
-- `XGD_TOKEN`（兼容 `AIHUB_FONE_API_TOKEN`）
+- `XGD_TOKEN`（客户和供应商金蝶接口使用，兼容 `AIHUB_FONE_API_TOKEN`）
 - `KINGDEE_VOUCHER_BASE_URL`（可选）
 - `BUSINESS_DATA_MIN_ROW_RATIO`（可选，默认 `0.5`；也可追加数据集大写后缀单独设置）
 

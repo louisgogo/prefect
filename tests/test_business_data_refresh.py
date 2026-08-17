@@ -14,6 +14,7 @@ from modules.business_data_refresh.flows.business_data_refresh_flow import (
 )
 from modules.business_data_refresh.tasks.business_data_refresh_tasks import (
     BusinessDataRefreshError,
+    fetch_customer_rows,
     fetch_supplier_rows,
     normalize_material_rows,
     normalize_supplier_rows,
@@ -144,6 +145,50 @@ class BusinessDataRefreshTests(unittest.TestCase):
             [payload["StartRow"] for payload in session.payloads],
             [0, 1, 2],
         )
+
+    def test_customer_api_paginates_and_maps_location_names(self):
+        session = FakeSession(
+            [
+                [
+                    {
+                        "FCUSTID": 1,
+                        "FNumber": "C001",
+                        "FName": "客户甲",
+                        "FCOUNTRY.FDataValue": "中国",
+                        "FPROVINCE.FDataValue": "广东省",
+                        "FCITY.FDataValue": "深圳市",
+                        "FPROVINCIAL.FDataValue": "华南地区",
+                    }
+                ],
+                [],
+            ]
+        )
+        with patch.dict(os.environ, {"XGD_TOKEN": "test-token"}, clear=False):
+            rows = fetch_customer_rows(session, page_size=1, max_retries=0)
+
+        self.assertEqual(
+            rows,
+            [
+                {
+                    "fnumber": "C001",
+                    "fname": "客户甲",
+                    "fcountry": "中国",
+                    "fprovince": "广东省",
+                    "fcity": "深圳市",
+                    "fprovincial": "华南地区",
+                }
+            ],
+        )
+        self.assertEqual(
+            [payload["StartRow"] for payload in session.payloads],
+            [0, 1],
+        )
+        self.assertEqual(session.payloads[0]["FormId"], "BD_Customer")
+        self.assertEqual(
+            session.payloads[0]["FilterString"],
+            "FUseOrgId.FNumber = '1000'",
+        )
+        self.assertEqual(session.payloads[0]["OrderString"], "FCUSTID ASC")
 
     def test_partial_failure_preserves_success_summary(self):
         events = []

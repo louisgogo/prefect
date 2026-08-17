@@ -32,13 +32,23 @@ ORACLE_DSN_ENV = "BUSINESS_DATA_ORACLE_DSN"
 FINANCE_DATABASE_URL_ENV = "BUSINESS_DATA_FINANCE_DATABASE_URL"
 MIN_ROW_RATIO_ENV = "BUSINESS_DATA_MIN_ROW_RATIO"
 
-KINGDEE_FORM_ID = "BD_Supplier"
+KINGDEE_CUSTOMER_FORM_ID = "BD_Customer"
+KINGDEE_SUPPLIER_FORM_ID = "BD_Supplier"
 KINGDEE_USE_ORG_CODE = "1000"
 KINGDEE_BASE_URL_ENV = "KINGDEE_VOUCHER_BASE_URL"
 KINGDEE_TOKEN_ENVS = ("XGD_TOKEN", "AIHUB_FONE_API_TOKEN")
 KINGDEE_VALID_DOCUMENT_STATUSES = frozenset({"C", "D"})
 KINGDEE_ENABLED_STATUS = "A"
-KINGDEE_FIELD_KEYS = (
+KINGDEE_CUSTOMER_FIELD_KEYS = (
+    "FCUSTID",
+    "FNumber",
+    "FName",
+    "FCOUNTRY.FDataValue",
+    "FPROVINCE.FDataValue",
+    "FCITY.FDataValue",
+    "FPROVINCIAL.FDataValue",
+)
+KINGDEE_SUPPLIER_FIELD_KEYS = (
     "FSupplierId",
     "FNumber",
     "FName",
@@ -521,9 +531,14 @@ def _kingdee_error(data: Any) -> str:
     return "; ".join(messages) or "未返回错误详情"
 
 
-def fetch_supplier_rows(
+def _fetch_kingdee_rows(
     session: requests.Session,
     *,
+    form_id: str,
+    field_keys: Sequence[str],
+    filter_string: str,
+    order_string: str,
+    dataset_name: str,
     page_size: int = 5000,
     timeout_seconds: float = 60,
     max_retries: int = 3,
@@ -537,10 +552,10 @@ def fetch_supplier_rows(
     start_row = 0
     while True:
         payload = {
-            "FormId": KINGDEE_FORM_ID,
-            "FieldKeys": ",".join(KINGDEE_FIELD_KEYS),
-            "FilterString": f"FUseOrgId.FNumber = '{KINGDEE_USE_ORG_CODE}'",
-            "OrderString": "FSupplierId ASC",
+            "FormId": form_id,
+            "FieldKeys": ",".join(field_keys),
+            "FilterString": filter_string,
+            "OrderString": order_string,
             "StartRow": start_row,
             "Limit": page_size,
         }
@@ -568,17 +583,68 @@ def fetch_supplier_rows(
                 if attempt < max_retries:
                     time.sleep(min(2**attempt, 8))
                     continue
-                raise BusinessDataRefreshError("金蝶供应商接口网络请求失败") from exc
+                raise BusinessDataRefreshError(f"金蝶{dataset_name}接口网络请求失败") from exc
             except (requests.HTTPError, ValueError) as exc:
-                raise BusinessDataRefreshError("金蝶供应商接口返回无效响应") from exc
+                raise BusinessDataRefreshError(f"金蝶{dataset_name}接口返回无效响应") from exc
         if not isinstance(page, list):
-            raise BusinessDataRefreshError(f"金蝶供应商接口查询失败：{_kingdee_error(page)}")
+            raise BusinessDataRefreshError(f"金蝶{dataset_name}接口查询失败：{_kingdee_error(page)}")
         if not all(isinstance(row, dict) for row in page):
-            raise BusinessDataRefreshError("金蝶供应商接口返回了非对象数据行")
+            raise BusinessDataRefreshError(f"金蝶{dataset_name}接口返回了非对象数据行")
         if not page:
             return rows
         rows.extend(page)
         start_row += len(page)
+
+
+def fetch_customer_rows(
+    session: requests.Session,
+    *,
+    page_size: int = 5000,
+    timeout_seconds: float = 60,
+    max_retries: int = 3,
+) -> List[Dict[str, Any]]:
+    rows = _fetch_kingdee_rows(
+        session,
+        form_id=KINGDEE_CUSTOMER_FORM_ID,
+        field_keys=KINGDEE_CUSTOMER_FIELD_KEYS,
+        filter_string=f"FUseOrgId.FNumber = '{KINGDEE_USE_ORG_CODE}'",
+        order_string="FCUSTID ASC",
+        dataset_name="客户",
+        page_size=page_size,
+        timeout_seconds=timeout_seconds,
+        max_retries=max_retries,
+    )
+    return [
+        {
+            "fnumber": row.get("FNumber"),
+            "fname": row.get("FName"),
+            "fcountry": row.get("FCOUNTRY.FDataValue"),
+            "fprovince": row.get("FPROVINCE.FDataValue"),
+            "fcity": row.get("FCITY.FDataValue"),
+            "fprovincial": row.get("FPROVINCIAL.FDataValue"),
+        }
+        for row in rows
+    ]
+
+
+def fetch_supplier_rows(
+    session: requests.Session,
+    *,
+    page_size: int = 5000,
+    timeout_seconds: float = 60,
+    max_retries: int = 3,
+) -> List[Dict[str, Any]]:
+    return _fetch_kingdee_rows(
+        session,
+        form_id=KINGDEE_SUPPLIER_FORM_ID,
+        field_keys=KINGDEE_SUPPLIER_FIELD_KEYS,
+        filter_string=f"FUseOrgId.FNumber = '{KINGDEE_USE_ORG_CODE}'",
+        order_string="FSupplierId ASC",
+        dataset_name="供应商",
+        page_size=page_size,
+        timeout_seconds=timeout_seconds,
+        max_retries=max_retries,
+    )
 
 
 def _sync_supplier_records(records: Sequence[SupplierRecord]) -> Dict[str, Any]:
@@ -773,13 +839,8 @@ def _replace_acquiring_snapshots(
 @task(name="更新客户主数据", retries=1, retry_delay_seconds=30)
 def refresh_customer_task() -> Dict[str, Any]:
     logger = get_run_logger()
-    rows = _fetch_sqlserver(
-        """
-        SELECT fnumber, fname, FCOUNTRY, FPROVINCE, FCITY, FPROVINCIAL
-        FROM V_XGD_BD_CUSTOMER
-        WHERE forgid = '1000'
-        """
-    )
+    with requests.Session() as session:
+        rows = fetch_customer_rows(session)
     normalized = normalize_customer_rows(rows)
     result = _replace_snapshot(
         "customer",
