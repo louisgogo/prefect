@@ -1,6 +1,6 @@
 # 业报基础数据更新
 
-`子流程-业报基础数据更新` 统一替代旧补充数据 notebook，每天 06:00（Asia/Shanghai）更新客户、物料、研发项目、供应商和收单指标五类数据，也可由业报收集编辑人员在“数据同步”中更新全部或单个数据集。
+`子流程-业报基础数据更新` 统一替代旧补充数据 notebook，每天 06:00（Asia/Shanghai）更新客户、物料、研发项目、供应商、收单指标和当月汇率六类数据，也可由业报收集编辑人员在“数据同步”中更新全部或单个数据集。
 
 ## 数据集
 
@@ -11,8 +11,13 @@
 | `rd_project` | SQL Server `V_XGD_BD_YFPROJ` | `dim_rd_code` |
 | `supplier` | 金蝶 `BD_Supplier`，使用组织 1000 | `dim_supplier_info` |
 | `acquiring_metrics` | 五张 Oracle `T_JL_*` 表 | 同名小写 PostgreSQL 表 |
+| `exchange_rate` | 金蝶 `BD_Rate`，美元/欧元兑人民币 | `excel_exchange_rates` 当前月份 |
 
 客户、物料和研发项目继续保留 `C99 / 不分客户`、`PD99 / 不分产品`、`无 / 公共部门`。客户的国家、省、市和区域取金蝶对应辅助资料的显示值。物料编码跨组织重复时依次优先使用 1000、1700、1200。
+
+汇率默认按流程运行时的 Asia/Shanghai 当前月份更新，也可显式传入 `exchange_rate_year` 和 `exchange_rate_month`。任务只删除并重写该月份 `effective_date` 范围内的数据，历史月份不会重新抓取或改写；同月重复运行可补齐月末即期汇率。
+
+旧 `data_import_flow` 的 Excel 汇率导入默认关闭，避免在月度数据导入时覆盖金蝶结果。只有显式设置 `import_exchange_rates_from_excel=true` 时才启用应急 Excel 汇率导入。
 
 ## Worker 配置
 

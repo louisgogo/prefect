@@ -1031,6 +1031,7 @@ def update_manual_refresh_data_task(
     end_date: str,
     replace_existing: bool = True,
     replace_exchange_rates: Optional[bool] = None,
+    update_exchange_rates: bool = True,
 ) -> None:
     """
     更新手工刷新数据
@@ -1041,6 +1042,7 @@ def update_manual_refresh_data_task(
         end_date: 结束日期
         replace_existing: 是否替换已存在的数据
         replace_exchange_rates: 汇率表是否替换已存数据。不指定时跟随 replace_existing
+        update_exchange_rates: 是否允许从 Excel 更新汇率；日常流程默认关闭
     """
     print("=" * 60)
     print("开始更新手工刷新数据")
@@ -1054,7 +1056,10 @@ def update_manual_refresh_data_task(
 
     # 更新汇率表
     table_name = "excel_exchange_rates"
-    if table_name in dfs:
+    if not update_exchange_rates:
+        print(f"⊘ 跳过 {table_name}（汇率已改由金蝶基础数据流程按月更新）")
+        skipped_count += 1
+    elif table_name in dfs:
         df = dfs[table_name].copy()
         # 先检查 DataFrame 是否为空
         if df.empty:
