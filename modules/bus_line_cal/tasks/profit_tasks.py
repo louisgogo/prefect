@@ -73,14 +73,16 @@ def process_manual_profit_task(
     try:
         df_profit_bus = df_upload_merge_all[df_upload_merge_all["class"] == "其他"]
         df_profit_bus_list = df_profit_bus["source_no"].tolist()
-        df_profit_bus.loc[:, "source_lvl"] = df_profit_bus["unique_lvl"]
 
         df_profit_bus_hand = df_profit[
             df_profit["source_no"].isin(df_profit_bus_list)
         ].merge(
-            df_profit_bus[["source_no", "bus_line", "source_lvl", "category", "rate"]],
+            df_profit_bus[["source_no", "bus_line", "unique_lvl", "category", "rate"]],
             on=["source_no"],
             how="left",
+        )
+        df_profit_bus_hand = df_profit_bus_hand.rename(
+            columns={"unique_lvl_x": "source_lvl", "unique_lvl_y": "unique_lvl"}
         )
         df_profit_bus_hand = df_profit_bus_hand.astype(
             {"rate": "float", "mo_amt": "float"}
