@@ -15,6 +15,7 @@ from ..tasks.business_data_refresh_tasks import (
     _connect_finance,
     refresh_acquiring_metrics_task,
     refresh_customer_task,
+    refresh_exchange_rate_task,
     refresh_material_task,
     refresh_rd_project_task,
     refresh_supplier_task,
@@ -26,6 +27,7 @@ DATASET_LABELS = {
     "rd_project": "研发项目主数据",
     "supplier": "供应商主数据",
     "acquiring_metrics": "收单业务指标",
+    "exchange_rate": "汇率",
 }
 
 
@@ -214,6 +216,8 @@ def execute_dataset_runners(
 def business_data_refresh_flow(
     datasets: Optional[List[str]] = None,
     requested_by: Optional[str] = None,
+    exchange_rate_year: Optional[int] = None,
+    exchange_rate_month: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Refresh all or selected business-report datasets from authoritative sources."""
     logger = get_run_logger()
@@ -223,7 +227,12 @@ def business_data_refresh_flow(
     notify_hermes_task(
         event="started",
         flow_name="业报基础数据更新",
-        payload={"datasets": selected, "requested_by": requested_by},
+        payload={
+            "datasets": selected,
+            "requested_by": requested_by,
+            "exchange_rate_year": exchange_rate_year,
+            "exchange_rate_month": exchange_rate_month,
+        },
     )
     runners: Dict[str, Callable[[], Dict[str, Any]]] = {
         "customer": refresh_customer_task,
@@ -231,6 +240,10 @@ def business_data_refresh_flow(
         "rd_project": refresh_rd_project_task,
         "supplier": refresh_supplier_task,
         "acquiring_metrics": refresh_acquiring_metrics_task,
+        "exchange_rate": lambda: refresh_exchange_rate_task(
+            exchange_rate_year,
+            exchange_rate_month,
+        ),
     }
     summary = execute_dataset_runners(
         selected,
@@ -247,6 +260,8 @@ def business_data_refresh_flow(
         {
             "flow_run_id": str(run_id),
             "requested_by": requested_by,
+            "exchange_rate_year": exchange_rate_year,
+            "exchange_rate_month": exchange_rate_month,
             "completed_at": datetime.now().isoformat(),
         }
     )

@@ -70,9 +70,10 @@ def _serve_data_import(last_month_year: int, last_month: int):
             "year": last_month_year,
             "month": last_month,
             "replace_existing": False,
+            "import_exchange_rates_from_excel": False,
         },
         tags=["数据导入", "月度任务", "自动执行"],
-        description="数据导入流程：从 Excel 文件导入数据到数据库（业务数据板块和汇率表默认替换已存在数据，其他板块默认不替换）",
+        description="数据导入流程：从 Excel 文件导入业务数据；汇率默认不再从 Excel 写入，由金蝶基础数据流程更新。",
     )
 
 
@@ -253,11 +254,14 @@ def _serve_business_data_refresh():
                 "rd_project",
                 "supplier",
                 "acquiring_metrics",
+                "exchange_rate",
             ],
             "requested_by": None,
+            "exchange_rate_year": None,
+            "exchange_rate_month": None,
         },
         tags=["业报收集", "基础数据", "每日任务", "手动触发", "财务写入"],
-        description="每日06:00更新客户、物料、研发项目、供应商和收单指标；也支持业报编辑人员按数据集手工更新。",
+        description="每日06:00更新客户、物料、研发项目、供应商、收单指标和当月汇率；也支持业报编辑人员按数据集手工更新。",
     )
 
 

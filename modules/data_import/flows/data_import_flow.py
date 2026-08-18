@@ -6,8 +6,8 @@ from datetime import datetime
 from typing import List, Optional
 
 import pandas as pd
-
 from prefect import flow
+
 from utils.date_utils import (
     get_date_range_by_lastmonth,
     get_date_range_by_month,
@@ -58,6 +58,7 @@ def data_import_flow(
     months: Optional[List[int]] = None,
     replace_existing: bool = False,
     replace_business_data: bool = True,
+    import_exchange_rates_from_excel: bool = False,
     root_directory: Optional[str] = None,
 ) -> None:
     """
@@ -70,7 +71,8 @@ def data_import_flow(
         month: 单个月份（1-12），如果提供则只处理该月
         months: 月份列表（1-12），如果提供则按月循环处理多个月份，例如 [10, 11, 12]
         replace_existing: 是否替换已存在的数据，默认 False（不替换）。如果为 True，则替换已存在的数据
-        replace_business_data: 业务数据板块和汇率表是否替换已存在的数据，默认 True（替换）
+        replace_business_data: 业务数据板块是否替换已存在的数据，默认 True（替换）
+        import_exchange_rates_from_excel: 是否从 Excel 导入汇率，默认 False；日常汇率由金蝶基础数据流程更新
         root_directory: Excel 文件根目录路径；不传则按系统自动选择（Windows: Z:\\11-业务报表\\1.补充数据，Rocky: /mnt/业务报表/1.补充数据）
 
     Examples:
@@ -102,6 +104,7 @@ def data_import_flow(
             "months": months,
             "replace_existing": replace_existing,
             "replace_business_data": replace_business_data,
+            "import_exchange_rates_from_excel": import_exchange_rates_from_excel,
             "root_directory": root_directory,
         },
     )
@@ -114,6 +117,7 @@ def data_import_flow(
         print(f"  - months: {months if months is not None else '未指定'}")
         print(f"  - replace_existing: {replace_existing}")
         print(f"  - replace_business_data: {replace_business_data}")
+        print(f"  - import_exchange_rates_from_excel: {import_exchange_rates_from_excel}")
         print(f"  - root_directory: {root_directory}")
         print()
 
@@ -157,7 +161,9 @@ def data_import_flow(
         if not replace_existing:
             print("注意: 除业务数据板块外，如果数据已存在，将跳过更新")
         if replace_business_data:
-            print("注意: 业务数据板块和汇率表默认使用替换更新模式")
+            print("注意: 业务数据板块默认使用替换更新模式")
+        if not import_exchange_rates_from_excel:
+            print("注意: Excel 汇率导入已关闭，汇率由金蝶基础数据流程按月更新")
         print(f"Excel 文件目录: {root_directory}")
         print("=" * 60)
 
@@ -206,6 +212,7 @@ def data_import_flow(
                     end_date,
                     replace_existing,
                     replace_exchange_rates=replace_business_data,
+                    update_exchange_rates=import_exchange_rates_from_excel,
                 )
 
                 print(f"\n✓ {process_year}年{process_month}月 数据导入完成")
@@ -232,6 +239,7 @@ def data_import_flow(
                 "months": months,
                 "replace_existing": replace_existing,
                 "replace_business_data": replace_business_data,
+                "import_exchange_rates_from_excel": import_exchange_rates_from_excel,
                 "root_directory": root_directory,
                 "summary": f"数据导入完成，共处理 {len(month_list)} 个月",
             },
@@ -248,6 +256,7 @@ def data_import_flow(
                 "year": year,
                 "month": month,
                 "months": months,
+                "import_exchange_rates_from_excel": import_exchange_rates_from_excel,
             },
         )
         raise Exception(error_msg) from e

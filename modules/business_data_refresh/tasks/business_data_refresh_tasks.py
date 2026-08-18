@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 import time
 import uuid
+from calendar import monthrange
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from zoneinfo import ZoneInfo
 
 import psycopg2
 import requests
@@ -23,6 +25,7 @@ DATASET_CODES = (
     "rd_project",
     "supplier",
     "acquiring_metrics",
+    "exchange_rate",
 )
 
 SQLSERVER_CONNECTION_ENV = "BUSINESS_DATA_SQLSERVER_CONNECTION_STRING"
@@ -34,6 +37,7 @@ MIN_ROW_RATIO_ENV = "BUSINESS_DATA_MIN_ROW_RATIO"
 
 KINGDEE_CUSTOMER_FORM_ID = "BD_Customer"
 KINGDEE_SUPPLIER_FORM_ID = "BD_Supplier"
+KINGDEE_EXCHANGE_RATE_FORM_ID = "BD_Rate"
 KINGDEE_USE_ORG_CODE = "1000"
 KINGDEE_BASE_URL_ENV = "KINGDEE_VOUCHER_BASE_URL"
 KINGDEE_TOKEN_ENVS = ("XGD_TOKEN", "AIHUB_FONE_API_TOKEN")
@@ -59,6 +63,47 @@ KINGDEE_SUPPLIER_FIELD_KEYS = (
     "FDocumentStatus",
     "FForbidStatus",
 )
+KINGDEE_EXCHANGE_RATE_FIELD_KEYS = (
+    "FRateID",
+    "FRateTypeID.FName",
+    "FCyForID.FNumber",
+    "FCyForID.FName",
+    "FCyToID.FNumber",
+    "FCyToID.FName",
+    "FBegDate",
+    "FEndDate",
+    "FExchangeRate",
+    "FReverseExRate",
+    "FDocumentStatus",
+    "FForbidStatus",
+    "FIsSysPreset",
+)
+KINGDEE_EXCHANGE_RATE_SOURCE_CURRENCIES = {
+    "PRE003": "欧元",
+    "PRE007": "美元",
+}
+KINGDEE_EXCHANGE_RATE_TARGET_CURRENCY = ("PRE001", "人民币")
+KINGDEE_DOCUMENT_STATUS_LABELS = {
+    "A": "创建",
+    "B": "审核中",
+    "C": "已审核",
+    "D": "重新审核",
+    "Z": "暂存",
+}
+KINGDEE_FORBID_STATUS_LABELS = {"A": "否", "B": "是"}
+EXCHANGE_RATE_TABLE_COLUMNS = (
+    "direct_exchange_rate",
+    "indirect_exchange_rate",
+    "exchange_rate_type",
+    "original_currency",
+    "target_currency",
+    "effective_date",
+    "expiration_date",
+    "data_status",
+    "disabled_status",
+    "system_preset",
+)
+SHANGHAI_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 ACQUIRING_TABLE_COLUMNS: Dict[str, Tuple[str, ...]] = {
     "t_jl_area_merch_netin": (
@@ -390,6 +435,149 @@ def normalize_supplier_rows(rows: Iterable[Mapping[str, Any]]) -> List[SupplierR
     return [records[code] for code in sorted(records)]
 
 
+def resolve_exchange_rate_period(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    *,
+    reference_time: Optional[datetime] = None,
+) -> Tuple[date, date]:
+    if year is None and month is None:
+        current = reference_time or datetime.now(SHANGHAI_TIMEZONE)
+        year = current.year
+        month = current.month
+    elif year is None or month is None:
+        raise BusinessDataRefreshError("汇率更新必须同时指定年份和月份")
+    try:
+        normalized_year = int(year)
+        normalized_month = int(month)
+    except (TypeError, ValueError) as exc:
+        raise BusinessDataRefreshError("汇率更新年份和月份必须是整数") from exc
+    if normalized_year < 2000 or normalized_year > 2100:
+        raise BusinessDataRefreshError("汇率更新年份必须在2000到2100之间")
+    if normalized_month < 1 or normalized_month > 12:
+        raise BusinessDataRefreshError("汇率更新月份必须在1到12之间")
+    start_date = date(normalized_year, normalized_month, 1)
+    end_date = date(
+        normalized_year, normalized_month, monthrange(normalized_year, normalized_month)[1]
+    )
+    return start_date, end_date
+
+
+def _parse_kingdee_date(value: Any, field_name: str, source_rate_id: str) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = clean_text(value)
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError as exc:
+        raise BusinessDataRefreshError(f"金蝶汇率 {source_rate_id} 的 {field_name} 不是有效日期") from exc
+
+
+def _parse_positive_decimal(value: Any, field_name: str, source_rate_id: str) -> Decimal:
+    try:
+        result = Decimal(str(value))
+    except Exception as exc:
+        raise BusinessDataRefreshError(f"金蝶汇率 {source_rate_id} 的 {field_name} 不是有效数值") from exc
+    if not result.is_finite() or result <= 0:
+        raise BusinessDataRefreshError(f"金蝶汇率 {source_rate_id} 的 {field_name} 必须大于0")
+    return result
+
+
+def _kingdee_boolean_label(value: Any, source_rate_id: str) -> str:
+    if isinstance(value, bool):
+        return "是" if value else "否"
+    normalized = clean_text(value).lower()
+    if normalized in {"true", "1", "是"}:
+        return "是"
+    if normalized in {"false", "0", "否"}:
+        return "否"
+    raise BusinessDataRefreshError(f"金蝶汇率 {source_rate_id} 返回未知系统预置标识")
+
+
+def normalize_exchange_rate_rows(
+    rows: Iterable[Mapping[str, Any]],
+    start_date: date,
+    end_date: date,
+) -> List[Dict[str, Any]]:
+    normalized: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+    seen_source_codes = set()
+    expected_target_code, expected_target_name = KINGDEE_EXCHANGE_RATE_TARGET_CURRENCY
+    for row in rows:
+        source_rate_id = clean_text(row.get("FRateID"))
+        if not source_rate_id:
+            raise BusinessDataRefreshError("金蝶汇率记录缺少 FRateID")
+        source_code = clean_text(row.get("FCyForID.FNumber"))
+        source_name = clean_text(row.get("FCyForID.FName"))
+        expected_source_name = KINGDEE_EXCHANGE_RATE_SOURCE_CURRENCIES.get(source_code)
+        if expected_source_name is None or source_name != expected_source_name:
+            raise BusinessDataRefreshError(
+                f"金蝶汇率 {source_rate_id} 返回非目标原币 {source_code}/{source_name}"
+            )
+        target_code = clean_text(row.get("FCyToID.FNumber"))
+        target_name = clean_text(row.get("FCyToID.FName"))
+        if target_code != expected_target_code or target_name != expected_target_name:
+            raise BusinessDataRefreshError(
+                f"金蝶汇率 {source_rate_id} 返回非目标币 {target_code}/{target_name}"
+            )
+        exchange_rate_type = clean_text(row.get("FRateTypeID.FName"))
+        if not exchange_rate_type:
+            raise BusinessDataRefreshError(f"金蝶汇率 {source_rate_id} 缺少汇率类型")
+        effective_date = _parse_kingdee_date(row.get("FBegDate"), "FBegDate", source_rate_id)
+        expiration_date = _parse_kingdee_date(row.get("FEndDate"), "FEndDate", source_rate_id)
+        if effective_date < start_date or effective_date > end_date:
+            raise BusinessDataRefreshError(f"金蝶汇率 {source_rate_id} 生效日期不属于 {start_date:%Y-%m}")
+        if expiration_date < effective_date:
+            raise BusinessDataRefreshError(f"金蝶汇率 {source_rate_id} 失效日期早于生效日期")
+        direct_rate = _parse_positive_decimal(
+            row.get("FExchangeRate"), "FExchangeRate", source_rate_id
+        )
+        indirect_rate = _parse_positive_decimal(
+            row.get("FReverseExRate"), "FReverseExRate", source_rate_id
+        )
+        if abs(direct_rate * indirect_rate - Decimal("1")) > Decimal("0.001"):
+            raise BusinessDataRefreshError(f"金蝶汇率 {source_rate_id} 正反向汇率不互为倒数")
+        document_status = clean_text(row.get("FDocumentStatus"))
+        forbid_status = clean_text(row.get("FForbidStatus"))
+        if document_status not in KINGDEE_DOCUMENT_STATUS_LABELS:
+            raise BusinessDataRefreshError(f"金蝶汇率 {source_rate_id} 返回未知单据状态")
+        if forbid_status not in KINGDEE_FORBID_STATUS_LABELS:
+            raise BusinessDataRefreshError(f"金蝶汇率 {source_rate_id} 返回未知禁用状态")
+        key = (
+            exchange_rate_type,
+            source_name,
+            target_name,
+            effective_date,
+            expiration_date,
+        )
+        if key in normalized:
+            raise BusinessDataRefreshError(
+                "金蝶汇率业务键重复："
+                f"{exchange_rate_type}/{source_name}/{effective_date}/{expiration_date}"
+            )
+        normalized[key] = {
+            "direct_exchange_rate": float(direct_rate),
+            "indirect_exchange_rate": float(indirect_rate),
+            "exchange_rate_type": exchange_rate_type,
+            "original_currency": source_name,
+            "target_currency": target_name,
+            "effective_date": effective_date,
+            "expiration_date": expiration_date,
+            "data_status": KINGDEE_DOCUMENT_STATUS_LABELS[document_status],
+            "disabled_status": KINGDEE_FORBID_STATUS_LABELS[forbid_status],
+            "system_preset": _kingdee_boolean_label(row.get("FIsSysPreset"), source_rate_id),
+        }
+        seen_source_codes.add(source_code)
+    missing_codes = set(KINGDEE_EXCHANGE_RATE_SOURCE_CURRENCIES) - seen_source_codes
+    if missing_codes:
+        missing_names = ", ".join(
+            KINGDEE_EXCHANGE_RATE_SOURCE_CURRENCIES[code] for code in sorted(missing_codes)
+        )
+        raise BusinessDataRefreshError(f"金蝶汇率 {start_date:%Y-%m} 缺少币种：{missing_names}")
+    return [normalized[key] for key in sorted(normalized, key=str)]
+
+
 def _connect_finance():
     database_url = clean_text(os.environ.get(FINANCE_DATABASE_URL_ENV)) or clean_text(
         os.environ.get("KINGDEE_VOUCHER_DATABASE_URL")
@@ -645,6 +833,143 @@ def fetch_supplier_rows(
         timeout_seconds=timeout_seconds,
         max_retries=max_retries,
     )
+
+
+def fetch_exchange_rate_rows(
+    session: requests.Session,
+    start_date: date,
+    end_date: date,
+    *,
+    page_size: int = 5000,
+    timeout_seconds: float = 60,
+    max_retries: int = 3,
+) -> List[Dict[str, Any]]:
+    source_filters = " OR ".join(
+        f"FCyForID.FNumber = '{code}'" for code in KINGDEE_EXCHANGE_RATE_SOURCE_CURRENCIES
+    )
+    return _fetch_kingdee_rows(
+        session,
+        form_id=KINGDEE_EXCHANGE_RATE_FORM_ID,
+        field_keys=KINGDEE_EXCHANGE_RATE_FIELD_KEYS,
+        filter_string=(
+            f"({source_filters}) "
+            f"AND FCyToID.FNumber = '{KINGDEE_EXCHANGE_RATE_TARGET_CURRENCY[0]}' "
+            f"AND FBegDate >= '{start_date.isoformat()}' "
+            f"AND FBegDate <= '{end_date.isoformat()}'"
+        ),
+        order_string="FRateID ASC",
+        dataset_name="汇率",
+        page_size=page_size,
+        timeout_seconds=timeout_seconds,
+        max_retries=max_retries,
+    )
+
+
+def _replace_exchange_rate_month(
+    rows: Sequence[Mapping[str, Any]],
+    start_date: date,
+    end_date: date,
+) -> Dict[str, Any]:
+    if not rows:
+        raise BusinessDataRefreshError(f"exchange_rate {start_date:%Y-%m} 外部源返回空快照")
+    connection = _connect_finance()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                ("business-data:exchange_rate",),
+            )
+            cursor.execute(
+                """
+                SELECT COUNT(*) FILTER (
+                           WHERE effective_date BETWEEN %s AND %s
+                       ),
+                       COUNT(*) FILTER (
+                           WHERE effective_date IS NULL
+                              OR effective_date < %s OR effective_date > %s
+                       )
+                FROM excel_exchange_rates
+                """,
+                (start_date, end_date, start_date, end_date),
+            )
+            previous_month_rows, historical_rows = cursor.fetchone()
+            cursor.execute(
+                """
+                CREATE TEMP TABLE stg_exchange_rate_month ON COMMIT DROP AS
+                SELECT direct_exchange_rate, indirect_exchange_rate,
+                       exchange_rate_type, original_currency, target_currency,
+                       effective_date, expiration_date, data_status,
+                       disabled_status, system_preset
+                FROM excel_exchange_rates
+                WITH NO DATA
+                """
+            )
+            execute_values(
+                cursor,
+                """
+                INSERT INTO stg_exchange_rate_month (
+                    direct_exchange_rate, indirect_exchange_rate,
+                    exchange_rate_type, original_currency, target_currency,
+                    effective_date, expiration_date, data_status,
+                    disabled_status, system_preset
+                ) VALUES %s
+                """,
+                [tuple(row[column] for column in EXCHANGE_RATE_TABLE_COLUMNS) for row in rows],
+                page_size=1000,
+            )
+            cursor.execute(
+                "DELETE FROM excel_exchange_rates WHERE effective_date BETWEEN %s AND %s",
+                (start_date, end_date),
+            )
+            cursor.execute(
+                """
+                INSERT INTO excel_exchange_rates (
+                    direct_exchange_rate, indirect_exchange_rate,
+                    exchange_rate_type, original_currency, target_currency,
+                    effective_date, expiration_date, data_status,
+                    disabled_status, system_preset
+                )
+                SELECT direct_exchange_rate, indirect_exchange_rate,
+                       exchange_rate_type, original_currency, target_currency,
+                       effective_date, expiration_date, data_status,
+                       disabled_status, system_preset
+                FROM stg_exchange_rate_month
+                """
+            )
+            cursor.execute(
+                """
+                SELECT COUNT(*) FILTER (
+                           WHERE effective_date BETWEEN %s AND %s
+                       ),
+                       COUNT(*) FILTER (
+                           WHERE effective_date IS NULL
+                              OR effective_date < %s OR effective_date > %s
+                       )
+                FROM excel_exchange_rates
+                """,
+                (start_date, end_date, start_date, end_date),
+            )
+            target_month_rows, historical_rows_after = cursor.fetchone()
+            if int(target_month_rows or 0) != len(rows):
+                raise BusinessDataRefreshError(
+                    f"汇率 {start_date:%Y-%m} 写入后行数 {target_month_rows} " f"与源数据 {len(rows)} 不一致"
+                )
+            if int(historical_rows_after or 0) != int(historical_rows or 0):
+                raise BusinessDataRefreshError("汇率按月更新影响了历史月份，事务已回滚")
+        connection.commit()
+        return {
+            "dataset": "exchange_rate",
+            "source_rows": len(rows),
+            "target_rows": int(target_month_rows or 0),
+            "previous_month_rows": int(previous_month_rows or 0),
+            "watermark": end_date.isoformat(),
+            "period": start_date.strftime("%Y-%m"),
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
 def _sync_supplier_records(records: Sequence[SupplierRecord]) -> Dict[str, Any]:
@@ -915,4 +1240,24 @@ def refresh_acquiring_metrics_task() -> Dict[str, Any]:
         validate_acquiring_rows(table, snapshots[table])
     result = _replace_acquiring_snapshots(snapshots)
     logger.info("收单业务指标更新完成：%s 行", result["target_rows"])
+    return result
+
+
+@task(name="更新汇率", retries=1, retry_delay_seconds=30)
+def refresh_exchange_rate_task(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+) -> Dict[str, Any]:
+    logger = get_run_logger()
+    start_date, end_date = resolve_exchange_rate_period(year, month)
+    with requests.Session() as session:
+        rows = fetch_exchange_rate_rows(session, start_date, end_date)
+    normalized = normalize_exchange_rate_rows(rows, start_date, end_date)
+    result = _replace_exchange_rate_month(normalized, start_date, end_date)
+    logger.info(
+        "汇率更新完成：%s，原 %s 行，现 %s 行",
+        result["period"],
+        result["previous_month_rows"],
+        result["target_rows"],
+    )
     return result

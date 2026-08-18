@@ -3,6 +3,7 @@
 from .business_data_refresh_tasks import (
     refresh_acquiring_metrics_task,
     refresh_customer_task,
+    refresh_exchange_rate_task,
     refresh_material_task,
     refresh_rd_project_task,
     refresh_supplier_task,
@@ -10,6 +11,7 @@ from .business_data_refresh_tasks import (
 
 __all__ = [
     "refresh_customer_task",
+    "refresh_exchange_rate_task",
     "refresh_material_task",
     "refresh_rd_project_task",
     "refresh_supplier_task",
