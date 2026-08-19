@@ -8,9 +8,8 @@ from datetime import date, datetime
 from typing import Any, Dict, Optional
 
 import pandas as pd
-from sqlalchemy import create_engine, text
-
 from prefect import task
+from sqlalchemy import create_engine, text
 
 # 添加根目录到路径（prefect 目录）
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -37,6 +36,16 @@ BUDGET_VERSION_COLUMNS = {
     "bud_cash_flow": "bud_version",
     "bud_bus_shared_rate": "report_date",
 }
+
+
+def _drop_hidden_database_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """移除自有数据库查询结果中以下划线开头的隐藏字段。"""
+    hidden_columns = [
+        column for column in df.columns if isinstance(column, str) and column.startswith("_")
+    ]
+    if not hidden_columns:
+        return df
+    return df.drop(columns=hidden_columns)
 
 
 def _first_unused_archive_date(
@@ -151,12 +160,9 @@ def _read_data(table_name: str, db_type: str = "FONE") -> pd.DataFrame:
         result = cur.fetchall()
         if result:
             if db_type == "PSQL":
-                df = pd.DataFrame(
-                    result,
-                    columns=[
-                        reverse_combined_column_mapping.get(desc[0]) for desc in cur.description
-                    ],
-                )
+                df = pd.DataFrame(result, columns=[desc[0] for desc in cur.description])
+                df = _drop_hidden_database_columns(df)
+                df.columns = [reverse_combined_column_mapping.get(column) for column in df.columns]
             else:
                 df = pd.DataFrame(result, columns=[desc[0] for desc in cur.description])
             return df
@@ -207,10 +213,9 @@ def _read_psql_data(
         cur.execute(query)
         result = cur.fetchall()
         if result:
-            df = pd.DataFrame(
-                result,
-                columns=[reverse_combined_column_mapping.get(desc[0]) for desc in cur.description],
-            )
+            df = pd.DataFrame(result, columns=[desc[0] for desc in cur.description])
+            df = _drop_hidden_database_columns(df)
+            df.columns = [reverse_combined_column_mapping.get(column) for column in df.columns]
             return df
         return pd.DataFrame()
     finally:
