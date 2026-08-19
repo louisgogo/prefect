@@ -10,8 +10,11 @@ from modules.budget_update.flows.budget_update_flow import _get_official_budget_
 from modules.budget_update.tasks.budget_update_tasks import (
     BUDGET_VERSION_COLUMNS,
     _append_budget_data,
+    _drop_hidden_database_columns,
     _first_unused_archive_date,
     _prepare_budget_version_write,
+    _read_data,
+    _read_psql_data,
 )
 
 
@@ -70,6 +73,76 @@ class BudgetVersionDateTests(unittest.TestCase):
     def test_non_first_day_cannot_be_official(self):
         with self.assertRaisesRegex(ValueError, "必须为每月 1 日"):
             _first_unused_archive_date(pd.Timestamp("2026-07-02"), set())
+
+
+class BudgetHiddenDatabaseFieldTests(unittest.TestCase):
+    def test_hidden_columns_are_removed_without_mutating_source(self):
+        source = pd.DataFrame({"业务线": ["消费", "_内部校验"], "金额": [1, 2], "_计算辅助": [3, 4]})
+
+        result = _drop_hidden_database_columns(source)
+
+        self.assertEqual(result.columns.tolist(), ["业务线", "金额"])
+        self.assertIn("_计算辅助", source.columns)
+
+    def test_non_string_column_names_are_preserved(self):
+        source = pd.DataFrame({0: [1], "_隐藏": [2], "金额": [3]})
+
+        result = _drop_hidden_database_columns(source)
+
+        self.assertEqual(result.columns.tolist(), [0, "金额"])
+
+    def test_psql_read_drops_hidden_columns_before_mapping(self):
+        connection = MagicMock()
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [(1, "隐藏值")]
+        cursor.description = [("id",), ("_内部校验",)]
+
+        with patch(
+            "modules.budget_update.tasks.budget_update_tasks.connect_to_db",
+            return_value=(connection, cursor),
+        ):
+            result = _read_data("fact_example", "PSQL")
+
+        self.assertEqual(result.shape, (1, 1))
+        self.assertNotIn("_内部校验", result.columns)
+
+    def test_fone_read_keeps_underscore_columns(self):
+        connection = MagicMock()
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [(1, "源字段")]
+        cursor.description = [("id",), ("_FONE字段",)]
+
+        with patch(
+            "modules.budget_update.tasks.budget_update_tasks.connect_to_fone",
+            return_value=(connection, cursor),
+        ):
+            result = _read_data("Fone2BI_Budget_Test", "FONE")
+
+        self.assertEqual(result.columns.tolist(), ["id", "_FONE字段"])
+
+    def test_filtered_psql_read_drops_new_personnel_metadata_columns(self):
+        connection = MagicMock()
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [(1, "补录ID", "创建时间", "更新时间")]
+        cursor.description = [
+            ("id",),
+            ("_supplement_id",),
+            ("_supplement_created_at",),
+            ("_supplement_updated_at",),
+        ]
+
+        with patch(
+            "modules.budget_update.tasks.budget_update_tasks.connect_to_db",
+            return_value=(connection, cursor),
+        ):
+            result = _read_psql_data(
+                "fact_personnel",
+                date_col="date",
+                date_range=pd.date_range("2026-01-01", "2026-01-31"),
+            )
+
+        self.assertEqual(result.shape, (1, 1))
+        self.assertFalse(any(str(column).startswith("_") for column in result.columns))
 
 
 class BudgetVersionWritePreparationTests(unittest.TestCase):
