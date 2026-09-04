@@ -1,5 +1,5 @@
 # 若不想用 pyproject.toml，可只用此文件。复制到 mypackage 项目根目录。
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 setup(
     name="mypackage",

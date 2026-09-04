@@ -228,13 +228,13 @@ prefect worker start --pool <your-pool-name>
 
 ## 六、常见问题
 
-1. **无法访问 UI**  
+1. **无法访问 UI**
    检查：`systemctl status prefect-server` 或 `docker ps`；防火墙是否放行 4200；`prefect server start` 是否使用 `--host 0.0.0.0`。
 
-2. **Worker 连不上 Server**  
+2. **Worker 连不上 Server**
    确认 `PREFECT_API_URL` 为 `http://<IP>:4200/api`（带 `/api`）；Server 与 Worker 之间网络、防火墙是否可达。
 
-3. **Flow 依赖本地文件/数据库**  
+3. **Flow 依赖本地文件/数据库**
    Worker 所在机器需能访问相同路径或数据库；若用 Docker 跑 Worker，需挂载代码目录或配置好数据库连接。
 
 按上述步骤即可在 Rocky Linux 上完成 Prefect Server 与 Worker 的部署；你当前项目仍可用本地 `deploy_production.py` / `deploy_to_server.py` 推送 flow 到该 Server。

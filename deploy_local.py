@@ -1,19 +1,33 @@
 """本地测试部署脚本"""
+
+import os
+import sys
+import time
+from datetime import datetime
+from multiprocessing import Process
+
 from modules import (
+    ai_data_etl_flow,
+    budget_update_flow,
+    business_data_refresh_flow,
     business_line_profit_flow,
     calculate_shared_rate_flow,
     data_import_flow,
-    budget_update_flow,
-    recon_flow,
-    profit_refresh_flow,
     fetch_budget_shared_rate_flow,
+    fone_income_expense_refresh_flow,
+    fone_recon_flow,
+    inventory_impairment_flow,
+    kingdee_voucher_journal_flow,
+    org_sync_flow,
+    profit_refresh_flow,
+    profit_report_flow,
+    rd_project_profitability_flow,
+    recon_flow,
+    staging_recon_flow,
+    view_update_flow,
 )
 from modules.bus_line_staging import bus_line_staging_flow
-import sys
-import os
-from multiprocessing import Process
-from datetime import datetime
-import time
+from modules.bus_line_staging.module_selection import ALL_MODULE_OPTIONS
 
 # 添加当前目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -38,13 +52,23 @@ def deploy_business_line_profit_flow():
     print("业务线损益计算流程 - 本地测试部署")
     print("=" * 60)
 
-    print("说明：请在 UI 中手动输入参数（year, month, months）")
+    # 计算自动运行日期范围：1月到上个月；1月份则为上年全部
+    now = datetime.now()
+    if now.month == 1:
+        process_year = now.year - 1
+        months = list(range(1, 13))
+    else:
+        process_year = now.year
+        months = list(range(1, now.month))
+
+    print(f"默认参数：year={process_year}, months={months}")
+    print("说明：请在 UI 中手动输入参数（year, month, months），或直接使用默认值")
     print("提示：year 是必需参数，month 和 months 二选一")
 
     # 部署到本地 Prefect Server（无计划执行，仅用于手动触发）
-    # 不指定 parameters，让用户在 UI 中手动输入，避免误操作
     business_line_profit_flow.serve(
         name="业务线损益计算流程-本地测试",
+        parameters={"year": process_year, "months": months},
         tags=["本地测试", "业务线核算"],
         description="本地测试用：业务线损益计算流程（业务线数据计算+利润表刷新）",
     )
@@ -80,6 +104,8 @@ def deploy_data_import_flow():
     print("  - month: 可选，单个月份（1-12），与 months 二选一")
     print("  - months: 可选，月份列表，例如 [10, 11, 12]，与 month 二选一")
     print("  - replace_existing: 默认 False（不替换已存在数据），设为 True 则替换")
+    print("  - replace_business_data: 默认 True（业务数据板块替换已存在数据）")
+    print("  - import_exchange_rates_from_excel: 默认 False（汇率由金蝶基础数据流程更新）")
     print("  - root_directory: 默认使用手工刷新目录")
     print("\n注意：如果不提供 year/month/months，将自动使用上个月的数据")
 
@@ -89,7 +115,26 @@ def deploy_data_import_flow():
     data_import_flow.serve(
         name="数据导入流程-本地测试",
         tags=["本地测试", "数据导入"],
-        description="本地测试用：从 Excel 文件导入数据到数据库（默认不替换已存在数据，如存在则跳过）",
+        description="本地测试用：从 Excel 文件导入业务数据；Excel 汇率导入默认关闭。",
+    )
+
+
+def deploy_ai_data_etl_flow():
+    """部署AI数据ETL流程"""
+    print("=" * 60)
+    print("AI数据ETL流程 - 本地测试部署")
+    print("=" * 60)
+
+    print("说明：请在 UI 中手动输入参数（或使用默认值）")
+    print("提示：")
+    print("  - data_type: 数据类型，可选'业务线数据'或'业报数据'，默认'业务线数据'")
+    print("\n业务线数据模式：使用 fact_bus_* 表（业务线分表）")
+    print("业报数据模式：使用 fact_* 表（业报主表）")
+
+    ai_data_etl_flow.serve(
+        name="AI数据ETL流程-本地测试",
+        tags=["本地测试", "AI数据", "ETL"],
+        description="本地测试用：为AI平台生成业务数据视图（业务线/业报数据）",
     )
 
 
@@ -107,37 +152,89 @@ def deploy_budget_update_flow():
     print("当前默认参数：")
     for k, v in defaults.items():
         print(f"  - {k}: {v}")
-    print("  - output_dir: 不填则使用当前工作目录")
-    print("\n易混点：report_date=要替换的那批日期；version=本批新数据的填报日期标签。")
+    print("  - output_dir: 不填则使用 /root/prefect/check/budget_unmapped")
+    print("\n预算版本保存规则：")
+    print("  - 正式版日期自动生成：年初预算为 YYYY-01-01，年中预算为 YYYY-07-01")
+    print("  - save_previous_version=false（默认）：快速执行直接覆盖1日正式版")
+    print("  - save_previous_version=true：当前正式版自动归档到同月2日、3日等空闲日期")
     print("\n注意：任一映射检查点存在未映射将中断执行并导出 CSV")
 
     budget_update_flow.serve(
         name="预算更新流程-本地测试",
         tags=["本地测试", "预算更新"],
-        description="从 FONE 拉取预算、严格映射检查、写库；未映射则中断并导出 CSV。参数可留空，按运行时的当前月份自动填默认值。",
+        description=(
+            "从 FONE 拉取预算、严格映射检查并写库。正式版日期自动生成：年初为 YYYY-01-01，"
+            "年中为 YYYY-07-01。save_previous_version 默认关闭并直接覆盖；手动开启时归档当前正式版。"
+        ),
         parameters=defaults,
     )
 
 
+def deploy_fone_recon_flow():
+    """部署从 FONE 获取往来数据流程"""
+    print("=" * 60)
+    print("从 FONE 获取往来数据流程 - 本地测试部署")
+    print("=" * 60)
+
+    print("说明：请在 UI 中手动输入参数（或使用默认值）")
+    print("提示：")
+    print("  - year: 目标年份，不填则使用上个自然年")
+    print("  - month: 目标月份（1-12），不填则使用上个自然月")
+
+    fone_recon_flow.serve(
+        name="从FONE获取往来数据流程-本地测试",
+        tags=["本地测试", "往来对账", "FONE", "月度任务"],
+        description="本地测试用：调用 FONE API 执行 0501 脚本，获取 ERP 科目余额表并推送 BI 内部关联方数据。",
+    )
+
+
+def deploy_fone_income_expense_refresh_flow():
+    """部署 FONE 收入费用明细刷新子流程。"""
+    print("=" * 60)
+    print("FONE 收入费用明细刷新子流程 - 本地测试部署")
+    print("=" * 60)
+    print("year、month 必须显式填写；permission_user 可传参或由环境变量提供。")
+
+    fone_income_expense_refresh_flow.serve(
+        name="FONE收入费用明细刷新-本地测试",
+        tags=["本地测试", "FONE", "收入明细", "费用明细", "财务刷新"],
+        description="按显式年月顺序刷新 FONE 收入、费用明细，并回读数据库验证非空、期间和刷新状态。",
+    )
+
+
 def deploy_recon_flow():
-    """部署内部往来对账流程"""
+    """部署内部往来对账流程（Excel 数据源）"""
     print("=" * 60)
-    print("内部往来对账流程 - 本地测试部署")
+    print("EXCEL往来对账流程 - 本地测试部署")
     print("=" * 60)
-    
+
     # 部署内部往来对账流程到本地 Prefect Server
     recon_flow.serve(
-        name="内部往来对账流程-本地测试",
-        tags=["本地测试", "往来对账", "月度任务"],
+        name="EXCEL往来对账流程-本地测试",
+        tags=["本地测试", "往来对账", "EXCEL", "月度任务"],
         description="本地测试用：自动从 MySQL + Excel 采集上月数据写入 PostgreSQL，生成往来/销售/现金流对账结果并导出 Excel。",
     )
+
+
+def deploy_staging_recon_flow():
+    """部署内部往来对账流程（staging_recon 数据源）"""
+    print("=" * 60)
+    print("往来对账流程（staging_recon）- 本地测试部署")
+    print("=" * 60)
+
+    staging_recon_flow.serve(
+        name="往来对账流程-本地测试",
+        tags=["本地测试", "往来对账", "Staging", "月度任务"],
+        description="本地测试用：自动从 MySQL + staging_recon 采集上月数据写入 PostgreSQL，生成往来/销售/现金流对账结果并导出 Excel。",
+    )
+
 
 def deploy_profit_refresh_flow():
     """部署利润表刷新流程"""
     print("=" * 60)
     print("利润表刷新流程 - 本地测试部署")
     print("=" * 60)
-    
+
     # 部署利润表刷新流程到本地 Prefect Server
     profit_refresh_flow.serve(
         name="利润表刷新流程-本地测试",
@@ -145,25 +242,29 @@ def deploy_profit_refresh_flow():
         description="本地测试用：处理所有已计算的月份数据，生成 fact_profit 和 fact_bus_profit 表。",
     )
 
+
 def deploy_bus_line_staging_flow():
     """部署业务线数据中间库抽取流程"""
     print("=" * 60)
     print("业务线Staging抽取流程 - 本地测试部署")
     print("=" * 60)
-    
+
     bus_line_staging_flow.serve(
         name="业务线Staging抽取流程-本地测试",
+        parameters={"modules": list(ALL_MODULE_OPTIONS)},
         tags=["本地测试", "Staging", "业务线核算"],
-        description="将业务线拆分1-4步骤数据以EAV格式存入PostgreSQL系统待填报"
+        description="按modules参数全量或选择性刷新业务线Staging；部分刷新会保留未选模块并生成完整新批次",
     )
+
 
 def deploy_fetch_budget_shared_rate_flow():
     """部署拉取预算综合比例流程"""
     from modules.shared_rate.flows.fetch_budget_shared_rate_flow import _get_default_dates
+
     print("=" * 60)
     print("拉取预算综合比例流程 - 本地测试部署")
     print("=" * 60)
-    
+
     defaults = _get_default_dates()
     fetch_budget_shared_rate_flow.serve(
         name="拉取预算综合比例-本地测试",
@@ -172,21 +273,154 @@ def deploy_fetch_budget_shared_rate_flow():
         parameters=defaults,
     )
 
+
+def deploy_profit_report_flow():
+    """部署利润表收集汇总流程"""
+    print("=" * 60)
+    print("利润表收集汇总流程 - 本地测试部署")
+    print("=" * 60)
+
+    profit_report_flow.serve(
+        name="利润表收集汇总流程-本地测试",
+        tags=["本地测试", "报表收集", "利润表"],
+        description="本地测试用：按PQ逻辑收集数据源并汇总生成2-1利润拆分，导出CSV。默认执行上个月。",
+    )
+
+
+def deploy_view_update_flow():
+    """部署数据库视图更新流程"""
+    print("=" * 60)
+    print("数据库视图更新流程 - 本地测试部署")
+    print("=" * 60)
+
+    print("说明：请在 UI 中手动输入参数（或使用默认值）")
+    print("提示：")
+    print("  - skip_fone_grant: 是否跳过 FONE 视图授权，默认 False")
+
+    view_update_flow.serve(
+        name="数据库视图更新流程-本地测试",
+        tags=["本地测试", "视图更新", "数据库"],
+        description="本地测试用：更新映射表、刷新中文视图（无映射表自动跳过）、FONE 视图授权。",
+    )
+
+
+def deploy_org_sync_flow():
+    """部署组织架构同步对比流程"""
+    print("=" * 60)
+    print("组织架构同步对比流程 - 本地测试部署")
+    print("=" * 60)
+
+    print("说明：请在 UI 中手动输入参数（或使用默认值）")
+    print("提示：")
+    print("  - only_last_stage: 默认 True，只对比 LastStage='是' 的组织")
+    print("  - save_to_db: 默认 True，将差异写入 org_diff_log")
+    print("  - generate_excel: 默认 True，生成 Excel 差异报告")
+
+    org_sync_flow.serve(
+        name="组织架构同步对比流程-本地测试",
+        tags=["本地测试", "组织架构", "映射维护"],
+        description="本地测试用：对比 FONE XGD_MRPT_ENTITY 和 mydb map_org 的差异，生成报告并写入 org_diff_log。",
+    )
+
+
+def deploy_inventory_impairment_flow():
+    """部署季度存货跌价计算子流程。"""
+    from modules.inventory_impairment.flows.inventory_impairment_flow import (
+        _get_inventory_impairment_defaults_by_date,
+    )
+
+    defaults = _get_inventory_impairment_defaults_by_date()
+    defaults["write_to_fact_profit_bd"] = False
+    print("=" * 60)
+    print("季度存货跌价计算子流程 - 本地测试部署")
+    print("=" * 60)
+    print(f"默认期间：{defaults['year']}年第{defaults['quarter']}季度；" "本地测试默认只读，可在 UI 中显式开启平台同步。")
+
+    inventory_impairment_flow.serve(
+        name="季度存货跌价计算-本地测试",
+        tags=["本地测试", "存货跌价", "季度任务", "只读校验"],
+        description="默认计算最近已结束季度；本地默认只读，可选择通过平台同步业报资产减值损失及填报记录。",
+        parameters=defaults,
+    )
+
+
+def deploy_rd_project_profitability_flow():
+    """部署研发项目收益分析流程。"""
+    from modules.rd_project_profitability.flows.rd_project_profitability_flow import (
+        _get_rd_project_profitability_defaults_by_date,
+    )
+
+    defaults = _get_rd_project_profitability_defaults_by_date()
+    defaults["notify_frontend"] = False
+    print("=" * 60)
+    print("研发项目收益分析流程 - 本地测试部署")
+    print("=" * 60)
+    print(f"默认期间：{defaults['start_date']} 至 {defaults['end_date']}；" "本地默认生成 Excel、不写数据库、不发送前端回调。")
+
+    rd_project_profitability_flow.serve(
+        name="研发项目收益分析-本地测试",
+        tags=["本地测试", "研发项目", "收益分析", "Excel输出"],
+        description="按显式期间计算研发项目收入、成本、费用和剩余收益，生成可下载 Excel。",
+        parameters=defaults,
+    )
+
+
+def deploy_kingdee_voucher_journal_flow():
+    """部署默认同步上月、并允许显式选择月份的金蝶凭证流程。"""
+    from modules.kingdee_voucher.flows.kingdee_voucher_journal_flow import (
+        _get_kingdee_voucher_defaults_by_date,
+    )
+
+    defaults = _get_kingdee_voucher_defaults_by_date()
+    kingdee_voucher_journal_flow.serve(
+        name="金蝶凭证序时簿同步-本地测试",
+        tags=["本地测试", "金蝶", "凭证序时簿", "月度任务", "财务写入"],
+        description="快速执行默认同步上个自然月；也可自定义单月或月份列表，按分录稳定标识幂等写库。",
+        parameters=defaults,
+    )
+
+
+def deploy_business_data_refresh_flow():
+    """部署业报基础数据更新本地测试流程。"""
+    business_data_refresh_flow.serve(
+        name="业报基础数据更新-本地测试",
+        parameters={
+            "datasets": None,
+            "requested_by": None,
+            "exchange_rate_year": None,
+            "exchange_rate_month": None,
+        },
+        tags=["本地测试", "业报收集", "基础数据", "财务写入"],
+        description="本地测试客户、物料、研发项目、供应商、收单指标和当月汇率的统一安全更新。",
+    )
+
+
 if __name__ == "__main__":
     print("开始部署流程...")
     print("确保已启动 Prefect Server：prefect server start")
     print("请在 Prefect UI 中查看：http://127.0.0.1:4200")
     print("\n" + "=" * 60)
 
-    # 使用多进程同时部署四个流程
+    # 使用多进程同时部署流程
     process1 = Process(target=deploy_business_line_profit_flow)
     process2 = Process(target=deploy_shared_rate_flow)
     process3 = Process(target=deploy_data_import_flow)
-    process4 = Process(target=deploy_budget_update_flow)
-    process5 = Process(target=deploy_recon_flow)
-    process6 = Process(target=deploy_profit_refresh_flow)
-    process7 = Process(target=deploy_bus_line_staging_flow)
-    process8 = Process(target=deploy_fetch_budget_shared_rate_flow)
+    process4 = Process(target=deploy_ai_data_etl_flow)
+    process5 = Process(target=deploy_budget_update_flow)
+    process6 = Process(target=deploy_recon_flow)
+    process7 = Process(target=deploy_staging_recon_flow)
+    process8 = Process(target=deploy_profit_refresh_flow)
+    process9 = Process(target=deploy_bus_line_staging_flow)
+    process10 = Process(target=deploy_fetch_budget_shared_rate_flow)
+    process11 = Process(target=deploy_profit_report_flow)
+    process12 = Process(target=deploy_fone_recon_flow)
+    process13 = Process(target=deploy_view_update_flow)
+    process14 = Process(target=deploy_org_sync_flow)
+    process15 = Process(target=deploy_inventory_impairment_flow)
+    process16 = Process(target=deploy_rd_project_profitability_flow)
+    process17 = Process(target=deploy_fone_income_expense_refresh_flow)
+    process18 = Process(target=deploy_kingdee_voucher_journal_flow)
+    process19 = Process(target=deploy_business_data_refresh_flow)
 
     process1.start()
     time.sleep(1)
@@ -203,6 +437,28 @@ if __name__ == "__main__":
     process7.start()
     time.sleep(1)
     process8.start()
+    time.sleep(1)
+    process9.start()
+    time.sleep(1)
+    process10.start()
+    time.sleep(1)
+    process11.start()
+    time.sleep(1)
+    process12.start()
+    time.sleep(1)
+    process13.start()
+    time.sleep(1)
+    process14.start()
+    time.sleep(1)
+    process15.start()
+    time.sleep(1)
+    process16.start()
+    time.sleep(1)
+    process17.start()
+    time.sleep(1)
+    process18.start()
+    time.sleep(1)
+    process19.start()
 
     # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
@@ -212,9 +468,30 @@ if __name__ == "__main__":
         process4.join()
         process5.join()
         process6.join()
+        process7.join()
     except KeyboardInterrupt:
         print("\n正在停止部署...")
-        for p in [process1, process2, process3, process4, process5, process6, process7, process8]:
+        for p in [
+            process1,
+            process2,
+            process3,
+            process4,
+            process5,
+            process6,
+            process7,
+            process8,
+            process9,
+            process10,
+            process11,
+            process12,
+            process13,
+            process14,
+            process15,
+            process16,
+            process17,
+            process18,
+            process19,
+        ]:
             p.terminate()
             p.join()
         print("部署已停止")

@@ -64,10 +64,10 @@ git pull
    sudo systemctl restart prefect-workers
    ```
 
-2. **服务里已经写好了**  
-   - `WorkingDirectory=/root/prefect`  
-   - `Environment=PREFECT_API_URL=http://127.0.0.1:4200/api`  
-   - `ExecStart=.../venv/bin/python deploy_to_server.py`  
+2. **服务里已经写好了**
+   - `WorkingDirectory=/root/prefect`
+   - `Environment=PREFECT_API_URL=http://127.0.0.1:4200/api`
+   - `ExecStart=.../venv/bin/python deploy_to_server.py`
 
 所以重启后，流程会再次推送到本机 Prefect，并在服务器上执行。
 
