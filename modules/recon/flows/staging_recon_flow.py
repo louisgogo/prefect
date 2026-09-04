@@ -25,7 +25,6 @@ from ..tasks.recon_fetch_tasks import (
     delete_old_recon_data_task,
     fetch_recon_from_mysql_task,
     fetch_recon_from_staging_recon_task,
-    import_kingdee_cashflow_to_staging_task,
     insert_recon_data_task,
 )
 from .fone_recon_flow import fone_recon_flow
@@ -62,14 +61,6 @@ def staging_recon_flow(target_date: Optional[str] = None, use_fone: bool = False
             print("\n【前置阶段】跳过 FONE 数据获取（use_fone=False），如需重新拉取请设为 True")
 
         print("\n【阶段1】开始数据采集...")
-
-        # 现金流先从金蝶正表补入 staging_recon。该 task 以“主体+期间”为保护边界：
-        # 目标期间已有任意 staging_recon 数据的主体整主体跳过，不覆盖手工/历史填报。
-        cashflow_import = import_kingdee_cashflow_to_staging_task(target_date=target_date)
-        print(
-            f"【阶段1】金蝶现金流补充完成：写入 {cashflow_import.get('inserted_count', 0)} 条，"
-            f"跳过主体 {len(cashflow_import.get('skipped_companies', []))} 个"
-        )
 
         df_mysql = fetch_recon_from_mysql_task(target_date=target_date)
         df_staging = fetch_recon_from_staging_recon_task(target_date=target_date)
