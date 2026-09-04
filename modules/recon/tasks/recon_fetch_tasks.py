@@ -4,14 +4,18 @@
 阶段1：从 MySQL + 共享盘 Excel 采集原始数据，先删除目标月旧数据，再写入 PostgreSQL。
 移植自 FastAPI 项目 recon_tool.py，改为同步版本，依赖 mypackage。
 """
+import json
 import os
 import platform
+import re
 import shutil
 import sys
 from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
+import requests
 
 from prefect import task
 
@@ -222,6 +226,460 @@ def _calc_target_month(target_date: Optional[str] = None) -> Tuple[date, str, st
 
 
 # ──────────────────────────────────────────────
+# Task 1：从金蝶正表现金流补充 staging_recon
+# ──────────────────────────────────────────────
+
+
+def _cf_text(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def _cf_norm(value: Any) -> str:
+    return re.sub(r"\s+", "", _cf_text(value)).replace("（", "(").replace("）", ")").upper()
+
+
+def _cf_code_key(value: Any) -> str:
+    """规范化金蝶核算维度编码，但保留编码中的层级点号。"""
+    text = _cf_text(value)
+    if re.fullmatch(r"\d+\.0", text):
+        return text[:-2]
+    return text
+
+
+def _cf_amount(value: Any) -> Optional[Decimal]:
+    try:
+        text = _cf_text(value).replace(",", "")
+        return Decimal(text) if text else None
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _cf_period_row(row: Dict[str, Any], period: str) -> bool:
+    year, month = period.split("-")
+    value = _cf_text(row.get("FDate") or row.get("date")).replace("/", "-")
+    match = re.match(r"^(\d{4})-(\d{1,2})", value)
+    if match:
+        return match.group(1) == year and int(match.group(2)) == int(month)
+    return _cf_text(row.get("FYear")) == year and _cf_text(row.get("FPeriod")).lstrip(
+        "0"
+    ) == month.lstrip("0")
+
+
+def _cf_row_value(row: Dict[str, Any], *names: str) -> Any:
+    for name in names:
+        if name in row and row[name] not in (None, ""):
+            return row[name]
+    # 金蝶不同网关版本偶尔改变字段大小写；不改变业务字段名口径，
+    # 仅在读取时做不区分大小写的兼容。
+    lowered = {str(key).lower(): value for key, value in row.items()}
+    for name in names:
+        value = lowered.get(name.lower())
+        if value not in (None, ""):
+            return value
+    return None
+
+
+# 金蝶接口返回负数时，不能简单丢弃；负数表示方向记反时，应落到对应的
+# 正反向现金流项目。这里按现金流项目名称维护，避免依赖不同账套的项目编码。
+_CF_REVERSE_ITEMS = {
+    "销售商品、提供劳务收到的现金": "购买商品、接受劳务支付的现金",
+    "收到其他与经营活动有关的现金": "支付其他与经营活动有关的现金",
+    "购买商品、接受劳务支付的现金": "销售商品、提供劳务收到的现金",
+    "支付其他与经营活动有关的现金": "收到其他与经营活动有关的现金",
+    "支付给职工以及为职工支付的现金": "收到其他与经营活动有关的现金",
+    "收回投资收到的现金": "投资支付的现金",
+    "投资支付的现金": "收回投资收到的现金",
+    "处置固定资产、无形资产和其他长期资产收回的现金净额": "购建固定资产、无形资产和其他长期资产支付的现金",
+    "购建固定资产、无形资产和其他长期资产支付的现金": "处置固定资产、无形资产和其他长期资产收回的现金净额",
+    "支付其他与筹资活动有关的现金": "收到其他与筹资活动有关的现金",
+    "收到其他与筹资活动有关的现金": "支付其他与筹资活动有关的现金",
+    "分配股利、利润或偿付利息支付的现金": "收到其他与筹资活动有关的现金",
+    "吸收投资收到的现金": "支付其他与筹资活动有关的现金",
+    "现金流出": "现金流入",
+    "现金流入": "现金流出",
+}
+
+
+def _cf_actual_item(item: str, amount: Decimal) -> Tuple[str, Decimal]:
+    """按技能规则返回实际项目和正数金额。"""
+    reverse_item = _CF_REVERSE_ITEMS.get(item)
+    if reverse_item is None:
+        normalized = _cf_norm(item)
+        reverse_item = next(
+            (
+                target
+                for source, target in _CF_REVERSE_ITEMS.items()
+                if _cf_norm(source) == normalized
+            ),
+            None,
+        )
+    if amount < 0 and reverse_item:
+        return reverse_item, abs(amount)
+    return item, amount
+
+
+def _cf_txn_date(value: Any, period: str) -> str:
+    """把金蝶日期统一成 YYYY-MM-DD，无法解析时落到目标月月初。"""
+    text = _cf_text(value)
+    if text:
+        parsed = pd.to_datetime(text.replace("/", "-"), errors="coerce")
+        if not pd.isna(parsed):
+            return parsed.strftime("%Y-%m-%d")
+    return f"{period}-01"
+
+
+def _fetch_kingdee_cashflow_rows(
+    period: str,
+    books: list[str],
+    entity_codes: list[str],
+    entity_names: list[str],
+) -> list[dict[str, Any]]:
+    token = _cf_text(os.environ.get("XGD_TOKEN")) or _cf_text(
+        os.environ.get("AIHUB_FONE_API_TOKEN")
+    )
+    if not token:
+        raise RuntimeError("缺少 XGD_TOKEN 或 AIHUB_FONE_API_TOKEN，无法查询金蝶现金流")
+    year, month = period.split("-")
+    endpoint = f"{os.environ.get('KINGDEE_VOUCHER_BASE_URL', 'https://aihub.xgd.com').rstrip('/')}/api/proxy/erp/sdk/GetSysReportData"
+    fields = [
+        "FYear",
+        "FPeriod",
+        "FDate",
+        "FAccountbookname",
+        "FVoucherGroup",
+        "FVoucherGroupNo",
+        "FSEQ",
+        "FExplanation",
+        "FAcctNo",
+        "FAcctName",
+        "FDETAILNUMBER",
+        "FDETAILNAME",
+        "FCashflowAmount",
+        "FCFItemNo",
+        "FCFItemName",
+        "FCFSubItemName",
+    ]
+    model = {
+        "FACCTBOOKID": [{"FNumber": book} for book in books],
+        "FByPeriod": "true",
+        "FByDate": "false",
+        "FSTARTYEAR": year,
+        "FSTARTPERIOD": month,
+        "FENDYEAR": year,
+        "FENDPERIOD": month,
+        "FNOTPOSTVOUCHER": "true",
+        "FSHOWALLVCHINFO": "true",
+    }
+    rows: list[dict[str, Any]] = []
+    query_filters = []
+    for field, values, chunk_size in (
+        ("FDETAILNUMBER", entity_codes, 30),
+        ("FDETAILNAME", entity_names, 25),
+    ):
+        for offset in range(0, len(values), chunk_size):
+            chunk = values[offset : offset + chunk_size]
+            query_filters.append(
+                [
+                    {
+                        "Left": "",
+                        "FieldName": field,
+                        "Compare": "81",
+                        "Value": value,
+                        "Right": "",
+                        "Logic": 1 if i < len(chunk) - 1 else 0,
+                    }
+                    for i, value in enumerate(chunk)
+                ]
+            )
+    query_filters.append(
+        [
+            {
+                "Left": "",
+                "FieldName": "FAcctName",
+                "Compare": "81",
+                "Value": "内部关联方往来",
+                "Right": "",
+                "Logic": 0,
+            }
+        ]
+    )
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    for filters in query_filters:
+        start = 0
+        while True:
+            payload = {
+                "FormId": "GL_Rpt_CashflowQuery",
+                "FieldKeys": ",".join(fields),
+                "SchemeId": os.environ.get("KINGDEE_CASHFLOW_SCHEME_ID", ""),
+                "StartRow": start,
+                "Limit": 2000,
+                "IsVerifyBaseDataField": True,
+                "FilterString": filters,
+                "Model": model,
+            }
+            response = requests.post(endpoint, json=payload, headers=headers, timeout=180)
+            response.raise_for_status()
+            body = response.json()
+            result = body.get("Result", body) if isinstance(body, dict) else {}
+            status = result.get("ResponseStatus") if isinstance(result, dict) else None
+            if isinstance(status, dict) and status.get("IsSuccess") is False:
+                errors = status.get("Errors") or [{}]
+                message = _cf_text(errors[0].get("Message")) if isinstance(errors[0], dict) else ""
+                raise RuntimeError(f"金蝶现金流查询失败: {message or '未知错误'}")
+            page = result.get("Rows") or result.get("rows") or []
+            field_names = result.get("Fields") or fields
+            for item in page:
+                if isinstance(item, dict):
+                    rows.append(item)
+                elif isinstance(item, (list, tuple)):
+                    rows.append(dict(zip(field_names, item)))
+            if len(page) < 2000:
+                break
+            start += len(page)
+            if start > 100000:
+                raise RuntimeError("金蝶现金流查询超过10万行，请收紧主体范围")
+    unique = {}
+    for row in rows:
+        # FSHOWALLVCHINFO=true 会返回同一凭证行的现金腿/对方腿等副本。
+        # 去重键保留账簿、凭证日期、凭证字、凭证号、行号、科目、核算维度、
+        # 现金流项目和金额，避免不同主体或同一分录拆分流量被误合并。
+        key = tuple(
+            _cf_text(_cf_row_value(row, name))
+            for name in (
+                "FAccountbookname",
+                "FDate",
+                "FVoucherGroup",
+                "FVoucherGroupNo",
+                "FSEQ",
+                "FAcctNo",
+                "FDETAILNUMBER",
+                "FCFItemNo",
+                "FCashflowAmount",
+            )
+        )
+        unique[key] = row
+    return [row for row in unique.values() if _cf_period_row(row, period)]
+
+
+@task(name="import_kingdee_cashflow_to_staging", log_prints=True)
+def import_kingdee_cashflow_to_staging_task(target_date: Optional[str] = None) -> Dict[str, Any]:
+    """按流程目标期间导入金蝶正表现金流；已有主体期间数据时整主体跳过。"""
+    from mypackage.utilities import connect_to_db
+
+    target, _, _ = _calc_target_month(target_date)
+    period = target.strftime("%Y-%m")
+    conn, cur = connect_to_db()
+    if conn is None or cur is None:
+        raise RuntimeError("无法连接财务数据库")
+    try:
+        cur.execute(
+            """
+            SELECT btrim(fin_ind),
+                   btrim(COALESCE(cust_full_name, '')),
+                   btrim(COALESCE(fone::text, ''))
+            FROM dim_fin_ind
+            WHERE fin_ind IS NOT NULL AND btrim(fin_ind) <> ''
+            """
+        )
+        entities = cur.fetchall()
+        short_by_norm = {_cf_norm(row[0]): _cf_text(row[0]) for row in entities}
+        full_by_norm = {_cf_norm(row[1]): _cf_text(row[0]) for row in entities if _cf_text(row[1])}
+        full_names_by_company = {}
+        for row in entities:
+            company_name = _cf_text(row[0])
+            full_name = _cf_text(row[1])
+            if company_name and full_name:
+                full_names_by_company.setdefault(company_name, set()).add(full_name)
+        code_to_short = {
+            _cf_code_key(row[2]): _cf_text(row[0]) for row in entities if _cf_text(row[2])
+        }
+        book_name_candidates = []
+        for row in entities:
+            short_name = _cf_text(row[0])
+            full_name = _cf_text(row[1])
+            if short_name:
+                book_name_candidates.append((_cf_norm(short_name), short_name))
+            if full_name:
+                book_name_candidates.append((_cf_norm(full_name), short_name))
+        companies = sorted(set(short_by_norm.values()))
+        books = [
+            x.strip()
+            for x in os.environ.get(
+                "KINGDEE_CASHFLOW_BOOKS",
+                os.environ.get("KINGDEE_CASHFLOW_BOOK", ""),
+            ).split(",")
+            if x.strip()
+        ]
+        if not books:
+            # dim_fin_ind.fone 是当前财务库维护的金蝶账簿编码；显式环境变量
+            # 优先，未配置时使用该参数表作为兼容回退。
+            books = sorted(code_to_short)
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s))", (f"staging-recon-cashflow:{period}",)
+        )
+        # 保护边界按“主体 + 当前期间”判断，而不是只看现金流类别：
+        # 只要该主体本期间已经存在任意往来填报数据（手工、历史或其他类别），
+        # 就不再自动补入金蝶现金流，避免后续流程把已有填报当成可覆盖数据。
+        cur.execute(
+            'SELECT DISTINCT btrim("公司简称") FROM staging_recon '
+            "WHERE \"期间\" = %s AND btrim(COALESCE(\"公司简称\", '')) <> ''",
+            (period,),
+        )
+        existing = {_cf_text(row[0]) for row in cur.fetchall()}
+        existing_norm = {_cf_norm(company) for company in existing}
+        eligible = [company for company in companies if _cf_norm(company) not in existing_norm]
+        if not eligible:
+            return {
+                "success": True,
+                "period": period,
+                "inserted_count": 0,
+                "imported_companies": [],
+                "skipped_companies": sorted(existing),
+                "no_match_companies": [],
+                "message": "当前期间所有主体已有 staging_recon 数据，未导入",
+            }
+        eligible_codes = [code for code, company in code_to_short.items() if company in eligible]
+        eligible_names = sorted(
+            {name for company in eligible for name in full_names_by_company.get(company, set())}
+            | set(eligible)
+        )
+        rows = _fetch_kingdee_cashflow_rows(period, books, eligible_codes, eligible_names)
+        cur.execute(
+            "SELECT name FROM dim_ic_subject WHERE is_active = true AND category_code = %s",
+            ("现金流量",),
+        )
+        subject_map = {_cf_norm(row[0]): _cf_text(row[0]) for row in cur.fetchall()}
+        inserted = 0
+        imported_companies = set()
+        matched_companies = set()
+        seen = set()
+        for row in rows:
+            # 只导入金蝶现金流量表正表项目。仅有 FCFSubItemName 的间接法
+            # 调节项不进入 staging_recon；若同一行同时有正表和附表项目，
+            # 仍以正表项目为准。
+            original_item = _cf_text(_cf_row_value(row, "FCFItemName", "item_name"))
+            if not original_item or _cf_norm(original_item) not in subject_map:
+                continue
+            amount = _cf_amount(_cf_row_value(row, "FCashflowAmount", "cash_amount"))
+            if amount is None:
+                continue
+            item, amount = _cf_actual_item(original_item, amount)
+            if _cf_norm(item) not in subject_map or amount == 0:
+                continue
+            book = _cf_text(_cf_row_value(row, "FAccountbookname", "account_book"))
+            company = (
+                full_by_norm.get(_cf_norm(book))
+                or short_by_norm.get(_cf_norm(book))
+                or code_to_short.get(_cf_code_key(book))
+            )
+            if not company:
+                # 某些账套返回账簿显示名而非编码；仅在唯一主体候选时使用
+                # 包含匹配，避免短名称相互包含造成误归属。
+                book_norm = _cf_norm(book)
+                candidates = {
+                    short_name
+                    for name_norm, short_name in book_name_candidates
+                    if name_norm and name_norm in book_norm
+                }
+                if len(candidates) == 1:
+                    company = next(iter(candidates))
+            if not company or company not in eligible:
+                continue
+            detail_name = _cf_text(_cf_row_value(row, "FDETAILNAME", "detail_name"))
+            counterparty = ""
+            # 明细名称可能同时带编码、全称和多个分隔符；只接受维度表中
+            # 可精确映射的主体，避免把普通摘要误识别成对方主体。
+            detail_parts = re.split(r"[\\/、,，;；|]+", detail_name)
+            for part in detail_parts:
+                token = _cf_norm(part)
+                if token in short_by_norm:
+                    counterparty = short_by_norm[token]
+                    break
+                if token in full_by_norm:
+                    counterparty = full_by_norm[token]
+                    break
+                code = _cf_code_key(part)
+                if code in code_to_short:
+                    counterparty = code_to_short[code]
+                    break
+            if not counterparty:
+                continue
+            matched_companies.add(company)
+            txn_date = _cf_txn_date(_cf_row_value(row, "FDate", "date"), period)
+            key = (
+                company,
+                counterparty,
+                item,
+                txn_date,
+                _cf_text(row.get("FVoucherGroupNo")),
+                _cf_text(row.get("FSEQ")),
+                str(amount),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            content = " ".join(
+                v
+                for v in (
+                    _cf_text(row.get("FExplanation")),
+                    f"凭证{_cf_text(row.get('FVoucherGroup'))}{_cf_text(row.get('FVoucherGroupNo'))}",
+                )
+                if v
+            )
+            remark = json.dumps(
+                {
+                    "source": "金蝶GL_Rpt_CashflowQuery",
+                    "original_item": original_item,
+                },
+            )
+            cur.execute(
+                """
+                INSERT INTO staging_recon (
+                    id, "期间", "大类", "公司简称", "科目名称", "类别", "附注分类",
+                    "对方简称", "具体内容", "金额", "日期", "备注", "责任人",
+                    "验证结果", "上报状态", "创建人", "更新时间", "创建时间"
+                ) VALUES (
+                    gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, NULL, NOW(), NOW()
+                )
+                """,
+                (
+                    period,
+                    "现金流量",
+                    company,
+                    subject_map[_cf_norm(item)],
+                    "其他",
+                    "无",
+                    counterparty,
+                    content,
+                    amount,
+                    txn_date,
+                    remark,
+                    "金蝶现金流导入",
+                    json.dumps({"passed": True, "source": "kingdee"}, ensure_ascii=False),
+                    "已验证通过待上报",
+                ),
+            )
+            inserted += 1
+            imported_companies.add(company)
+        conn.commit()
+        return {
+            "success": True,
+            "period": period,
+            "inserted_count": inserted,
+            "imported_companies": sorted(imported_companies),
+            "skipped_companies": sorted(existing),
+            "no_match_companies": sorted(set(eligible) - matched_companies),
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ──────────────────────────────────────────────
 # Task 1：从 MySQL 读取当月对账数据
 # ──────────────────────────────────────────────
 
@@ -414,11 +872,15 @@ def fetch_recon_from_staging_recon_task(target_date: Optional[str] = None) -> pd
             SELECT "公司简称", "科目名称", "类别", "对方简称", "具体内容", "金额",
                    "日期", "备注", "责任人", "大类", "附注分类"
             FROM public.staging_recon
-            WHERE "日期" = :target_date
+            WHERE "期间" = :target_period
             """
         )
         print(f"--> 从 PostgreSQL staging_recon 查询目标月份: {lastmonth_str}")
-        df = pd.read_sql(sql, con=engine, params={"target_date": lastmonth})
+        df = pd.read_sql(
+            sql,
+            con=engine,
+            params={"target_period": lastmonth.strftime("%Y-%m")},
+        )
 
         if df.empty:
             print(f"[WARN] staging_recon 没有 {lastmonth_str} 的数据，填报数据为空")
@@ -462,20 +924,31 @@ def delete_old_recon_data_task(target_date: Optional[str] = None) -> Dict[str, A
         engine = engine_to_db()
         with engine.connect() as conn:
             trans = conn.begin()
+            if lastmonth.month == 12:
+                next_month = date(lastmonth.year + 1, 1, 1)
+            else:
+                next_month = date(lastmonth.year, lastmonth.month + 1, 1)
             try:
                 count_result = conn.execute(
-                    text("SELECT count(*) FROM excel_account_recon WHERE date = :d"),
-                    {"d": lastmonth},
+                    text(
+                        "SELECT count(*) FROM excel_account_recon "
+                        "WHERE date >= :month_start AND date < :next_month"
+                    ),
+                    {"month_start": lastmonth, "next_month": next_month},
                 )
                 count = count_result.scalar()
-                print(f"--> 准备删除 {lastmonth_str} 旧数据，现有 {count} 条")
+                print(f"--> 准备删除 {lastmonth_str[:7]} 旧数据，现有 {count} 条")
 
                 conn.execute(
-                    text("DELETE FROM excel_account_recon WHERE date = :d"), {"d": lastmonth}
+                    text(
+                        "DELETE FROM excel_account_recon "
+                        "WHERE date >= :month_start AND date < :next_month"
+                    ),
+                    {"month_start": lastmonth, "next_month": next_month},
                 )
                 trans.commit()
-                print(f"--> 删除 {lastmonth_str} 旧数据完成，共 {count} 条")
-                return {"success": True, "message": f"成功删除 {lastmonth_str} 旧数据 {count} 条"}
+                print(f"--> 删除 {lastmonth_str[:7]} 旧数据完成，共 {count} 条")
+                return {"success": True, "message": f"成功删除 {lastmonth_str[:7]} 旧数据 {count} 条"}
             except Exception:
                 trans.rollback()
                 raise
