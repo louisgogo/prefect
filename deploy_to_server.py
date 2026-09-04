@@ -1,19 +1,35 @@
 """从本地推送到远程 Prefect Server 的部署脚本"""
+
+import os
+import sys
+import time
+from datetime import datetime
+from multiprocessing import Process
+
+from prefect.client.schemas.schedules import CronSchedule
+
 from modules import (
+    ai_data_etl_flow,
+    budget_update_flow,
+    business_data_refresh_flow,
     business_line_profit_flow,
     calculate_shared_rate_flow,
     data_import_flow,
-    budget_update_flow,
     fetch_budget_shared_rate_flow,
+    fone_income_expense_refresh_flow,
+    fone_recon_flow,
+    inventory_impairment_flow,
+    kingdee_voucher_journal_flow,
+    org_sync_flow,
     profit_refresh_flow,
+    profit_report_flow,
+    rd_project_profitability_flow,
     recon_flow,
+    staging_recon_flow,
+    view_update_flow,
 )
 from modules.bus_line_staging import bus_line_staging_flow
-import sys
-import os
-from datetime import datetime
-from multiprocessing import Process
-import time
+from modules.bus_line_staging.module_selection import ALL_MODULE_OPTIONS
 
 # 添加当前目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -23,15 +39,14 @@ sys.path.append(current_dir)
 # 若已设置环境变量 PREFECT_API_URL，则优先使用环境变量；否则使用下面地址
 PREFECT_SERVER_URL = "http://10.18.8.191:4200"
 # API 地址（Prefect 要求带 /api 后缀）
-PREFECT_API_URL = os.environ.get(
-    "PREFECT_API_URL") or f"{PREFECT_SERVER_URL.rstrip('/')}/api"
+PREFECT_API_URL = os.environ.get("PREFECT_API_URL") or f"{PREFECT_SERVER_URL.rstrip('/')}/api"
 
 
-def _serve_business_line(last_month_year: int, last_month: int):
+def _serve_business_line(process_year: int, months: list):
     """模块级函数，供 Process 调用（Windows 要求可 pickle，不能是嵌套函数）"""
     business_line_profit_flow.serve(
         name="主流程-业务线损益计算",
-        parameters={"year": last_month_year, "month": last_month},
+        parameters={"year": process_year, "months": months},
         tags=["业务线核算", "月度任务", "自动执行"],
         description="业务线损益计算流程：生成收入、费用、利润、应收、存货、在途存货明细表，并刷新利润表",
     )
@@ -55,20 +70,34 @@ def _serve_data_import(last_month_year: int, last_month: int):
             "year": last_month_year,
             "month": last_month,
             "replace_existing": False,
+            "import_exchange_rates_from_excel": False,
         },
         tags=["数据导入", "月度任务", "自动执行"],
-        description="数据导入流程：从 Excel 文件导入数据到数据库（默认不替换已存在数据）",
+        description="数据导入流程：从 Excel 文件导入业务数据；汇率默认不再从 Excel 写入，由金蝶基础数据流程更新。",
+    )
+
+
+def _serve_ai_data_etl():
+    """模块级函数，供 Process 调用"""
+    ai_data_etl_flow.serve(
+        name="主流程-AI数据ETL",
+        tags=["AI数据", "ETL", "手动触发"],
+        description="为AI平台生成业务数据视图（业务线/业报数据）",
     )
 
 
 def _serve_budget_update():
     """模块级函数，供 Process 调用（预算更新为手动触发，参数按当前月份设默认值）"""
     from modules.budget_update.flows.budget_update_flow import _get_budget_defaults_by_date
+
     budget_defaults = _get_budget_defaults_by_date()
     budget_update_flow.serve(
         name="主流程-预算更新",
         tags=["预算更新", "手动触发"],
-        description="从 FONE 拉取预算、严格映射检查、写库；未映射则中断并导出 CSV。参数可留空，按运行时的当前月份自动填默认值。",
+        description=(
+            "从 FONE 拉取预算、严格映射检查并写库。正式版日期自动生成：年初为 YYYY-01-01，"
+            "年中为 YYYY-07-01。save_previous_version 默认关闭并直接覆盖；手动开启时归档当前正式版。"
+        ),
         parameters=budget_defaults,
     )
 
@@ -85,6 +114,7 @@ def _serve_profit_refresh():
 def _serve_fetch_budget_shared_rate():
     """模块级函数，供 Process 调用"""
     from modules.shared_rate.flows.fetch_budget_shared_rate_flow import _get_default_dates
+
     defaults = _get_default_dates()
     fetch_budget_shared_rate_flow.serve(
         name="子流程-拉取预算综合比例",
@@ -97,9 +127,36 @@ def _serve_fetch_budget_shared_rate():
 def _serve_recon():
     """模块级函数，供 Process 调用"""
     recon_flow.serve(
-        name="主流程-往来对账",
-        tags=["往来对账", "月度任务", "自动执行"],
+        name="主流程-EXCEL往来对账",
+        tags=["往来对账", "EXCEL", "月度任务", "自动执行"],
         description="内部往来对账流程：自动从 MySQL + Excel 采集上月数据，写入 PostgreSQL，再生成往来/销售/现金流三类对账结果并导出 Excel。",
+    )
+
+
+def _serve_staging_recon():
+    """模块级函数，供 Process 调用"""
+    staging_recon_flow.serve(
+        name="主流程-往来对账",
+        tags=["往来对账", "Staging", "月度任务", "自动执行"],
+        description="内部往来对账流程：自动从 MySQL + staging_recon 采集上月数据，写入 PostgreSQL，再生成往来/销售/现金流三类对账结果并导出 Excel。",
+    )
+
+
+def _serve_fone_recon():
+    """模块级函数，供 Process 调用"""
+    fone_recon_flow.serve(
+        name="子流程-从FONE获取往来数据",
+        tags=["往来对账", "FONE", "月度任务", "手动触发"],
+        description="调用 FONE API 执行 0501 脚本，获取 ERP 科目余额表并推送 BI 内部关联方数据。",
+    )
+
+
+def _serve_fone_income_expense_refresh():
+    """模块级函数，供 Process 调用。"""
+    fone_income_expense_refresh_flow.serve(
+        name="子流程-FONE收入费用明细刷新",
+        tags=["FONE", "收入明细", "费用明细", "财务刷新", "手动触发"],
+        description="按显式年月顺序刷新 FONE 收入、费用明细，并回读数据库验证非空、期间和刷新状态。",
     )
 
 
@@ -107,8 +164,104 @@ def _serve_bus_line_staging():
     """模块级函数，供 Process 调用"""
     bus_line_staging_flow.serve(
         name="主流程-业务线Staging抽取",
+        parameters={"modules": list(ALL_MODULE_OPTIONS)},
         tags=["Staging", "业务线核算", "自动执行", "月度任务"],
-        description="将业务线拆分1-4步骤数据以EAV格式存入PostgreSQL系统待填报",
+        description="按modules参数全量或选择性刷新业务线Staging；部分刷新会保留未选模块并生成完整新批次",
+    )
+
+
+def _serve_profit_report():
+    """模块级函数，供 Process 调用"""
+    profit_report_flow.serve(
+        name="子流程-利润表收集汇总",
+        tags=["报表收集", "利润表", "手动触发", "月度任务"],
+        description="利润表收集、汇总流程：按PQ逻辑收集数据源并汇总生成2-1利润拆分，导出CSV。默认执行上个月。",
+    )
+
+
+def _serve_view_update():
+    """模块级函数，供 Process 调用"""
+    view_update_flow.serve(
+        name="主流程-数据库视图更新",
+        tags=["视图更新", "数据库", "手动触发"],
+        description="更新映射表、刷新中文视图（无映射表自动跳过）、FONE 视图授权。",
+    )
+
+
+def _serve_org_sync():
+    """模块级函数，供 Process 调用"""
+    org_sync_flow.serve(
+        name="主流程-组织架构同步对比",
+        tags=["组织架构", "映射维护", "手动触发"],
+        description="对比 FONE XGD_MRPT_ENTITY 和 mydb map_org 的差异，生成报告并写入 org_diff_log。",
+    )
+
+
+def _serve_inventory_impairment():
+    """模块级函数，供 Process 调用。"""
+    from modules.inventory_impairment.flows.inventory_impairment_flow import (
+        _get_inventory_impairment_defaults_by_date,
+    )
+
+    defaults = _get_inventory_impairment_defaults_by_date()
+    inventory_impairment_flow.serve(
+        name="子流程-季度存货跌价计算",
+        tags=["存货跌价", "季度任务", "手动触发", "财务写入"],
+        description="默认计算最近已结束季度，通过平台原子同步业报资产减值损失及填报记录并回读核对。",
+        parameters=defaults,
+    )
+
+
+def _serve_rd_project_profitability():
+    """模块级函数，供 Process 调用。"""
+    from modules.rd_project_profitability.flows.rd_project_profitability_flow import (
+        _get_rd_project_profitability_defaults_by_date,
+    )
+
+    defaults = _get_rd_project_profitability_defaults_by_date()
+    rd_project_profitability_flow.serve(
+        name="主流程-研发项目收益分析",
+        tags=["研发项目", "收益分析", "手动触发", "Excel输出", "前端回调"],
+        description="按显式期间计算研发项目收益，生成 Excel，并将文件路径或下载链接回调给前端。",
+        parameters=defaults,
+    )
+
+
+def _serve_kingdee_voucher_journal():
+    """模块级函数，供 Process 调用。"""
+    from modules.kingdee_voucher.flows.kingdee_voucher_journal_flow import (
+        _get_kingdee_voucher_defaults_by_date,
+    )
+
+    defaults = _get_kingdee_voucher_defaults_by_date()
+    kingdee_voucher_journal_flow.serve(
+        name="子流程-金蝶凭证序时簿同步",
+        tags=["金蝶", "凭证序时簿", "月度任务", "手动触发", "财务写入"],
+        description="快速执行默认同步上个自然月；也可自定义单月或月份列表，按分录稳定标识幂等写库。",
+        parameters=defaults,
+    )
+
+
+def _serve_business_data_refresh():
+    """注册业报基础数据每日更新和手工自助更新。"""
+    business_data_refresh_flow.serve(
+        name="子流程-业报基础数据更新",
+        schedule=CronSchedule(cron="0 6 * * *", timezone="Asia/Shanghai"),
+        parameters={
+            "datasets": [
+                "customer",
+                "material",
+                "rd_project",
+                "supplier",
+                "acquiring_metrics",
+                "exchange_rate",
+            ],
+            "requested_by": None,
+            "exchange_rate_year": None,
+            "exchange_rate_month": None,
+        },
+        tags=["业报收集", "基础数据", "每日任务", "手动触发", "财务写入"],
+        description="每日06:00更新客户、物料、研发项目、供应商、收单指标和当月汇率；也支持业报编辑人员按数据集手工更新。",
     )
 
 
@@ -138,37 +291,45 @@ def deploy_to_remote_server():
         # systemd 等非交互环境没有 stdin，直接继续；仅在有终端时询问
         if sys.stdin.isatty():
             response = input("是否继续部署？(y/n): ")
-            if response.lower() != 'y':
+            if response.lower() != "y":
                 print("部署已取消")
                 return
         else:
             print("非交互环境，自动继续部署")
 
-    # 计算上个月的年份和月份
+    # 计算自动运行日期范围：1月到上个月；1月份则为上年全部
     now = datetime.now()
     if now.month == 1:
-        last_month_year = now.year - 1
-        last_month = 12
+        process_year = now.year - 1
+        months = list(range(1, 13))
     else:
-        last_month_year = now.year
-        last_month = now.month - 1
+        process_year = now.year
+        months = list(range(1, now.month))
 
     print("\n开始部署流程...")
     print("=" * 60)
 
     # 使用多进程同时部署多个流程（serve() 会持续运行）
     # 目标必须是模块级函数，否则 Windows 下 multiprocessing 无法 pickle 嵌套函数
-    process1 = Process(target=_serve_business_line,
-                       args=(last_month_year, last_month))
-    process2 = Process(target=_serve_shared_rate,
-                       args=(last_month_year, last_month))
-    process3 = Process(target=_serve_data_import,
-                       args=(last_month_year, last_month))
-    process4 = Process(target=_serve_budget_update)
-    process5 = Process(target=_serve_fetch_budget_shared_rate)
-    process6 = Process(target=_serve_profit_refresh)
-    process7 = Process(target=_serve_recon)
-    process8 = Process(target=_serve_bus_line_staging)
+    process1 = Process(target=_serve_business_line, args=(process_year, months))
+    process2 = Process(target=_serve_shared_rate, args=(process_year, months[-1]))
+    process3 = Process(target=_serve_data_import, args=(process_year, months[-1]))
+    process4 = Process(target=_serve_ai_data_etl)
+    process5 = Process(target=_serve_budget_update)
+    process6 = Process(target=_serve_fetch_budget_shared_rate)
+    process7 = Process(target=_serve_profit_refresh)
+    process8 = Process(target=_serve_recon)
+    process9 = Process(target=_serve_staging_recon)
+    process10 = Process(target=_serve_fone_recon)
+    process11 = Process(target=_serve_bus_line_staging)
+    process12 = Process(target=_serve_profit_report)
+    process13 = Process(target=_serve_view_update)
+    process14 = Process(target=_serve_org_sync)
+    process15 = Process(target=_serve_inventory_impairment)
+    process16 = Process(target=_serve_rd_project_profitability)
+    process17 = Process(target=_serve_fone_income_expense_refresh)
+    process18 = Process(target=_serve_kingdee_voucher_journal)
+    process19 = Process(target=_serve_business_data_refresh)
 
     process1.start()
     time.sleep(1)
@@ -185,6 +346,28 @@ def deploy_to_remote_server():
     process7.start()
     time.sleep(1)
     process8.start()
+    time.sleep(1)
+    process9.start()
+    time.sleep(1)
+    process10.start()
+    time.sleep(1)
+    process11.start()
+    time.sleep(1)
+    process12.start()
+    time.sleep(1)
+    process13.start()
+    time.sleep(1)
+    process14.start()
+    time.sleep(1)
+    process15.start()
+    time.sleep(1)
+    process16.start()
+    time.sleep(1)
+    process17.start()
+    time.sleep(1)
+    process18.start()
+    time.sleep(1)
+    process19.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -201,7 +384,27 @@ def deploy_to_remote_server():
         process7.join()
     except KeyboardInterrupt:
         print("\n\n正在停止部署...")
-        for p in [process1, process2, process3, process4, process5, process6, process7, process8]:
+        for p in [
+            process1,
+            process2,
+            process3,
+            process4,
+            process5,
+            process6,
+            process7,
+            process8,
+            process9,
+            process10,
+            process11,
+            process12,
+            process13,
+            process14,
+            process15,
+            process16,
+            process17,
+            process18,
+            process19,
+        ]:
             p.terminate()
             p.join()
         print("部署已停止")
@@ -215,4 +418,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n部署失败: {str(e)}")
         import traceback
+
         traceback.print_exc()

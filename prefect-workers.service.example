@@ -14,6 +14,8 @@ User=root
 Group=root
 WorkingDirectory=/root/prefect
 Environment=PREFECT_API_URL=http://127.0.0.1:4200/api
+EnvironmentFile=/root/prefect/.env
+# .env 中必须配置 AIHUB_FONE_API_TOKEN，供 FONE 往来及收入/费用刷新流程使用。
 # 若项目依赖 mypackage，需把 mypackage 所在父目录加入 PYTHONPATH，例如：
 # Environment=PYTHONPATH=/root
 # 详见 docs/服务器上配置mypackage依赖.md

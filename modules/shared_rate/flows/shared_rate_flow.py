@@ -1,27 +1,30 @@
 """综合比例计算流程"""
-from prefect import flow
-import pandas as pd
-import sys
 import os
-from typing import Optional, List
+import sys
+from typing import List, Optional
+
+import pandas as pd
+
+from prefect import flow
+
 # 添加根目录到路径（prefect目录）
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from modules.common.tasks.notify_hermes_task import notify_hermes_task
 from utils.date_utils import get_date_range_by_month, get_date_range_by_months
+
 from ..tasks.shared_rate_tasks import (
-    load_bus_profit_for_shared_rate_task,
-    load_personnel_for_shared_rate_task,
-    load_human_cost_for_shared_rate_task,
-    calculate_personnel_allocation_task,
     calculate_comprehensive_rate_task,
+    calculate_personnel_allocation_task,
+    load_bus_profit_for_shared_rate_task,
+    load_human_cost_for_shared_rate_task,
+    load_personnel_for_shared_rate_task,
     save_shared_rate_task,
 )
 
 
 @flow(name="calculate_shared_rate_flow", log_prints=True)
 def calculate_shared_rate_flow(
-    year: int,
-    month: Optional[int] = None,
-    months: Optional[List[int]] = None
+    year: int, month: Optional[int] = None, months: Optional[List[int]] = None
 ) -> None:
     """
     综合比例计算流程
@@ -41,65 +44,97 @@ def calculate_shared_rate_flow(
     """
     print(f"开始综合比例计算流程，年份: {year}")
 
-    # 确定要处理的月份列表
-    if months is not None:
-        # 批量处理多个月份（按月循环执行）
-        # 将月份数字列表转换为 (year, month) 元组列表
-        month_list = [(year, m) for m in months]
-        print(f"批量处理模式，月份数: {len(months)}，将按月循环执行以避免内存溢出")
-        print(f"处理月份: {', '.join([f'{year}年{m}月' for m in months])}")
-    elif month is not None:
-        # 只处理单个月份
-        print(f"处理模式：只处理 {year}年{month}月")
-        month_list = [(year, month)]
-    else:
-        raise ValueError("必须提供 month 或 months 参数")
+    notify_hermes_task(
+        event="started",
+        flow_name="综合比例计算",
+        payload={"year": year, "month": month, "months": months},
+    )
 
-    # 按月循环执行
-    for idx, (process_year, process_month) in enumerate(month_list, 1):
+    try:
+        # 确定要处理的月份列表
+        if months is not None:
+            # 批量处理多个月份（按月循环执行）
+            # 将月份数字列表转换为 (year, month) 元组列表
+            month_list = [(year, m) for m in months]
+            print(f"批量处理模式，月份数: {len(months)}，将按月循环执行以避免内存溢出")
+            print(f"处理月份: {', '.join([f'{year}年{m}月' for m in months])}")
+        elif month is not None:
+            # 只处理单个月份
+            print(f"处理模式：只处理 {year}年{month}月")
+            month_list = [(year, month)]
+        else:
+            raise ValueError("必须提供 month 或 months 参数")
+
+        # 按月循环执行
+        for idx, (process_year, process_month) in enumerate(month_list, 1):
+            print(f"\n{'='*60}")
+            print(f"开始处理第 {idx}/{len(month_list)} 个月：{process_year}年{process_month}月")
+            print(f"{'='*60}")
+
+            # 获取单个月份的日期范围
+            date_range = get_date_range_by_month(process_year, process_month)
+            print(f"日期范围: {date_range.min()} 到 {date_range.max()}")
+
+            try:
+                # 1. 加载业务线利润数据
+                print("--- 开始加载业务线利润数据 ---")
+                df_profit = load_bus_profit_for_shared_rate_task(date_range)
+
+                # 2. 加载人数数据
+                print("--- 开始加载人数数据 ---")
+                df_personnel = load_personnel_for_shared_rate_task(date_range)
+
+                # 3. 加载人力费用比例数据
+                print("--- 开始加载人力费用比例数据 ---")
+                df_human_cost = load_human_cost_for_shared_rate_task(date_range)
+
+                # 4. 计算人数业务线分配
+                print("--- 开始计算人数业务线分配 ---")
+                df_personnel_allocation = calculate_personnel_allocation_task(
+                    df_personnel, df_human_cost
+                )
+
+                # 5. 计算综合比例
+                print("--- 开始计算综合比例 ---")
+                df_shared_rate = calculate_comprehensive_rate_task(
+                    df_profit, df_personnel_allocation
+                )
+
+                # 6. 保存结果
+                print("--- 开始保存综合比例 ---")
+                save_shared_rate_task(df_shared_rate, date_range)
+
+                print(f"✓ {process_year}年{process_month}月 综合比例计算完成")
+            except Exception as e:
+                print(f"✗ {process_year}年{process_month}月 综合比例计算失败: {str(e)}")
+                raise  # 如果某个月份计算失败，停止整个流程
+
         print(f"\n{'='*60}")
-        print(
-            f"开始处理第 {idx}/{len(month_list)} 个月：{process_year}年{process_month}月")
+        print(f"综合比例计算流程全部完成，共处理 {len(month_list)} 个月")
         print(f"{'='*60}")
 
-        # 获取单个月份的日期范围
-        date_range = get_date_range_by_month(process_year, process_month)
-        print(f"日期范围: {date_range.min()} 到 {date_range.max()}")
-
-        try:
-            # 1. 加载业务线利润数据
-            print("--- 开始加载业务线利润数据 ---")
-            df_profit = load_bus_profit_for_shared_rate_task(date_range)
-
-            # 2. 加载人数数据
-            print("--- 开始加载人数数据 ---")
-            df_personnel = load_personnel_for_shared_rate_task(date_range)
-
-            # 3. 加载人力费用比例数据
-            print("--- 开始加载人力费用比例数据 ---")
-            df_human_cost = load_human_cost_for_shared_rate_task(date_range)
-
-            # 4. 计算人数业务线分配
-            print("--- 开始计算人数业务线分配 ---")
-            df_personnel_allocation = calculate_personnel_allocation_task(
-                df_personnel, df_human_cost
-            )
-
-            # 5. 计算综合比例
-            print("--- 开始计算综合比例 ---")
-            df_shared_rate = calculate_comprehensive_rate_task(
-                df_profit, df_personnel_allocation
-            )
-
-            # 6. 保存结果
-            print("--- 开始保存综合比例 ---")
-            save_shared_rate_task(df_shared_rate, date_range)
-
-            print(f"✓ {process_year}年{process_month}月 综合比例计算完成")
-        except Exception as e:
-            print(f"✗ {process_year}年{process_month}月 综合比例计算失败: {str(e)}")
-            raise  # 如果某个月份计算失败，停止整个流程
-
-    print(f"\n{'='*60}")
-    print(f"综合比例计算流程全部完成，共处理 {len(month_list)} 个月")
-    print(f"{'='*60}")
+        notify_hermes_task(
+            event="completed",
+            flow_name="综合比例计算",
+            payload={
+                "year": year,
+                "month": month,
+                "months": months,
+                "summary": f"综合比例计算完成，共处理 {len(month_list)} 个月",
+            },
+        )
+    except Exception as e:
+        error_msg = f"综合比例计算流程失败: {str(e)}"
+        print(f"\n{error_msg}")
+        notify_hermes_task(
+            event="failed",
+            flow_name="综合比例计算",
+            payload={
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "year": year,
+                "month": month,
+                "months": months,
+            },
+        )
+        raise Exception(error_msg) from e
