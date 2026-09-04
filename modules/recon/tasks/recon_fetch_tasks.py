@@ -16,7 +16,6 @@ from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 import requests
-
 from prefect import task
 
 # 添加 prefect 根目录到路径
@@ -626,12 +625,9 @@ def import_kingdee_cashflow_to_staging_task(target_date: Optional[str] = None) -
                 )
                 if v
             )
-            remark = json.dumps(
-                {
-                    "source": "金蝶GL_Rpt_CashflowQuery",
-                    "original_item": original_item,
-                },
-            )
+            # 系统来源使用简洁、可读的备注；原始科目已保存在“科目名称”中，
+            # 不再把接口元数据序列化到用户可见备注。
+            remark = "金蝶现金流数据"
             cur.execute(
                 """
                 INSERT INTO staging_recon (
@@ -655,7 +651,7 @@ def import_kingdee_cashflow_to_staging_task(target_date: Optional[str] = None) -
                     amount,
                     txn_date,
                     remark,
-                    "金蝶现金流导入",
+                    "金蝶现金流",
                     json.dumps({"passed": True, "source": "kingdee"}, ensure_ascii=False),
                     "已验证通过待上报",
                 ),
