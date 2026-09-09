@@ -11,9 +11,8 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import text
-
 from prefect import task
+from sqlalchemy import text
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -317,22 +316,33 @@ def reconcile_wanglai_task(
 def process_sales_purchases_task(
     df_raw: pd.DataFrame,
 ) -> pd.DataFrame:
-    """销售 vs 采购发生额核对，输出差异明细。"""
+    """销售 vs 采购按业务月份核对，输出差异明细。
+
+    销售和采购两侧可能使用不同的业务日；按月份归并可以避免同一笔
+    月度发生额因日期不一致而被拆分成两条单边差异。结果日期统一落为
+    对应月份的 1 号。
+    """
     df_sales = df_raw[df_raw["大类"] == "销售发生额"].copy()
+    df_sales["核对月份"] = (
+        pd.to_datetime(df_sales["日期"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+    )
     df_sales_grouped = (
-        df_sales.groupby(["公司简称", "对方简称", "日期"], dropna=False)["金额"].sum().reset_index()
+        df_sales.groupby(["公司简称", "对方简称", "核对月份"], dropna=False)["金额"].sum().reset_index()
     )
 
     df_purchases = df_raw[df_raw["大类"] == "采购发生额"].copy()
+    df_purchases["核对月份"] = (
+        pd.to_datetime(df_purchases["日期"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+    )
     df_purchases_grouped = (
-        df_purchases.groupby(["公司简称", "对方简称", "日期"], dropna=False)["金额"].sum().reset_index()
+        df_purchases.groupby(["公司简称", "对方简称", "核对月份"], dropna=False)["金额"].sum().reset_index()
     )
 
     df_merged = pd.merge(
         df_sales_grouped,
         df_purchases_grouped,
-        left_on=["对方简称", "公司简称", "日期"],
-        right_on=["公司简称", "对方简称", "日期"],
+        left_on=["对方简称", "公司简称", "核对月份"],
+        right_on=["公司简称", "对方简称", "核对月份"],
         how="outer",
         suffixes=("", "_采购"),
     )
@@ -341,10 +351,7 @@ def process_sales_purchases_task(
     df_merged["采购核对.金额"] = df_merged["金额_采购"].fillna(0).round(2)
     df_merged["差异金额"] = (df_merged["金额"] - df_merged["采购核对.金额"]).round(2)
 
-    if "日期_x" in df_merged.columns and "日期_y" in df_merged.columns:
-        df_merged["唯一日期"] = df_merged["日期_x"].combine_first(df_merged["日期_y"])
-    else:
-        df_merged["唯一日期"] = df_merged["日期"]
+    df_merged["唯一日期"] = df_merged["核对月份"]
 
     df_result = df_merged[(df_merged["差异金额"] >= 0.05) | (df_merged["差异金额"] <= -0.05)].copy()
 
@@ -383,8 +390,18 @@ def process_cashflow_task(
     df_raw: pd.DataFrame,
     df_params: pd.DataFrame,
 ) -> pd.DataFrame:
-    """现金流量收入 vs 支付核对，输出差异明细。"""
+    """现金流量收入 vs 支付按业务月份核对，输出差异明细。
+
+    现金流在“我的对账情况”中按业务日期归并到月份，因此结果表的
+    ``唯一日期`` 统一落为对应月份的 1 号，避免同一月份因凭证日不同而
+    产生多条无法对应的差异记录。
+    """
     df_cash = df_raw[df_raw["大类"] == "现金流量"].copy()
+
+    # 统一现金流核对粒度为业务月份；销售/采购任务也采用同一月份粒度。
+    df_cash["核对月份"] = (
+        pd.to_datetime(df_cash["日期"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+    )
 
     pay_subjects = [
         "分配股利、利润或偿付利息支付的现金",
@@ -399,7 +416,7 @@ def process_cashflow_task(
     df_pay = df_cash[df_cash["科目名称"].isin(pay_subjects)].copy()
     df_pay = pd.merge(df_pay, df_params, left_on="科目名称", right_on="项目", how="left")
     df_pay["唯一名称"] = df_pay["对方简称"] + "-" + df_pay["公司简称"] + "-" + df_pay["统一名称"].fillna("")
-    df_pay_grouped = df_pay.groupby(["唯一名称", "日期"], dropna=False)["金额"].sum().reset_index()
+    df_pay_grouped = df_pay.groupby(["唯一名称", "核对月份"], dropna=False)["金额"].sum().reset_index()
 
     income_subjects = [
         "取得投资收益收到的现金",
@@ -418,10 +435,10 @@ def process_cashflow_task(
     df_income["唯一名称"] = (
         df_income["公司简称"] + "-" + df_income["对方简称"] + "-" + df_income["统一名称"].fillna("")
     )
-    df_income_grouped = df_income.groupby(["唯一名称", "日期"], dropna=False)["金额"].sum().reset_index()
+    df_income_grouped = df_income.groupby(["唯一名称", "核对月份"], dropna=False)["金额"].sum().reset_index()
 
-    df_income_grouped = df_income_grouped.rename(columns={"唯一名称": "唯一名称_I", "日期": "日期_I"})
-    df_pay_grouped = df_pay_grouped.rename(columns={"唯一名称": "唯一名称_P", "日期": "日期_P"})
+    df_income_grouped = df_income_grouped.rename(columns={"唯一名称": "唯一名称_I", "核对月份": "日期_I"})
+    df_pay_grouped = df_pay_grouped.rename(columns={"唯一名称": "唯一名称_P", "核对月份": "日期_P"})
 
     df_merged = pd.merge(
         df_income_grouped,
