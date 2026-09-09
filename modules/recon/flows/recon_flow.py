@@ -125,7 +125,7 @@ def recon_flow(target_date: Optional[str] = None, use_fone: bool = False) -> Non
         elif auto_fill_result.get("action") == "skipped":
             print(f"【自动填充】{auto_fill_result.get('message')}")
         else:
-            print(f"[WARN] 自动填充检测异常: {auto_fill_result.get('message')}")
+            raise RuntimeError(f"自动填充 recon_name 失败: {auto_fill_result.get('message')}")
 
         # Step 6: 加载数据库映射配置（差异说明从数据库结果表增量继承）
         df_params = load_mapping_config_task()
