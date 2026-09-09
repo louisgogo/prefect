@@ -12,6 +12,7 @@ from modules.budget_update.tasks.budget_update_tasks import (
     _append_budget_data,
     _drop_hidden_database_columns,
     _first_unused_archive_date,
+    _normalize_business_line,
     _prepare_budget_version_write,
     _read_data,
     _read_psql_data,
@@ -143,6 +144,28 @@ class BudgetHiddenDatabaseFieldTests(unittest.TestCase):
 
         self.assertEqual(result.shape, (1, 1))
         self.assertFalse(any(str(column).startswith("_") for column in result.columns))
+
+
+class BudgetBusinessLineCompatibilityTests(unittest.TestCase):
+    def test_legacy_singapore_name_is_normalized_without_mutating_source(self):
+        source = pd.DataFrame(
+            {
+                "业务线": ["跨境新加坡", "新加坡", "跨境欧洲", "能源硬件（禁用）"],
+                "金额": [1, 2, 3, 4],
+            }
+        )
+
+        result = _normalize_business_line(source)
+
+        self.assertEqual(result["业务线"].tolist(), ["新加坡", "新加坡", "跨境欧洲", "能源硬件"])
+        self.assertEqual(source["业务线"].tolist()[0], "跨境新加坡")
+
+    def test_frames_without_business_line_are_returned_unchanged(self):
+        source = pd.DataFrame({"金额": [1]})
+
+        result = _normalize_business_line(source)
+
+        pd.testing.assert_frame_equal(result, source)
 
 
 class BudgetVersionWritePreparationTests(unittest.TestCase):

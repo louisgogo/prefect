@@ -121,7 +121,7 @@ def check_and_fill_recon_data_task(target_date: Optional[str] = None) -> Dict[st
                 df_source = pd.read_sql(
                     text(
                         """
-                    SELECT "单位简称", "嘉联用公司简称", "合并名称", "业报合并名称", "日期"
+                    SELECT "单位简称", "嘉联用公司简称", "合并名称", "业报合并名称", "日期", "抵销层级"
                     FROM recon_name
                     WHERE "日期" >= :start AND "日期" < :end
                     """
