@@ -82,7 +82,7 @@ def staging_recon_flow(target_date: Optional[str] = None, use_fone: bool = False
         elif auto_fill_result.get("action") == "skipped":
             print(f"【自动填充】{auto_fill_result.get('message')}")
         else:
-            print(f"[WARN] 自动填充检测异常: {auto_fill_result.get('message')}")
+            raise RuntimeError(f"自动填充 recon_name 失败: {auto_fill_result.get('message')}")
 
         df_params = load_mapping_config_task()
         df_raw = load_recon_raw_task(target_date=target_date)
