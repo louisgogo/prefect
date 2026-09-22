@@ -16,6 +16,7 @@ from modules import (
     fetch_budget_shared_rate_flow,
     fone_income_expense_refresh_flow,
     fone_recon_flow,
+    hr_org_sync_flow,
     inventory_impairment_flow,
     kingdee_voucher_journal_flow,
     org_sync_flow,
@@ -395,6 +396,15 @@ def deploy_business_data_refresh_flow():
     )
 
 
+def deploy_hr_org_sync_flow():
+    """部署HR组织架构同步本地测试流程（无计划，手动触发）。"""
+    hr_org_sync_flow.serve(
+        name="HR组织架构同步-本地测试",
+        tags=["本地测试", "HR", "组织架构"],
+        description="本地测试：手动执行一次HR组织与人员主数据同步。",
+    )
+
+
 if __name__ == "__main__":
     print("开始部署流程...")
     print("确保已启动 Prefect Server：prefect server start")
@@ -421,6 +431,7 @@ if __name__ == "__main__":
     process17 = Process(target=deploy_fone_income_expense_refresh_flow)
     process18 = Process(target=deploy_kingdee_voucher_journal_flow)
     process19 = Process(target=deploy_business_data_refresh_flow)
+    process20 = Process(target=deploy_hr_org_sync_flow)
 
     process1.start()
     time.sleep(1)
@@ -459,6 +470,7 @@ if __name__ == "__main__":
     process18.start()
     time.sleep(1)
     process19.start()
+    process20.start()
 
     # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
@@ -491,6 +503,7 @@ if __name__ == "__main__":
             process17,
             process18,
             process19,
+            process20,
         ]:
             p.terminate()
             p.join()

@@ -18,6 +18,7 @@ from modules import (
     fetch_budget_shared_rate_flow,
     fone_income_expense_refresh_flow,
     fone_recon_flow,
+    hr_org_sync_flow,
     inventory_impairment_flow,
     kingdee_voucher_journal_flow,
     org_sync_flow,
@@ -265,6 +266,16 @@ def _serve_business_data_refresh():
     )
 
 
+def _serve_hr_org_sync():
+    """Register the daily HR master-data sync used by the admin org chart."""
+    hr_org_sync_flow.serve(
+        name="子流程-HR组织架构每日同步",
+        schedule=CronSchedule(cron="0 2 * * *", timezone="Asia/Shanghai"),
+        tags=["HR", "组织架构", "每日任务", "自动执行"],
+        description="每天02:00从HR主数据同步组织与人员，刷新管理员组织架构图数据。",
+    )
+
+
 def deploy_to_remote_server():
     """
     从本地推送流程到远程 Prefect Server
@@ -330,6 +341,7 @@ def deploy_to_remote_server():
     process17 = Process(target=_serve_fone_income_expense_refresh)
     process18 = Process(target=_serve_kingdee_voucher_journal)
     process19 = Process(target=_serve_business_data_refresh)
+    process20 = Process(target=_serve_hr_org_sync)
 
     process1.start()
     time.sleep(1)
@@ -368,6 +380,7 @@ def deploy_to_remote_server():
     process18.start()
     time.sleep(1)
     process19.start()
+    process20.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -404,6 +417,7 @@ def deploy_to_remote_server():
             process17,
             process18,
             process19,
+            process20,
         ]:
             p.terminate()
             p.join()
