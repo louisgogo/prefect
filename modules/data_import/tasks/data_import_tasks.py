@@ -1277,3 +1277,58 @@ def update_manual_refresh_data_task(
         print(f"手工刷新数据检查完成：跳过 {skipped_count} 个表（已存在数据或无数据需要更新）")
     else:
         print("手工刷新数据检查完成：无数据需要更新")
+
+
+@task(name="update_cashflow_data", log_prints=True)
+def update_cashflow_data_task(
+    dfs: Dict[str, pd.DataFrame],
+    start_date: str,
+    end_date: str,
+    replace_existing: bool = True,
+) -> Dict[str, int]:
+    """只刷新现金流量表，不触碰汇率、利润表或其他手工刷新表。"""
+    print("=" * 60)
+    print("开始刷新现金流量表")
+    print(f"刷新期间：{start_date} 至 {end_date}")
+    print("=" * 60)
+
+    updated_count = 0
+    skipped_count = 0
+    tables_config = (
+        ("fact_cashflow", "date", "date"),
+        ("excel_cashflow_intl", "date", "date"),
+    )
+
+    for table_name, table_date_column, df_date_column in tables_config:
+        if table_name not in dfs:
+            print(f"⚠️  警告: {table_name} 不在数据字典中，跳过处理")
+            skipped_count += 1
+            continue
+
+        df = dfs[table_name].copy()
+        if df.empty:
+            print(f"⊘ 跳过 {table_name}（DataFrame 为空，无数据需要更新）")
+            skipped_count += 1
+            continue
+
+        if not replace_existing and _check_data_exists(
+            table_name, table_date_column, start_date, end_date
+        ):
+            print(f"⊘ 跳过 {table_name}（已存在数据，replace_existing=False）")
+            skipped_count += 1
+            continue
+
+        update_data_by_date_range_task(
+            table_name,
+            table_date_column,
+            df,
+            df_date_column,
+            start_date,
+            end_date,
+            replace_existing,
+        )
+        updated_count += 1
+
+    summary = {"updated_count": updated_count, "skipped_count": skipped_count}
+    print("现金流量表刷新完成：" f"已更新 {updated_count} 个表，跳过 {skipped_count} 个表")
+    return summary

@@ -11,6 +11,7 @@ from modules import (
     business_data_refresh_flow,
     business_line_profit_flow,
     calculate_shared_rate_flow,
+    cashflow_refresh_flow,
     data_import_flow,
     fetch_budget_shared_rate_flow,
     fone_income_expense_refresh_flow,
@@ -104,6 +105,16 @@ if __name__ == "__main__":
         },
         tags=["数据导入", "月度任务", "自动执行"],
         description="数据导入流程：从 Excel 文件导入业务数据；汇率默认不再从 Excel 写入，由金蝶基础数据流程更新。",
+    )
+
+    print("\n" + "=" * 60)
+    print("现金流量表刷新子流程 - 生产环境注册")
+    print("=" * 60)
+    print("说明：仅手工触发；year、month 必须显式填写，默认替换指定月份的现金流量表。")
+    cashflow_refresh_flow.serve(
+        name="子流程-现金流量表刷新",
+        tags=["现金流量表", "财务刷新", "手动触发"],
+        description="只刷新 fact_cashflow 和 excel_cashflow_intl，不处理其他手工刷新表。",
     )
 
     print("\n" + "=" * 60)
