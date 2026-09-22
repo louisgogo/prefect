@@ -22,6 +22,7 @@ from modules import (
 )
 from modules.bus_line_staging import bus_line_staging_flow
 from modules.bus_line_staging.module_selection import ALL_MODULE_OPTIONS
+from modules.data_import.flows.cashflow_refresh_flow import _get_cashflow_refresh_defaults_by_date
 
 # 添加当前目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -110,9 +111,10 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("现金流量表刷新子流程 - 生产环境注册")
     print("=" * 60)
-    print("说明：仅手工触发；year、month 必须显式填写，默认替换指定月份的现金流量表。")
+    print("说明：仅手工触发；year、month 默认当前年月，可手工修改；默认替换指定月份的现金流量表。")
     cashflow_refresh_flow.serve(
         name="子流程-现金流量表刷新",
+        parameters=_get_cashflow_refresh_defaults_by_date(),
         tags=["现金流量表", "财务刷新", "手动触发"],
         description="只刷新 fact_cashflow 和 excel_cashflow_intl，不处理其他手工刷新表。",
     )

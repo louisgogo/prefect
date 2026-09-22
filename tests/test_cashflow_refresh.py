@@ -1,11 +1,15 @@
 """现金流量表独立刷新子流程的单元测试。"""
 
 import unittest
+from datetime import date
 from unittest.mock import patch
 
 import pandas as pd
 
-from modules.data_import.flows.cashflow_refresh_flow import cashflow_refresh_flow
+from modules.data_import.flows.cashflow_refresh_flow import (
+    _get_cashflow_refresh_defaults_by_date,
+    cashflow_refresh_flow,
+)
 from modules.data_import.tasks import data_import_tasks
 
 
@@ -56,6 +60,11 @@ class CashflowRefreshTests(unittest.TestCase):
     def test_flow_requires_valid_month(self):
         with self.assertRaisesRegex(ValueError, "1-12"):
             cashflow_refresh_flow.fn(year=2026, month=13)
+
+    def test_defaults_use_reference_year_and_month(self):
+        defaults = _get_cashflow_refresh_defaults_by_date(date(2026, 9, 22))
+
+        self.assertEqual(defaults, {"year": 2026, "month": 9})
 
 
 if __name__ == "__main__":
