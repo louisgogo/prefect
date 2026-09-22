@@ -57,7 +57,7 @@ def hr_org_sync_flow(
         os.environ.get("HR_SYNC_PASSWORD") or str(env_values.get("HR_SYNC_PASSWORD") or ""),
         "HR_SYNC_PASSWORD",
     )
-    script = resolved_root / "scripts" / "sync_hr_master_data.py"
+    script = resolved_root / "app" / "scripts" / "sync_hr_master_data.py"
     if not script.is_file():
         raise FileNotFoundError(f"HR同步脚本不存在：{script}")
     if not resolved_env.is_file():
