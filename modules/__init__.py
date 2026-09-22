@@ -14,6 +14,9 @@ from .business_data_refresh.flows.business_data_refresh_flow import business_dat
 # 数据导入流程
 from .data_import.flows.data_import_flow import data_import_flow
 
+# HR组织与人员主数据同步流程
+from .hr_org_sync import hr_org_sync_flow
+
 # 存货跌价季度计算子流程
 from .inventory_impairment.flows.inventory_impairment_flow import inventory_impairment_flow
 
@@ -56,6 +59,7 @@ __all__ = [
     "data_import_flow",
     "inventory_impairment_flow",
     "kingdee_voucher_journal_flow",
+    "hr_org_sync_flow",
     "budget_update_flow",
     "business_data_refresh_flow",
     "org_sync_flow",

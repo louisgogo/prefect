@@ -14,6 +14,7 @@ from modules import (
     data_import_flow,
     fetch_budget_shared_rate_flow,
     fone_income_expense_refresh_flow,
+    hr_org_sync_flow,
     inventory_impairment_flow,
     kingdee_voucher_journal_flow,
     profit_refresh_flow,
@@ -178,6 +179,17 @@ if __name__ == "__main__":
         },
         tags=["业报收集", "基础数据", "每日任务", "手动触发", "财务写入"],
         description="每日06:00更新客户、物料、研发项目、供应商、收单指标和当月汇率；也支持业报编辑人员按数据集手工更新。",
+    )
+
+    print("\n" + "=" * 60)
+    print("HR组织架构每日同步流程 - 生产环境注册")
+    print("=" * 60)
+    print("计划执行：每天02:00（Asia/Shanghai）同步HR组织与人员主数据。")
+    hr_org_sync_flow.serve(
+        name="子流程-HR组织架构每日同步",
+        schedule=CronSchedule(cron="0 2 * * *", timezone="Asia/Shanghai"),
+        tags=["HR", "组织架构", "每日任务", "自动执行"],
+        description="每天02:00从HR主数据同步组织与人员，刷新管理员组织架构图数据。",
     )
 
     print("\n" + "=" * 60)
