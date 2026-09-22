@@ -12,7 +12,6 @@ from modules import (
     business_data_refresh_flow,
     business_line_profit_flow,
     calculate_shared_rate_flow,
-    cashflow_refresh_flow,
     data_import_flow,
     fetch_budget_shared_rate_flow,
     fone_income_expense_refresh_flow,
@@ -29,7 +28,6 @@ from modules import (
 )
 from modules.bus_line_staging import bus_line_staging_flow
 from modules.bus_line_staging.module_selection import ALL_MODULE_OPTIONS
-from modules.data_import.flows.cashflow_refresh_flow import _get_cashflow_refresh_defaults_by_date
 
 # 添加当前目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -118,21 +116,6 @@ def deploy_data_import_flow():
         name="数据导入流程-本地测试",
         tags=["本地测试", "数据导入"],
         description="本地测试用：从 Excel 文件导入业务数据；Excel 汇率导入默认关闭。",
-    )
-
-
-def deploy_cashflow_refresh_flow():
-    """部署现金流量表刷新子流程。"""
-    print("=" * 60)
-    print("现金流量表刷新子流程 - 本地测试部署")
-    print("=" * 60)
-    print("说明：year、month 默认当前年月，可手工修改；默认替换指定月份的两张现金流量表。")
-
-    cashflow_refresh_flow.serve(
-        name="现金流量表刷新-本地测试",
-        parameters=_get_cashflow_refresh_defaults_by_date(),
-        tags=["本地测试", "现金流量表", "财务刷新", "手动触发"],
-        description="只刷新 fact_cashflow 和 excel_cashflow_intl，不处理其他手工刷新表。",
     )
 
 
@@ -438,7 +421,6 @@ if __name__ == "__main__":
     process17 = Process(target=deploy_fone_income_expense_refresh_flow)
     process18 = Process(target=deploy_kingdee_voucher_journal_flow)
     process19 = Process(target=deploy_business_data_refresh_flow)
-    process20 = Process(target=deploy_cashflow_refresh_flow)
 
     process1.start()
     time.sleep(1)
@@ -477,8 +459,6 @@ if __name__ == "__main__":
     process18.start()
     time.sleep(1)
     process19.start()
-    time.sleep(1)
-    process20.start()
 
     # 等待进程完成（实际上 serve() 会一直运行，所以这里会一直等待）
     try:
@@ -511,7 +491,6 @@ if __name__ == "__main__":
             process17,
             process18,
             process19,
-            process20,
         ]:
             p.terminate()
             p.join()

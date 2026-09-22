@@ -12,7 +12,6 @@ from .bus_line_cal.flows.business_line_profit_flow import business_line_profit_f
 from .business_data_refresh.flows.business_data_refresh_flow import business_data_refresh_flow
 
 # 数据导入流程
-from .data_import.flows.cashflow_refresh_flow import cashflow_refresh_flow
 from .data_import.flows.data_import_flow import data_import_flow
 
 # 存货跌价季度计算子流程
@@ -55,7 +54,6 @@ __all__ = [
     "calculate_shared_rate_flow",
     "fetch_budget_shared_rate_flow",
     "data_import_flow",
-    "cashflow_refresh_flow",
     "inventory_impairment_flow",
     "kingdee_voucher_journal_flow",
     "budget_update_flow",
