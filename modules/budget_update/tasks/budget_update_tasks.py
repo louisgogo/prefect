@@ -817,7 +817,7 @@ def write_budget_to_db_task(
                 _append_budget_data(connection, "bud_profit", df)
                 del df
 
-                df = df_cash.copy()
+                df = _normalize_business_line(df_cash)
                 df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
                 _append_budget_data(connection, "bud_cash_flow", df)
                 del df
@@ -945,7 +945,7 @@ def write_budget_to_db_task(
                         "填报日期": "预算版本",
                     }
                 )
-                df = df_cash.copy()
+                df = _normalize_business_line(df_cash)
                 df["日期"] = pd.to_datetime(df["日期"])
                 df = df[df["日期"].isin(date_range_fone)]
                 df_con = pd.concat([df, psql_cash], ignore_index=True)

@@ -167,6 +167,13 @@ class BudgetBusinessLineCompatibilityTests(unittest.TestCase):
 
         pd.testing.assert_frame_equal(result, source)
 
+    def test_cashflow_budget_rows_use_the_same_business_line_compatibility(self):
+        source = pd.DataFrame({"业务线": ["跨境新加坡"], "金额": [1]})
+
+        result = _normalize_business_line(source)
+
+        self.assertEqual(result["业务线"].tolist(), ["新加坡"])
+
 
 class BudgetVersionWritePreparationTests(unittest.TestCase):
     def test_first_official_version_does_not_archive_or_delete(self):
