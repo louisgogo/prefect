@@ -1,5 +1,6 @@
 """独立刷新现金流量表的 Prefect 子流程。"""
 
+from datetime import date
 from typing import Any, Dict, Optional
 
 from prefect import flow
@@ -9,6 +10,12 @@ from utils.date_utils import get_date_range_by_month
 from ...common.tasks.notify_hermes_task import notify_hermes_task
 from ..tasks.data_import_tasks import read_excel_data_task, update_cashflow_data_task
 from .data_import_flow import DEFAULT_ROOT_DIRECTORY
+
+
+def _get_cashflow_refresh_defaults_by_date(reference_date: Optional[date] = None) -> Dict[str, int]:
+    """返回现金流刷新在 Prefect UI 中使用的当前年月默认参数。"""
+    current = reference_date or date.today()
+    return {"year": current.year, "month": current.month}
 
 
 @flow(name="cashflow_refresh_flow", log_prints=True)
