@@ -14,7 +14,6 @@ from modules import (
     business_data_refresh_flow,
     business_line_profit_flow,
     calculate_shared_rate_flow,
-    cashflow_refresh_flow,
     data_import_flow,
     fetch_budget_shared_rate_flow,
     fone_income_expense_refresh_flow,
@@ -31,7 +30,6 @@ from modules import (
 )
 from modules.bus_line_staging import bus_line_staging_flow
 from modules.bus_line_staging.module_selection import ALL_MODULE_OPTIONS
-from modules.data_import.flows.cashflow_refresh_flow import _get_cashflow_refresh_defaults_by_date
 
 # 添加当前目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -76,16 +74,6 @@ def _serve_data_import(last_month_year: int, last_month: int):
         },
         tags=["数据导入", "月度任务", "自动执行"],
         description="数据导入流程：从 Excel 文件导入业务数据；汇率默认不再从 Excel 写入，由金蝶基础数据流程更新。",
-    )
-
-
-def _serve_cashflow_refresh():
-    """模块级函数，供 Process 调用。"""
-    cashflow_refresh_flow.serve(
-        name="子流程-现金流量表刷新",
-        parameters=_get_cashflow_refresh_defaults_by_date(),
-        tags=["现金流量表", "财务刷新", "手动触发"],
-        description="只刷新 fact_cashflow 和 excel_cashflow_intl，不处理其他手工刷新表。",
     )
 
 
@@ -342,7 +330,6 @@ def deploy_to_remote_server():
     process17 = Process(target=_serve_fone_income_expense_refresh)
     process18 = Process(target=_serve_kingdee_voucher_journal)
     process19 = Process(target=_serve_business_data_refresh)
-    process20 = Process(target=_serve_cashflow_refresh)
 
     process1.start()
     time.sleep(1)
@@ -381,8 +368,6 @@ def deploy_to_remote_server():
     process18.start()
     time.sleep(1)
     process19.start()
-    time.sleep(1)
-    process20.start()
 
     print("\n✓ 流程已开始部署...")
     print("流程会持续运行并保持与服务器的连接")
@@ -419,7 +404,6 @@ def deploy_to_remote_server():
             process17,
             process18,
             process19,
-            process20,
         ]:
             p.terminate()
             p.join()
