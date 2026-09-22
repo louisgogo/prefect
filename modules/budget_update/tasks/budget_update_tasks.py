@@ -748,11 +748,17 @@ def process_shared_rate_budget_task(
 
 
 def _normalize_business_line(df: pd.DataFrame) -> pd.DataFrame:
-    """业务线名称替换（能源硬件/政府消费券）。"""
+    """将 FONE 历史业务线名称兼容为当前标准名称。"""
     df = df.copy()
     if "业务线" in df.columns:
-        df["业务线"] = df["业务线"].replace("能源硬件（禁用）", "能源硬件")
-        df["业务线"] = df["业务线"].replace("政府消费券（禁用）", "政府消费券")
+        df["业务线"] = df["业务线"].replace(
+            {
+                "能源硬件（禁用）": "能源硬件",
+                "政府消费券（禁用）": "政府消费券",
+                # 临时兼容：Perfect 已改名，FONE 仍返回旧名称；FONE 完成改名后删除此映射。
+                "跨境新加坡": "新加坡",
+            }
+        )
     return df
 
 
@@ -811,7 +817,7 @@ def write_budget_to_db_task(
                 _append_budget_data(connection, "bud_profit", df)
                 del df
 
-                df = df_cash.copy()
+                df = _normalize_business_line(df_cash)
                 df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
                 _append_budget_data(connection, "bud_cash_flow", df)
                 del df
@@ -848,6 +854,7 @@ def write_budget_to_db_task(
                 df = df[df["日期"].isin(date_range_fone)]
                 df_con = pd.concat([df, psql_exp, offset_exp], ignore_index=True)
                 df_con = df_con[df.columns]
+                df_con = _normalize_business_line(df_con)
                 df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
                 _append_budget_data(connection, "bud_expense", df_con)
                 del psql_exp, offset_exp, df, df_con
@@ -875,6 +882,7 @@ def write_budget_to_db_task(
                 df = df[df["日期"].isin(date_range_fone)]
                 df_con = pd.concat([df, psql_inc, offset_inc], ignore_index=True)
                 df_con = df_con[df.columns]
+                df_con = _normalize_business_line(df_con)
                 df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
                 _append_budget_data(connection, "bud_income", df_con)
                 del psql_inc, offset_inc, df, df_con
@@ -892,6 +900,7 @@ def write_budget_to_db_task(
                 df = df[df["日期"].isin(date_range_fone)]
                 df_con = pd.concat([df, psql_emp], ignore_index=True)
                 df_con = df_con[df.columns]
+                df_con = _normalize_business_line(df_con)
                 df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
                 _append_budget_data(connection, "bud_personnel", df_con)
                 del psql_emp, df, df_con
@@ -909,6 +918,7 @@ def write_budget_to_db_task(
                 df = df[df["日期"].isin(date_range_fone)]
                 df_con = pd.concat([df, psql_pro], ignore_index=True)
                 df_con = df_con[df.columns]
+                df_con = _normalize_business_line(df_con)
                 df_con.columns = [combined_column_mapping.get(c, c) for c in df_con.columns]
                 _append_budget_data(connection, "bud_profit", df_con)
                 del psql_pro, df, df_con
@@ -935,7 +945,7 @@ def write_budget_to_db_task(
                         "填报日期": "预算版本",
                     }
                 )
-                df = df_cash.copy()
+                df = _normalize_business_line(df_cash)
                 df["日期"] = pd.to_datetime(df["日期"])
                 df = df[df["日期"].isin(date_range_fone)]
                 df_con = pd.concat([df, psql_cash], ignore_index=True)
@@ -945,7 +955,7 @@ def write_budget_to_db_task(
                 del psql_cash, df, df_con
 
                 # 6. 综合比例
-                df = df_shared_rate.copy()
+                df = _normalize_business_line(df_shared_rate)
                 df.columns = [combined_column_mapping.get(c, c) for c in df.columns]
                 _append_budget_data(connection, "bud_bus_shared_rate", df)
                 del df
